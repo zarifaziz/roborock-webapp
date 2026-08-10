@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>roborock-auto</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  h1 { font-size: 1.3rem; }
+  .card { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
+  .status { display: flex; gap: 20px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+  .status b { display: block; font-size: 0.72rem; opacity: 0.6; text-transform: uppercase; letter-spacing: .04em; }
+  button { font: inherit; padding: 8px 14px; margin: 4px 6px 4px 0; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: color-mix(in srgb, currentColor 6%, transparent); cursor: pointer; }
+  button:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+  #map { width: 100%; max-width: 320px; image-rendering: pixelated; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
+  label.room { display: inline-flex; gap: 6px; align-items: center; margin-right: 12px; }
+  select { font: inherit; padding: 6px; border-radius: 6px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .muted { opacity: 0.6; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+  <h1>roborock-auto <span id="mode" class="muted"></span></h1>
+
+  <div class="card status" id="statusCard">
+    <div><b>State</b><span id="s-state">—</span></div>
+    <div><b>Battery</b><span id="s-battery">—</span></div>
+    <div><b>Cleaning</b><span id="s-cleaning">—</span></div>
+    <div><b>Docked</b><span id="s-docked">—</span></div>
+    <div><b>Error</b><span id="s-error">none</span></div>
+  </div>
+
+  <div class="card">
+    <img id="map" alt="map" />
+  </div>
+
+  <div class="card">
+    <button onclick="cmd('/start')">Start</button>
+    <button onclick="cmd('/pause')">Pause</button>
+    <button onclick="cmd('/dock')">Dock</button>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <label>Fan
+        <select id="fan" onchange="post('/fan',{power:this.value})">
+          <option value="quiet">Quiet</option><option value="balanced" selected>Balanced</option>
+          <option value="turbo">Turbo</option><option value="max">Max</option>
+        </select>
+      </label>
+      <label>Mop
+        <select id="mop" onchange="post('/mop',{mode:this.value})">
+          <option value="standard" selected>Standard</option><option value="deep">Deep</option>
+        </select>
+      </label>
+      <label>Carpet
+        <select id="carpet" onchange="post('/carpet',{mode:this.value})">
+          <option value="rise">Rise</option><option value="avoid">Avoid</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="rooms" class="row"></div>
+    <button onclick="cleanRooms()">Clean selected rooms</button>
+  </div>
+
+  <div class="card">
+    <div id="routines"></div>
+  </div>
+
+  <div class="card muted" id="consumables">consumables —</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(body) });
+  if (!r.ok) console.warn(path, r.status, await r.text());
+  refresh();
+}
+const cmd = (path) => post(path, {});
+
+function cleanRooms() {
+  const ids = [...document.querySelectorAll("#rooms input:checked")].map(el => Number(el.value));
+  if (ids.length) post("/clean/rooms", { segment_ids: ids });
+}
+
+async function refresh() {
+  const s = await (await fetch("/status")).json();
+  $("s-state").textContent = s.state_name;
+  $("s-battery").textContent = s.battery + "%";
+  $("s-cleaning").textContent = s.in_cleaning ? "yes" : "no";
+  $("s-docked").textContent = s.docked ? "yes" : "no";
+  $("s-error").textContent = s.error || "none";
+  $("map").src = "/map.png?t=" + Date.now();
+}
+
+async function boot() {
+  const rooms = await (await fetch("/rooms")).json();
+  $("rooms").innerHTML = rooms.map(r =>
+    `<label class="room"><input type="checkbox" value="${r.segment_id}">${r.name}</label>`).join("");
+  const routines = await (await fetch("/routines")).json();
+  $("routines").innerHTML = routines.map(r =>
+    `<button onclick="post('/routine',{routine_id:${r.id}})">${r.name}</button>`).join("");
+  const c = await (await fetch("/consumables")).json();
+  $("consumables").textContent = `consumables — brush ${c.main_brush_pct}% · side ${c.side_brush_pct}% · filter ${c.filter_pct}%`;
+  await refresh();
+  const interval = 5000;
+  setInterval(refresh, interval);
+}
+boot();
+</script>
+</body>
+</html>

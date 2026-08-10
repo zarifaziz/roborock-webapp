@@ -1,0 +1,30 @@
+name: carpet-aware clean
+
+# Unattended two-stage clean. Disabled until secrets are set: the schedule is commented out
+# so a fresh fork does not fire against nothing. Uncomment and adjust the cron once the
+# ROBOROCK_USER_DATA secret and the *_SCENE_ID / CARPET_* repo variables exist.
+on:
+  workflow_dispatch: {}
+  # schedule:
+  #   - cron: "0 1 * * *"   # 01:00 UTC daily; adjust to your timezone
+
+jobs:
+  clean:
+    runs-on: ubuntu-latest
+    env:
+      GATEWAY: live
+      ROBOROCK_EMAIL: ${{ vars.ROBOROCK_EMAIL }}
+      ROBOROCK_DUID: ${{ vars.ROBOROCK_DUID }}
+      VACUUM_SCENE_ID: ${{ vars.VACUUM_SCENE_ID }}
+      MOP_SCENE_ID: ${{ vars.MOP_SCENE_ID }}
+      CARPET_RISE_VALUE: ${{ vars.CARPET_RISE_VALUE }}
+      CARPET_AVOID_VALUE: ${{ vars.CARPET_AVOID_VALUE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Write session from secret
+        run: printf '%s' "$ROBOROCK_USER_DATA" > user_data.json
+        env:
+          ROBOROCK_USER_DATA: ${{ secrets.ROBOROCK_USER_DATA }}
+      - name: Run two-stage clean
+        run: uv run python -m roborock_auto.run

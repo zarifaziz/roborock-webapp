@@ -28,7 +28,7 @@ class FakeClock:
 
 def _config(**over) -> Config:
     base = dict(
-        gateway="fake", email="", duid="", vacuum_scene_id=1001, mop_scene_id=1002,
+        gateway="fake", email="", duid="",
         carpet_rise_value=0, carpet_avoid_value=1, poll_interval_sec=5.0, app_port=8000,
         session_path="user_data.json",
     )
@@ -108,6 +108,21 @@ async def test_two_stage_happy_path_ordering():
     )
     # Each stage sets carpet+mode before it starts.
     assert kinds.index(("set_cleaning_mode", CleaningMode.VACUUM)) < kinds.index(("start",))
+
+
+async def test_two_stage_aborts_if_carpet_mode_does_not_take():
+    """Safety: if the carpet write silently fails, abort before starting the clean."""
+    clock = FakeClock()
+    gw = FakeGateway(clock=clock)
+
+    async def stuck_carpet(mode):
+        gw.commands.append(("set_carpet_mode", mode))  # pretend to accept but do not change
+
+    gw.set_carpet_mode = stuck_carpet  # get_carpet_mode still returns the old AVOID
+    with pytest.raises(AutomationError, match="did not take"):
+        await run_two_stage(
+            gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+        )
 
 
 async def test_two_stage_aborts_if_not_docked_at_start():

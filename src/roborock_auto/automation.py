@@ -98,7 +98,7 @@ async def run_two_stage(
         )
 
     log("vacuum stage: carpet -> Rise, clean mode -> vacuum, starting whole-house clean")
-    await with_retry(lambda: gw.set_carpet_mode(CarpetMode.RISE), sleep=sleep)
+    await _set_carpet_verified(gw, CarpetMode.RISE, sleep=sleep)
     await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.VACUUM), sleep=sleep)
     await with_retry(gw.start, sleep=sleep)
     await wait_for_departure(gw, clock=clock, sleep=sleep, interval=poll)
@@ -107,10 +107,21 @@ async def run_two_stage(
     log("vacuum stage: complete")
 
     log("mop stage: carpet -> Avoid, clean mode -> mop, starting whole-house clean")
-    await with_retry(lambda: gw.set_carpet_mode(CarpetMode.AVOID), sleep=sleep)
+    # Read-back before mopping: if carpet Avoid did not stick, wet pads would cross carpet.
+    await _set_carpet_verified(gw, CarpetMode.AVOID, sleep=sleep)
     await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.MOP), sleep=sleep)
     await with_retry(gw.start, sleep=sleep)
     await wait_for_departure(gw, clock=clock, sleep=sleep, interval=poll)
     log("mop stage: robot left the dock, waiting for it to finish")
     await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
     log("mop stage: complete")
+
+
+async def _set_carpet_verified(gw: Gateway, mode: CarpetMode, *, sleep: Sleep) -> None:
+    await with_retry(lambda: gw.set_carpet_mode(mode), sleep=sleep)
+    actual = await gw.get_carpet_mode()
+    if actual != mode:
+        raise AutomationError(
+            f"carpet mode did not take: asked {mode.value}, device reports {actual.value}; "
+            f"aborting before starting the clean"
+        )

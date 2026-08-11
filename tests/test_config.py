@@ -1,24 +1,36 @@
-"""Config parsing, including set-but-empty env vars (.env with blanks to fill later)."""
+"""Config parsing: empty env vars in fake mode, and required fields in live mode."""
 
 from __future__ import annotations
 
-from roborock_auto.config import Config
+import pytest
+
+from roborock_auto.config import Config, ConfigError
 
 
-def test_empty_env_vars_fall_back_to_defaults(monkeypatch):
-    # A live .env with ids not yet filled in: GATEWAY set, numeric fields blank.
-    monkeypatch.setenv("GATEWAY", "live")
-    for name in ("VACUUM_SCENE_ID", "MOP_SCENE_ID", "CARPET_RISE_VALUE", "APP_PORT"):
+def test_empty_env_vars_fall_back_to_defaults_in_fake_mode(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "fake")
+    for name in ("CARPET_RISE_VALUE", "CARPET_AVOID_VALUE", "APP_PORT"):
         monkeypatch.setenv(name, "")
     config = Config.from_env()
-    assert config.gateway == "live"
-    assert config.vacuum_scene_id == 0
+    assert config.gateway == "fake"
     assert config.app_port == 8000
 
 
-def test_values_parse_when_set(monkeypatch):
-    monkeypatch.setenv("VACUUM_SCENE_ID", "1001")
-    monkeypatch.setenv("APP_PORT", "9000")
+def test_live_mode_requires_carpet_values(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "live")
+    monkeypatch.setenv("ROBOROCK_EMAIL", "e@x.com")
+    monkeypatch.setenv("ROBOROCK_DUID", "DUID1")
+    monkeypatch.delenv("CARPET_RISE_VALUE", raising=False)
+    with pytest.raises(ConfigError, match="CARPET_RISE_VALUE"):
+        Config.from_env()
+
+
+def test_live_mode_parses_when_all_present(monkeypatch):
+    for name, value in {
+        "GATEWAY": "live", "ROBOROCK_EMAIL": "e@x.com", "ROBOROCK_DUID": "DUID1",
+        "CARPET_RISE_VALUE": "2", "CARPET_AVOID_VALUE": "0",
+    }.items():
+        monkeypatch.setenv(name, value)
     config = Config.from_env()
-    assert config.vacuum_scene_id == 1001
-    assert config.app_port == 9000
+    assert config.carpet_rise_value == 2
+    assert config.carpet_avoid_value == 0

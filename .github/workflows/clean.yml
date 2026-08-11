@@ -15,8 +15,6 @@ jobs:
       GATEWAY: live
       ROBOROCK_EMAIL: ${{ vars.ROBOROCK_EMAIL }}
       ROBOROCK_DUID: ${{ vars.ROBOROCK_DUID }}
-      VACUUM_SCENE_ID: ${{ vars.VACUUM_SCENE_ID }}
-      MOP_SCENE_ID: ${{ vars.MOP_SCENE_ID }}
       CARPET_RISE_VALUE: ${{ vars.CARPET_RISE_VALUE }}
       CARPET_AVOID_VALUE: ${{ vars.CARPET_AVOID_VALUE }}
     steps:

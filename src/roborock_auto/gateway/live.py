@@ -51,13 +51,23 @@ _DOCKED_STATES = {
     RoborockStateCode.charging_complete,
     RoborockStateCode.charging_problem,
 }
+# A job is not finished until the robot is fully idle on the dock. Every "moving,
+# cleaning, mopping, or servicing at the dock" state counts as busy, so the mop stage
+# never starts while the robot is still working. Built by name so a missing code on some
+# firmware is skipped rather than crashing.
+_ACTIVE_STATE_NAMES = [
+    "cleaning", "spot_cleaning", "zoned_cleaning", "segment_cleaning",
+    "returning_home", "going_to_target", "docking",
+    "emptying_the_bin", "washing_the_mop", "washing_the_mop_2",
+    "going_to_wash_the_mop", "attaching_the_mop", "detaching_the_mop",
+    # Qrevo mopping / dock-servicing states (6301-6310).
+    "robot_status_mopping", "clean_mop_cleaning", "clean_mop_mopping",
+    "segment_mopping", "segment_clean_mop_cleaning", "segment_clean_mop_mopping",
+    "zoned_mopping", "zoned_clean_mop_cleaning", "zoned_clean_mop_mopping",
+    "back_to_dock_washing_duster",
+]
 _ACTIVE_STATES = {
-    RoborockStateCode.cleaning,
-    RoborockStateCode.spot_cleaning,
-    RoborockStateCode.zoned_cleaning,
-    RoborockStateCode.segment_cleaning,
-    RoborockStateCode.returning_home,
-    RoborockStateCode.going_to_target,
+    getattr(RoborockStateCode, n) for n in _ACTIVE_STATE_NAMES if hasattr(RoborockStateCode, n)
 }
 
 # Param shapes to confirm on live bring-up. Non-destructive settings; wrong values only
@@ -129,23 +139,29 @@ class LiveGateway:
         return await self._locked_retry(once)
 
     async def _locked_retry(self, fn, attempts: int = 2, base_delay: float = 1.0) -> Any:
-        """Serialize device I/O and retry transient failures.
-
-        Deliberately does NOT call connect() on failure: the cloud login endpoint is rate
-        limited (error 9002), and reconnecting on every hiccup turns one failure into a
-        storm. Programming errors are re-raised immediately, not retried.
-        """
+        """Serialize device I/O (single MQTT session) and retry transient failures."""
         async with self._lock:
-            for i in range(attempts):
-                try:
-                    return await fn()
-                except (AttributeError, TypeError, KeyError):
+            return await self._retry(fn, attempts, base_delay)
+
+    async def _retry_no_lock(self, fn, attempts: int = 2, base_delay: float = 1.0) -> Any:
+        """For web-API calls that do not touch the device connection, so no lock needed."""
+        return await self._retry(fn, attempts, base_delay)
+
+    async def _retry(self, fn, attempts: int, base_delay: float) -> Any:
+        """Retry transient failures. Deliberately does NOT reconnect: the cloud login
+        endpoint is rate limited (error 9002) and reconnecting on every hiccup turns one
+        failure into a storm. Programming errors are re-raised immediately.
+        """
+        for i in range(attempts):
+            try:
+                return await fn()
+            except (AttributeError, TypeError, KeyError):
+                raise
+            except Exception:
+                if i == attempts - 1:
                     raise
-                except Exception:
-                    if i == attempts - 1:
-                        raise
-                    _LOGGER.warning("device call failed, retrying (attempt %d)", i + 1)
-                    await asyncio.sleep(base_delay * (2**i))
+                _LOGGER.warning("call failed, retrying (attempt %d)", i + 1)
+                await asyncio.sleep(base_delay * (2**i))
 
     # --- reads ------------------------------------------------------------
     async def get_status(self) -> DeviceStatus:
@@ -212,7 +228,7 @@ class LiveGateway:
             scenes = await self._web.get_scenes(self._user_data, self._config.duid)
             return [Routine(int(s.id), s.name) for s in scenes]
 
-        return await self._locked_retry(read)
+        return await self._retry_no_lock(read)
 
     async def get_consumables(self) -> Consumables:
         async def read() -> Consumables:
@@ -265,15 +281,20 @@ class LiveGateway:
         await self._locked_retry(do)
 
     async def set_carpet_mode(self, mode: CarpetMode) -> None:
-        value = (
-            self._config.carpet_rise_value
-            if mode == CarpetMode.RISE
-            else self._config.carpet_avoid_value
-        )
+        if mode is CarpetMode.RISE:
+            value = self._config.carpet_rise_value
+        elif mode is CarpetMode.AVOID:
+            value = self._config.carpet_avoid_value
+        else:
+            raise ValueError(f"cannot set carpet mode to {mode}")
         await self._send(RoborockCommand.SET_CARPET_CLEAN_MODE, [{"carpet_clean_mode": value}])
 
     async def run_routine(self, routine_id: int) -> None:
-        await self._web.execute_scene(self._user_data, routine_id)
+        # Web-API call: retry, but no device lock (it does not touch the device connection).
+        async def do() -> None:
+            await self._web.execute_scene(self._user_data, routine_id)
+
+        await self._retry_no_lock(do)
 
 
 def _extract_carpet_value(resp: Any) -> Any:

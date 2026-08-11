@@ -1,9 +1,10 @@
-"""Carpet-aware two-stage clean, expressed purely over the Gateway.
+"""Carpet-aware two-stage clean, expressed purely over the ports.
 
 Vacuum with carpet Rise, wait for the robot to leave and come home, then mop with carpet
 Avoid. The completion check is depart-then-return: confirm the job actually started, then
-wait for the robot to be docked AND not in_cleaning. Charging alone is not "done" because the
-robot recharges mid-job and resumes, and that recharge must not trigger the mop stage early.
+wait for the robot to be home and idle. Charging alone is not "done" because the robot
+recharges mid-job and resumes (see domain/policies.py), and that recharge must not trigger
+the mop stage early.
 
 clock and sleep are injected so the timeouts are deterministic under test with no real waits.
 """
@@ -12,44 +13,28 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
+from typing import Protocol
 
+from roborock_auto.application.retry import AutomationError, Sleep, with_retry
 from roborock_auto.config import Config
-from roborock_auto.gateway.base import Gateway
-from roborock_auto.models import CarpetMode, CleaningMode
+from roborock_auto.domain.models import CarpetMode, CleaningMode
+from roborock_auto.domain.policies import home_and_idle, job_is_active, ready_to_start
+from roborock_auto.ports.robot import CleaningControlPort, CleaningSettingsPort, RobotStatusPort
 
 Clock = Callable[[], float]
-Sleep = Callable[[float], Awaitable[None]]
 
-DEPART_TIMEOUT = 180.0     # 3 min: if the job never starts, the scene failed to trigger
+DEPART_TIMEOUT = 180.0     # 3 min: if the job never starts, the trigger failed
 RETURN_TIMEOUT = 7200.0    # 2 h: a stuck robot fails loudly instead of hanging forever
 
 
-class AutomationError(Exception):
-    pass
-
-
-async def with_retry(
-    fn: Callable[[], Awaitable[None]],
-    *,
-    sleep: Sleep,
-    attempts: int = 3,
-    base_delay: float = 2.0,
-) -> None:
-    for i in range(attempts):
-        try:
-            await fn()
-            return
-        except AutomationError:
-            raise
-        except Exception:
-            if i == attempts - 1:
-                raise
-            await sleep(base_delay * (2**i))
+class TwoStagePorts(RobotStatusPort, CleaningControlPort, CleaningSettingsPort, Protocol):
+    """Everything this use case needs from the robot — and nothing more."""
 
 
 async def wait_for_departure(
-    gw: Gateway, *, clock: Clock, sleep: Sleep, interval: float, timeout: float = DEPART_TIMEOUT
+    gw: RobotStatusPort, *, clock: Clock, sleep: Sleep, interval: float,
+    timeout: float = DEPART_TIMEOUT,
 ) -> None:
     """Return once a job is confirmed active. Raise if it never starts."""
     deadline = clock() + timeout
@@ -57,23 +42,24 @@ async def wait_for_departure(
         status = await gw.get_status()
         if status.error:
             raise AutomationError(f"device error while waiting to depart: {status.error}")
-        if status.in_cleaning:
+        if job_is_active(status):
             return
         if clock() >= deadline:
-            raise AutomationError("job never started (scene did not trigger)")
+            raise AutomationError("job never started (trigger did not take)")
         await sleep(interval)
 
 
 async def wait_for_return(
-    gw: Gateway, *, clock: Clock, sleep: Sleep, interval: float, timeout: float = RETURN_TIMEOUT
+    gw: RobotStatusPort, *, clock: Clock, sleep: Sleep, interval: float,
+    timeout: float = RETURN_TIMEOUT,
 ) -> None:
-    """Return once the robot is home and idle. A mid-job recharge keeps in_cleaning true."""
+    """Return once the robot is home and idle. A mid-job recharge keeps the job active."""
     deadline = clock() + timeout
     while True:
         status = await gw.get_status()
         if status.error:
             raise AutomationError(f"device error during clean: {status.error}")
-        if status.docked and not status.in_cleaning:
+        if home_and_idle(status):
             return
         if clock() >= deadline:
             raise AutomationError("timed out waiting for the robot to return")
@@ -81,7 +67,7 @@ async def wait_for_return(
 
 
 async def run_two_stage(
-    gw: Gateway,
+    gw: TwoStagePorts,
     config: Config,
     *,
     clock: Clock = time.monotonic,
@@ -92,7 +78,7 @@ async def run_two_stage(
     poll = interval if interval is not None else config.poll_interval_sec
 
     start = await gw.get_status()
-    if start.in_cleaning or not start.docked:
+    if not ready_to_start(start):
         raise AutomationError(
             f"robot not docked/idle at start (state={start.state_name}); aborting"
         )

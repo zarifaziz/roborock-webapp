@@ -27,4 +27,4 @@ jobs:
         env:
           ROBOROCK_USER_DATA: ${{ secrets.ROBOROCK_USER_DATA }}
       - name: Run two-stage clean
-        run: uv run python -m roborock_auto.run
+        run: uv run python -m roborock_auto.adapters.cron.run

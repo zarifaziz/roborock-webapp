@@ -5,6 +5,7 @@ Local control app and unattended carpet-aware two-stage clean for a Roborock Qre
 The whole thing runs against a `FakeGateway` with no account, so you can try it on your
 laptop right now. Going live is filling in `.env` and setting `GATEWAY=live`; no code change.
 
+- Architecture (ports & adapters + DDD-lite): `ARCHITECTURE.md`
 - Design: `MVP_PLAN.md`
 - Background and why this exists: `handoff.md`
 
@@ -12,7 +13,7 @@ laptop right now. Going live is filling in `.env` and setting `GATEWAY=live`; no
 
 ```
 uv sync --extra dev
-uv run uvicorn roborock_auto.webapp.server:app --host 127.0.0.1 --port 8000
+uv run uvicorn roborock_auto.adapters.web.server:app --host 127.0.0.1 --port 8000
 # open http://127.0.0.1:8000
 ```
 
@@ -32,11 +33,11 @@ uv run pytest
 2. Log in once. This sends an email code and saves the session to `user_data.json`
    (gitignored, never commit it):
    ```
-   uv run python -m roborock_auto.login
+   uv run python -m roborock_auto.adapters.cli.login
    ```
 3. Discover your ids. This is read-only, it changes nothing on the robot:
    ```
-   uv run python -m roborock_auto.discover
+   uv run python -m roborock_auto.adapters.cli.discover
    ```
    From the output, copy into `.env`: your `ROBOROCK_DUID`, the routine ids for
    `VACUUM_SCENE_ID` and `MOP_SCENE_ID`, and the carpet integer for `CARPET_RISE_VALUE` /
@@ -44,13 +45,13 @@ uv run pytest
    both values).
 4. Launch the app the same way as fake mode. It now talks to the real robot.
 
-The `LiveGateway` command names are verified against python-roborock, but a few param shapes
-(segment clean, fan, mop) are marked "confirm on live bring-up" in `gateway/live.py` and
-should be checked on your first real run.
+The `RoborockCloudAdapter` command names are verified against python-roborock, but a few
+param shapes (segment clean, fan, mop) are marked "confirm on live bring-up" in
+`adapters/roborock_cloud/` and should be checked on your first real run.
 
 ## Unattended two-stage clean
 
-`uv run python -m roborock_auto.run` runs the sequence once: carpet Rise, vacuum routine,
+`uv run python -m roborock_auto.adapters.cron.run` runs the sequence once: carpet Rise, vacuum routine,
 wait for the robot to leave and return (a mid-job recharge does not count as done), then
 carpet Avoid, mop routine. It exits non-zero on failure.
 

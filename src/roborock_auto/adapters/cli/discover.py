@@ -1,6 +1,6 @@
 """Read-only dump of everything the automation needs to be configured.
 
-    uv run python -m roborock_auto.discover
+    uv run python -m roborock_auto.adapters.cli.discover
 
 Works in both modes. In live mode it prints the real duid, routines, and current carpet
 value so you can fill in .env. Nothing is written to the device. Each section is independent:
@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import asyncio
 
+from roborock_auto.adapters import get_gateway
 from roborock_auto.config import Config
-from roborock_auto.gateway import get_gateway
 
 
 def _p(msg: str = "") -> None:

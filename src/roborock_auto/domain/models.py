@@ -1,7 +1,7 @@
-"""Plain data types that cross the Gateway boundary.
+"""Value objects: plain data types that cross the port boundary.
 
-No python-roborock types and no firmware magic integers appear here. Both the app and the
-automation depend only on this module, so a library change stays quarantined in LiveGateway.
+No python-roborock types and no firmware magic integers appear here. Everything above the
+ports depends only on this module, so a library change stays quarantined in the adapter.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""In-memory gateway: canned data and a clock-driven state machine.
+"""In-memory driven adapter: canned data and a clock-driven state machine.
 
 Serves two jobs from one class: the local-run backend when no account is configured, and the
 test double. Progress is a function of elapsed clock time, never of how many times you poll,
@@ -11,8 +11,8 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
-from roborock_auto.gateway.sample_map import SAMPLE_MAP_PNG
-from roborock_auto.models import (
+from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
+from roborock_auto.domain.models import (
     CarpetMode,
     CleaningMode,
     Consumables,
@@ -40,7 +40,7 @@ DEPART_DELAY = 3.0     # seconds the robot lingers docked after start before it 
 CLEAN_DURATION = 30.0  # seconds a job runs in machine mode
 
 
-class FakeGateway:
+class FakeRobot:
     def __init__(self, clock: Callable[[], float] = time.monotonic):
         self._clock = clock
         self._job_start: float | None = None

@@ -1,4 +1,4 @@
-"""P6: LiveGateway mapping and command wiring, via mocks (no account).
+"""P6: RoborockCloudAdapter mapping and command wiring, via mocks (no account).
 
 Pins the state-code -> DeviceStatus mapping and asserts each command method sends the exact
 RoborockCommand and params. This is the only check possible without a real device.
@@ -13,14 +13,14 @@ import pytest
 from roborock import RoborockCommand
 from roborock.data.v1 import RoborockInCleaning, RoborockStateCode
 
-from roborock_auto.config import Config
-from roborock_auto.gateway.live import (
-    LiveGateway,
+from roborock_auto.adapters.roborock_cloud.adapter import RoborockCloudAdapter
+from roborock_auto.adapters.roborock_cloud.codes import (
     derive_in_cleaning,
     is_docked,
     state_name,
 )
-from roborock_auto.models import CarpetMode, DeviceStatus, FanPower, MopMode
+from roborock_auto.config import Config
+from roborock_auto.domain.models import CarpetMode, DeviceStatus, FanPower, MopMode
 
 
 def _config(**over) -> Config:
@@ -58,7 +58,7 @@ def test_in_cleaning_survives_midjob_recharge():
 
 @pytest.fixture
 def gw():
-    g = LiveGateway(_config())
+    g = RoborockCloudAdapter(_config())
     g._device = SimpleNamespace(v1_properties=SimpleNamespace(command=SimpleNamespace(send=AsyncMock())))
     g._web = SimpleNamespace(execute_scene=AsyncMock(), get_scenes=AsyncMock())
     g._user_data = object()
@@ -107,7 +107,7 @@ async def test_run_routine_uses_web_execute_scene(gw):
 
 
 async def test_set_cleaning_mode_calls_status_trait(gw):
-    from roborock_auto.models import CleaningMode
+    from roborock_auto.domain.models import CleaningMode
 
     status_trait = SimpleNamespace(set_cleaning_mode=AsyncMock())
     gw._device.v1_properties.status = status_trait

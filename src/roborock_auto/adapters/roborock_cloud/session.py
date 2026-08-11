@@ -1,7 +1,7 @@
 """Shared session helpers used by login, discovery, the app, and the cron.
 
 Only touches python-roborock for persistence types. The device/command surface lives in
-LiveGateway.
+RoborockCloudAdapter.
 """
 
 from __future__ import annotations
@@ -20,6 +20,6 @@ def load_user_data(path: str) -> UserData:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(
-            f"session file {path} not found; run `uv run python -m roborock_auto.login` first"
+            f"session file {path} not found; run `uv run python -m roborock_auto.adapters.cli.login` first"
         )
     return UserData.from_dict(json.loads(p.read_text()))

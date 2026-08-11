@@ -82,9 +82,9 @@ async def test_carpet_sends_configured_value(gw):
     await gw.set_carpet_mode(CarpetMode.RISE)
     call = _last_send(gw)
     assert call.args[0] == RoborockCommand.SET_CARPET_CLEAN_MODE
-    assert call.kwargs["params"] == [0]   # carpet_rise_value
+    assert call.kwargs["params"] == [{"carpet_clean_mode": 0}]   # carpet_rise_value
     await gw.set_carpet_mode(CarpetMode.AVOID)
-    assert _last_send(gw).kwargs["params"] == [1]  # carpet_avoid_value
+    assert _last_send(gw).kwargs["params"] == [{"carpet_clean_mode": 1}]  # carpet_avoid_value
 
 
 async def test_clean_rooms_params(gw):
@@ -107,11 +107,11 @@ async def test_run_routine_uses_web_execute_scene(gw):
 
 
 async def test_get_carpet_mode_maps_back(gw):
-    gw._device.v1_properties.command.send = AsyncMock(return_value=[0])
+    gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 0}])
     assert await gw.get_carpet_mode() == CarpetMode.RISE
-    gw._device.v1_properties.command.send = AsyncMock(return_value=[1])
+    gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 1}])
     assert await gw.get_carpet_mode() == CarpetMode.AVOID
-    gw._device.v1_properties.command.send = AsyncMock(return_value=[99])
+    gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 99}])
     assert await gw.get_carpet_mode() == CarpetMode.UNKNOWN
 
 

@@ -220,8 +220,9 @@ class LiveGateway:
         return await self._locked_retry(read)
 
     async def get_carpet_mode(self) -> CarpetMode:
+        # This firmware returns [{"carpet_clean_mode": <int>}].
         resp = await self._send(RoborockCommand.GET_CARPET_CLEAN_MODE)
-        value = resp[0] if isinstance(resp, list) and resp else resp
+        value = _extract_carpet_value(resp)
         if value == self._config.carpet_rise_value:
             return CarpetMode.RISE
         if value == self._config.carpet_avoid_value:
@@ -254,10 +255,19 @@ class LiveGateway:
             if mode == CarpetMode.RISE
             else self._config.carpet_avoid_value
         )
-        await self._send(RoborockCommand.SET_CARPET_CLEAN_MODE, [value])
+        await self._send(RoborockCommand.SET_CARPET_CLEAN_MODE, [{"carpet_clean_mode": value}])
 
     async def run_routine(self, routine_id: int) -> None:
         await self._web.execute_scene(self._user_data, routine_id)
+
+
+def _extract_carpet_value(resp: Any) -> Any:
+    """Pull the int out of [{"carpet_clean_mode": n}] (or a bare int, defensively)."""
+    if isinstance(resp, list) and resp:
+        resp = resp[0]
+    if isinstance(resp, dict):
+        return resp.get("carpet_clean_mode")
+    return resp
 
 
 def _life_pct(work_time_seconds: Any, max_hours: float) -> int:

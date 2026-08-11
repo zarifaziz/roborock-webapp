@@ -14,6 +14,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _get(name: str, default: str) -> str:
+    """Env var, treating set-but-empty (VACUUM_SCENE_ID=) the same as unset."""
+    value = os.getenv(name, "").strip()
+    return value or default
+
+
 @dataclass(frozen=True)
 class Config:
     gateway: str            # "fake" | "live"
@@ -30,14 +36,14 @@ class Config:
     @classmethod
     def from_env(cls) -> Config:
         return cls(
-            gateway=os.getenv("GATEWAY", "fake").lower(),
-            email=os.getenv("ROBOROCK_EMAIL", ""),
-            duid=os.getenv("ROBOROCK_DUID", ""),
-            vacuum_scene_id=int(os.getenv("VACUUM_SCENE_ID", "0")),
-            mop_scene_id=int(os.getenv("MOP_SCENE_ID", "0")),
-            carpet_rise_value=int(os.getenv("CARPET_RISE_VALUE", "0")),
-            carpet_avoid_value=int(os.getenv("CARPET_AVOID_VALUE", "1")),
-            poll_interval_sec=float(os.getenv("POLL_INTERVAL_SEC", "5")),
-            app_port=int(os.getenv("APP_PORT", "8000")),
-            session_path=os.getenv("SESSION_PATH", "user_data.json"),
+            gateway=_get("GATEWAY", "fake").lower(),
+            email=_get("ROBOROCK_EMAIL", ""),
+            duid=_get("ROBOROCK_DUID", ""),
+            vacuum_scene_id=int(_get("VACUUM_SCENE_ID", "0")),
+            mop_scene_id=int(_get("MOP_SCENE_ID", "0")),
+            carpet_rise_value=int(_get("CARPET_RISE_VALUE", "0")),
+            carpet_avoid_value=int(_get("CARPET_AVOID_VALUE", "1")),
+            poll_interval_sec=float(_get("POLL_INTERVAL_SEC", "5")),
+            app_port=int(_get("APP_PORT", "8000")),
+            session_path=_get("SESSION_PATH", "user_data.json"),
         )

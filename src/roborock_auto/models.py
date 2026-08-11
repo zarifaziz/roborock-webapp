@@ -28,6 +28,15 @@ class MopMode(Enum):
     DEEP = "deep"
 
 
+class CleaningMode(Enum):
+    """High-level clean type. Lets the two-stage clean vacuum then mop the whole house
+    without needing separate saved routines."""
+
+    VACUUM = "vacuum"
+    MOP = "mop"
+    VAC_AND_MOP = "vac_and_mop"
+
+
 @dataclass(frozen=True)
 class DeviceStatus:
     state_name: str            # normalized: "cleaning", "charging", "idle", "error", ...

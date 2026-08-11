@@ -106,6 +106,15 @@ async def test_run_routine_uses_web_execute_scene(gw):
     gw._web.execute_scene.assert_awaited_once_with(gw._user_data, 1001)
 
 
+async def test_set_cleaning_mode_calls_status_trait(gw):
+    from roborock_auto.models import CleaningMode
+
+    status_trait = SimpleNamespace(set_cleaning_mode=AsyncMock())
+    gw._device.v1_properties.status = status_trait
+    await gw.set_cleaning_mode(CleaningMode.VACUUM)
+    status_trait.set_cleaning_mode.assert_awaited_once_with("vacuum")
+
+
 async def test_get_carpet_mode_maps_back(gw):
     gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 0}])
     assert await gw.get_carpet_mode() == CarpetMode.RISE

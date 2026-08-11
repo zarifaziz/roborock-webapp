@@ -25,6 +25,7 @@ from roborock_auto.core import load_user_data
 from roborock_auto.gateway.sample_map import SAMPLE_MAP_PNG
 from roborock_auto.models import (
     CarpetMode,
+    CleaningMode,
     Consumables,
     DeviceStatus,
     FanPower,
@@ -34,6 +35,13 @@ from roborock_auto.models import (
     Room,
     Routine,
 )
+
+# Our semantic mode -> the library's device-aware CleaningMode (mapped in set_cleaning_mode).
+_CLEANING_MODE_NAMES = {
+    CleaningMode.VACUUM: "vacuum",
+    CleaningMode.MOP: "mop",
+    CleaningMode.VAC_AND_MOP: "vac_and_mop",
+}
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -248,6 +256,13 @@ class LiveGateway:
 
     async def set_mop_mode(self, mode: MopMode) -> None:
         await self._send(RoborockCommand.SET_MOP_MODE, [_MOP_MODES[mode]])
+
+    async def set_cleaning_mode(self, mode: CleaningMode) -> None:
+        # The library computes the correct SET_CLEAN_MOTOR_MODE params for this device.
+        async def do() -> None:
+            await self._v1.status.set_cleaning_mode(_CLEANING_MODE_NAMES[mode])
+
+        await self._locked_retry(do)
 
     async def set_carpet_mode(self, mode: CarpetMode) -> None:
         value = (

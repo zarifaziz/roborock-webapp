@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 
 from roborock_auto.config import Config
 from roborock_auto.gateway.base import Gateway
-from roborock_auto.models import CarpetMode
+from roborock_auto.models import CarpetMode, CleaningMode
 
 Clock = Callable[[], float]
 Sleep = Callable[[float], Awaitable[None]]
@@ -97,17 +97,19 @@ async def run_two_stage(
             f"robot not docked/idle at start (state={start.state_name}); aborting"
         )
 
-    log("vacuum stage: carpet -> Rise, triggering vacuum routine")
+    log("vacuum stage: carpet -> Rise, clean mode -> vacuum, starting whole-house clean")
     await with_retry(lambda: gw.set_carpet_mode(CarpetMode.RISE), sleep=sleep)
-    await with_retry(lambda: gw.run_routine(config.vacuum_scene_id), sleep=sleep)
+    await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.VACUUM), sleep=sleep)
+    await with_retry(gw.start, sleep=sleep)
     await wait_for_departure(gw, clock=clock, sleep=sleep, interval=poll)
     log("vacuum stage: robot left the dock, waiting for it to finish")
     await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
     log("vacuum stage: complete")
 
-    log("mop stage: carpet -> Avoid, triggering mop routine")
+    log("mop stage: carpet -> Avoid, clean mode -> mop, starting whole-house clean")
     await with_retry(lambda: gw.set_carpet_mode(CarpetMode.AVOID), sleep=sleep)
-    await with_retry(lambda: gw.run_routine(config.mop_scene_id), sleep=sleep)
+    await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.MOP), sleep=sleep)
+    await with_retry(gw.start, sleep=sleep)
     await wait_for_departure(gw, clock=clock, sleep=sleep, interval=poll)
     log("mop stage: robot left the dock, waiting for it to finish")
     await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)

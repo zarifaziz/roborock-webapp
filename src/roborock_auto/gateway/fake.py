@@ -14,6 +14,7 @@ from collections.abc import Callable
 from roborock_auto.gateway.sample_map import SAMPLE_MAP_PNG
 from roborock_auto.models import (
     CarpetMode,
+    CleaningMode,
     Consumables,
     DeviceStatus,
     FanPower,
@@ -46,6 +47,7 @@ class FakeGateway:
         self._carpet = CarpetMode.AVOID
         self._fan = FanPower.BALANCED
         self._mop = MopMode.STANDARD
+        self._cleaning = CleaningMode.VAC_AND_MOP
         self._battery = 100
         # Scripted mode for tests: (elapsed_since_t0, DeviceStatus), evaluated against _t0.
         self._timeline: list[tuple[float, DeviceStatus]] | None = None
@@ -135,6 +137,10 @@ class FakeGateway:
     async def set_mop_mode(self, mode: MopMode) -> None:
         self.commands.append(("set_mop_mode", mode))
         self._mop = mode
+
+    async def set_cleaning_mode(self, mode: CleaningMode) -> None:
+        self.commands.append(("set_cleaning_mode", mode))
+        self._cleaning = mode
 
     async def set_carpet_mode(self, mode: CarpetMode) -> None:
         self.commands.append(("set_carpet_mode", mode))

@@ -12,7 +12,7 @@ from roborock_auto.automation import (
 )
 from roborock_auto.config import Config
 from roborock_auto.gateway.fake import FakeGateway
-from roborock_auto.models import CarpetMode, DeviceStatus
+from roborock_auto.models import CarpetMode, CleaningMode, DeviceStatus
 
 
 class FakeClock:
@@ -94,16 +94,20 @@ async def test_two_stage_happy_path_ordering():
     await run_two_stage(
         gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
     )
-    kinds = [c for c in gw.commands]
+    kinds = gw.commands
     assert ("set_carpet_mode", CarpetMode.RISE) in kinds
-    assert ("run_routine", 1001) in kinds
+    assert ("set_cleaning_mode", CleaningMode.VACUUM) in kinds
     assert ("set_carpet_mode", CarpetMode.AVOID) in kinds
-    assert ("run_routine", 1002) in kinds
-    # Rise before Avoid, vacuum routine before mop routine.
+    assert ("set_cleaning_mode", CleaningMode.MOP) in kinds
+    # Vacuum stage fully before mop stage: Rise+vacuum both precede Avoid+mop.
     assert kinds.index(("set_carpet_mode", CarpetMode.RISE)) < kinds.index(
         ("set_carpet_mode", CarpetMode.AVOID)
     )
-    assert kinds.index(("run_routine", 1001)) < kinds.index(("run_routine", 1002))
+    assert kinds.index(("set_cleaning_mode", CleaningMode.VACUUM)) < kinds.index(
+        ("set_cleaning_mode", CleaningMode.MOP)
+    )
+    # Each stage sets carpet+mode before it starts.
+    assert kinds.index(("set_cleaning_mode", CleaningMode.VACUUM)) < kinds.index(("start",))
 
 
 async def test_two_stage_aborts_if_not_docked_at_start():

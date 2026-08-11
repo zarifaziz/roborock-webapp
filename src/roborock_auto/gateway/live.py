@@ -22,6 +22,7 @@ from roborock.data.v1 import RoborockInCleaning, RoborockStateCode
 
 from roborock_auto.config import Config
 from roborock_auto.core import load_user_data
+from roborock_auto.gateway.sample_map import SAMPLE_MAP_PNG
 from roborock_auto.models import (
     CarpetMode,
     Consumables,
@@ -119,20 +120,24 @@ class LiveGateway:
 
         return await self._locked_retry(once)
 
-    async def _locked_retry(self, fn, attempts: int = 3, base_delay: float = 2.0) -> Any:
+    async def _locked_retry(self, fn, attempts: int = 2, base_delay: float = 1.0) -> Any:
+        """Serialize device I/O and retry transient failures.
+
+        Deliberately does NOT call connect() on failure: the cloud login endpoint is rate
+        limited (error 9002), and reconnecting on every hiccup turns one failure into a
+        storm. Programming errors are re-raised immediately, not retried.
+        """
         async with self._lock:
             for i in range(attempts):
                 try:
                     return await fn()
+                except (AttributeError, TypeError, KeyError):
+                    raise
                 except Exception:
                     if i == attempts - 1:
                         raise
-                    _LOGGER.warning("device call failed, reconnecting (attempt %d)", i + 1)
+                    _LOGGER.warning("device call failed, retrying (attempt %d)", i + 1)
                     await asyncio.sleep(base_delay * (2**i))
-                    try:
-                        await self.connect()
-                    except Exception:
-                        _LOGGER.exception("reconnect failed")
 
     # --- reads ------------------------------------------------------------
     async def get_status(self) -> DeviceStatus:
@@ -150,36 +155,47 @@ class LiveGateway:
         return await self._locked_retry(read)
 
     async def get_map_png(self) -> bytes:
-        async def read() -> bytes:
-            mc = self._v1.map_content
-            await mc.refresh()
-            return mc.image_content
+        # Map goes through an unofficial parser; on any failure serve the placeholder so the
+        # app never breaks. A mismatched map tells the user the live fetch failed.
+        try:
+            async def read() -> bytes:
+                mc = self._v1.map_content
+                await mc.refresh()
+                return mc.image_content
 
-        return await self._locked_retry(read)
+            png = await self._locked_retry(read)
+            return png or SAMPLE_MAP_PNG
+        except Exception:
+            _LOGGER.warning("live map fetch failed; serving placeholder", exc_info=True)
+            return SAMPLE_MAP_PNG
 
     async def get_map_data(self) -> MapData:
-        async def read() -> MapData:
-            mc = self._v1.map_content
-            await mc.refresh()
-            data = mc.map_data
-            rooms = [Room(int(r.segment_id), r.name or f"Room {r.segment_id}")
-                     for r in (getattr(data, "rooms", None) or [])]
-            robot = None
-            pos = getattr(data, "vacuum_position", None) or getattr(data, "robot", None)
-            if pos is not None:
-                robot = Point(int(getattr(pos, "x", 0)), int(getattr(pos, "y", 0)))
-            img = getattr(data, "image", None)
-            w = int(getattr(img, "dimensions", None).width) if img else 0
-            h = int(getattr(img, "dimensions", None).height) if img else 0
-            return MapData(rooms=rooms, robot=robot, image_width=w, image_height=h)
+        try:
+            async def read() -> MapData:
+                mc = self._v1.map_content
+                await mc.refresh()
+                data = mc.map_data
+                rooms = [Room(int(r.segment_id), getattr(r, "name", None) or f"Room {r.segment_id}")
+                         for r in (getattr(data, "rooms", None) or [])]
+                robot = None
+                pos = getattr(data, "vacuum_position", None)
+                if pos is not None:
+                    robot = Point(int(getattr(pos, "x", 0)), int(getattr(pos, "y", 0)))
+                return MapData(rooms=rooms, robot=robot)
 
-        return await self._locked_retry(read)
+            return await self._locked_retry(read)
+        except Exception:
+            _LOGGER.warning("live map data fetch failed", exc_info=True)
+            return MapData()
 
     async def list_rooms(self) -> list[Room]:
         async def read() -> list[Room]:
             rooms = self._v1.rooms
             await rooms.refresh()
-            return [Room(int(seg), name) for seg, name in (rooms.room_mapping() or {}).items()]
+            return [
+                Room(int(m.segment_id), m.name or f"Room {m.segment_id}")
+                for m in (rooms.rooms or [])
+            ]
 
         return await self._locked_retry(read)
 
@@ -194,10 +210,11 @@ class LiveGateway:
         async def read() -> Consumables:
             cons = self._v1.consumables
             await cons.refresh()
+            # Fields are seconds of use; Roborock's standard lifetimes are 300/200/150 hours.
             return Consumables(
-                main_brush_pct=int(getattr(cons, "main_brush_life", 0) or 0),
-                side_brush_pct=int(getattr(cons, "side_brush_life", 0) or 0),
-                filter_pct=int(getattr(cons, "filter_life", 0) or 0),
+                main_brush_pct=_life_pct(getattr(cons, "main_brush_work_time", None), 300),
+                side_brush_pct=_life_pct(getattr(cons, "side_brush_work_time", None), 200),
+                filter_pct=_life_pct(getattr(cons, "filter_work_time", None), 150),
             )
 
         return await self._locked_retry(read)
@@ -241,6 +258,12 @@ class LiveGateway:
 
     async def run_routine(self, routine_id: int) -> None:
         await self._web.execute_scene(self._user_data, routine_id)
+
+
+def _life_pct(work_time_seconds: Any, max_hours: float) -> int:
+    """Percent of life remaining from seconds of use against a standard lifetime."""
+    used_hours = (work_time_seconds or 0) / 3600
+    return max(0, min(100, round(100 - used_hours / max_hours * 100)))
 
 
 def _pick_device(devices: list, duid: str) -> Any:

@@ -7,113 +7,199 @@
 <style>
   :root {
     color-scheme: light;
-    --surface:      #f4f4f2;
-    --card:         #fcfcfb;
-    --border:       #e3e2de;
-    --ink:          #0b0b0b;
-    --ink-2:        #52514e;
-    --ink-3:        #8a8984;
-    --accent:       #2a78d6;
-    --accent-ink:   #ffffff;
-    --accent-soft:  #e4eefb;
-    --track:        #ebeae6;
-    --good:         #0ca30c;
-    --warning:      #fab219;
-    --critical:     #d03b3b;
-    --shadow:       0 1px 2px rgb(0 0 0 / 0.05), 0 4px 16px rgb(0 0 0 / 0.05);
+    --bg1:        #d6f5e6;
+    --bg2:        #d8ecfd;
+    --bg-blob:    rgba(255,255,255,0.55);
+    --card:       rgba(255,255,255,0.72);
+    --card-solid: #ffffff;
+    --frost:      rgba(255,255,255,0.6);
+    --border:     rgba(255,255,255,0.7);
+    --hairline:   rgba(15,36,54,0.08);
+    --ink:        #10293c;
+    --ink-2:      #4a6272;
+    --ink-3:      #8aa2b2;
+    --accent:     #12b3c9;
+    --accent-2:   #1f9bd8;
+    --accent-ink: #ffffff;
+    --accent-soft:rgba(18,179,201,0.14);
+    --track:      rgba(15,36,54,0.08);
+    --good:       #16b877;
+    --warning:    #f2a51c;
+    --critical:   #e5484d;
+    --shadow:     0 2px 6px rgb(23 60 84 / 0.06), 0 16px 40px rgb(23 60 84 / 0.10);
+    --shadow-sm:  0 1px 2px rgb(23 60 84 / 0.06), 0 6px 18px rgb(23 60 84 / 0.08);
+    --glow:       0 10px 28px rgb(18 179 201 / 0.45), 0 2px 8px rgb(18 179 201 / 0.35);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       color-scheme: dark;
-      --surface:      #121211;
-      --card:         #1a1a19;
-      --border:       #2e2e2c;
-      --ink:          #ffffff;
-      --ink-2:        #c3c2b7;
-      --ink-3:        #85847d;
-      --accent:       #3987e5;
-      --accent-ink:   #ffffff;
-      --accent-soft:  #1c2c40;
-      --track:        #292927;
-      --shadow:       0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.35);
+      --bg1:        #12202e;
+      --bg2:        #0d1620;
+      --bg-blob:    rgba(90,160,190,0.10);
+      --card:       rgba(255,255,255,0.055);
+      --card-solid: #182531;
+      --frost:      rgba(255,255,255,0.08);
+      --border:     rgba(255,255,255,0.10);
+      --hairline:   rgba(255,255,255,0.09);
+      --ink:        #ecf4fa;
+      --ink-2:      #a9bfce;
+      --ink-3:      #6f8797;
+      --accent:     #23c7dc;
+      --accent-2:   #3aa6e8;
+      --accent-ink: #05242a;
+      --accent-soft:rgba(35,199,220,0.16);
+      --track:      rgba(255,255,255,0.10);
+      --good:       #22c98a;
+      --warning:    #f4b13a;
+      --critical:   #f2686c;
+      --shadow:     0 2px 6px rgb(0 0 0 / 0.35), 0 18px 44px rgb(0 0 0 / 0.45);
+      --shadow-sm:  0 1px 2px rgb(0 0 0 / 0.4), 0 8px 22px rgb(0 0 0 / 0.4);
+      --glow:       0 10px 30px rgb(35 199 220 / 0.4), 0 2px 10px rgb(35 199 220 / 0.35);
     }
   }
 
   * { box-sizing: border-box; }
+  html, body { height: 100%; }
   body {
     font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    background: var(--surface); color: var(--ink);
-    margin: 0; padding: 24px 20px 48px;
+    color: var(--ink);
+    margin: 0;
+    padding: 0;
+    background:
+      radial-gradient(120% 80% at 15% 0%, var(--bg-blob), transparent 60%),
+      radial-gradient(120% 90% at 100% 10%, var(--bg-blob), transparent 55%),
+      linear-gradient(158deg, var(--bg1) 0%, var(--bg2) 100%);
+    background-attachment: fixed;
+    -webkit-font-smoothing: antialiased;
   }
-  .shell { max-width: 1060px; margin: 0 auto; }
 
-  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
-  header h1 { font-size: 1.25rem; margin: 0; letter-spacing: -0.01em; }
-  .model { color: var(--ink-3); font-size: 0.85rem; font-weight: 500; }
+  .app {
+    width: 100%;
+    max-width: 500px;
+    margin: 0 auto;
+    min-height: 100vh;
+    padding: 18px 16px 158px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    position: relative;
+  }
+
+  /* ---------- layout shell ---------- */
+  .layout { display: flex; flex-direction: column; gap: 16px; }
+  .col-left, .col-right { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+  /* two-column desktop shell */
+  @media (min-width: 1100px) {
+    .app {
+      max-width: 1180px;
+      padding: 28px 26px 44px;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
+      gap: 22px;
+      align-items: start;
+    }
+    .col-left { position: sticky; top: 22px; }
+  }
+
+  /* ---------- device header ---------- */
+  .topbar { display: flex; flex-direction: column; gap: 12px; padding: 0 4px; }
+  .topbar-row { display: flex; align-items: center; gap: 10px; }
+  .brand {
+    display: inline-flex; align-items: center; gap: 8px; border: 0; background: transparent;
+    color: var(--ink-2); font: inherit; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+    padding: 4px 2px; border-radius: 10px;
+  }
+  .brand svg { width: 16px; height: 16px; fill: currentColor; opacity: 0.75; }
+  .hdr-icons { margin-left: auto; display: flex; gap: 10px; }
+  .frost-btn {
+    width: 42px; height: 42px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--frost); border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm); color: var(--ink-2); cursor: pointer;
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    transition: transform 0.12s ease, background 0.2s ease;
+  }
+  .frost-btn:hover { background: var(--card-solid); }
+  .frost-btn:active { transform: scale(0.94); }
+  .frost-btn svg { width: 19px; height: 19px; fill: currentColor; }
+
+  .hdr-main { display: flex; align-items: center; gap: 14px; padding: 0 2px; }
+  .hdr-titles { min-width: 0; flex: 1; }
+  .device-name {
+    font-size: 1.6rem; font-weight: 750; letter-spacing: -0.02em; margin: 2px 0 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .device-sub { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 3px; }
+  .model.link { color: var(--ink-3); font-size: 0.8rem; font-weight: 600; text-decoration: none; }
+  .model.link:hover { color: var(--accent); }
   #offline {
-    display: none; margin-left: auto; font-size: 0.8rem; font-weight: 600;
-    color: var(--critical);
+    display: none; font-size: 0.78rem; font-weight: 700; color: var(--critical);
+    margin-left: 2px;
   }
 
-  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
-  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  /* ---------- header battery ring (grafted from B) ---------- */
+  .head-status {
+    display: flex; align-items: center; gap: 11px; flex-shrink: 0;
+    padding: 7px 15px 7px 8px; border-radius: 999px;
+    background: var(--frost); border: 1px solid var(--border);
+    box-shadow: var(--shadow-sm);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  }
+  .batt-ring { position: relative; width: 42px; height: 42px; flex-shrink: 0; }
+  .batt-ring svg { width: 42px; height: 42px; transform: rotate(-90deg); }
+  .batt-ring .track-c { fill: none; stroke: var(--track); stroke-width: 4; }
+  .batt-ring .fill-c {
+    fill: none; stroke: var(--accent); stroke-width: 4; stroke-linecap: round;
+    transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease;
+  }
+  .batt-ring.low .fill-c { stroke: var(--warning); }
+  .batt-ring .bolt {
+    position: absolute; inset: 0; display: none; place-items: center; color: var(--good);
+  }
+  .batt-ring.charging .bolt { display: grid; }
+  .batt-ring .bolt svg { width: 15px; height: 15px; transform: none; fill: currentColor; }
+  .head-status .txt { line-height: 1.15; }
+  .head-status .pct { font-size: 1rem; font-weight: 750; font-variant-numeric: tabular-nums; }
+  .head-status .sub { font-size: 0.74rem; font-weight: 600; color: var(--ink-3); text-transform: capitalize; }
 
+  /* ---------- cards ---------- */
   .card {
-    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
-    padding: 16px 18px; box-shadow: var(--shadow);
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 18px;
+    box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
+    backdrop-filter: blur(20px) saturate(1.4);
   }
   .card h2 {
-    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
-    color: var(--ink-3); margin: 0 0 12px;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--ink-3); margin: 0 0 14px;
   }
 
-  /* status */
-  .state-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .state-badge {
-    display: inline-flex; align-items: center; gap: 8px;
-    font-size: 1.05rem; font-weight: 650; text-transform: capitalize;
-  }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-3); }
-  .dot.active { background: var(--accent); }
-  .dot.good { background: var(--good); }
-  .dot.bad { background: var(--critical); }
-  .pill {
-    font-size: 0.72rem; font-weight: 600; padding: 3px 9px; border-radius: 999px;
-    background: var(--track); color: var(--ink-2);
-  }
-  .pill.on { background: var(--accent-soft); color: var(--accent); }
-  #error-banner {
-    display: none; margin-top: 12px; padding: 9px 12px; border-radius: 9px;
-    background: color-mix(in srgb, var(--critical) 12%, transparent);
-    color: var(--critical); font-size: 0.85rem; font-weight: 600;
-  }
-  .battery { margin-top: 14px; }
-  .meter-row { display: flex; align-items: baseline; justify-content: space-between; font-size: 0.8rem; }
-  .meter-row b { font-weight: 600; color: var(--ink-2); }
-  .meter-row span { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 650; }
-  .meter-row .low { color: var(--warning); font-weight: 700; margin-left: 6px; }
-  .meter { height: 6px; border-radius: 3px; background: var(--track); margin-top: 6px; overflow: hidden; }
-  .meter i { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.6s ease; }
-
-  /* map */
-  .map-card { padding: 14px; }
-  .map-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  /* ---------- map hero ---------- */
+  .map-card { padding: 12px; }
+  .map-head { display: flex; align-items: center; gap: 10px; margin: 4px 6px 10px; }
   .map-head h2 { margin: 0; flex: 1; }
   .map-badge {
-    display: none; font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;
-    background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning);
+    display: none; font-size: 0.7rem; font-weight: 700; padding: 4px 10px; border-radius: 999px;
+    background: color-mix(in srgb, var(--warning) 20%, transparent); color: var(--warning);
   }
-  .icon-btn {
+  .rotate-btn {
     display: inline-flex; align-items: center; gap: 6px;
-    font: inherit; font-size: 0.78rem; font-weight: 600; color: var(--ink-2);
-    background: transparent; border: 1px solid var(--border); border-radius: 8px;
-    padding: 6px 10px; cursor: pointer;
+    font: inherit; font-size: 0.76rem; font-weight: 600; color: var(--ink-2);
+    background: var(--frost); border: 1px solid var(--border); border-radius: 999px;
+    padding: 6px 12px; cursor: pointer;
   }
-  .icon-btn:hover { background: var(--track); }
+  .rotate-btn:hover { background: var(--card-solid); }
+  .rotate-btn svg { width: 13px; height: 13px; fill: currentColor; }
   .map-stage {
-    position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden;
-    background: #16305e;
+    position: relative; aspect-ratio: 1; border-radius: 18px; overflow: hidden;
+    background: radial-gradient(120% 120% at 30% 20%, #1e3f74, #13284d);
+    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
   }
   .map-stage img {
     position: absolute; inset: 0;
@@ -122,239 +208,489 @@
     transition: transform 0.35s ease;
   }
 
-  /* controls */
-  .btn-row { display: flex; gap: 8px; }
-  .btn {
-    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    font: inherit; font-size: 0.9rem; font-weight: 650;
-    padding: 11px 12px; border-radius: 10px; cursor: pointer;
-    border: 1px solid var(--border); background: var(--card); color: var(--ink);
+  /* ---------- tabs ---------- */
+  .tabs {
+    display: flex; gap: 4px; padding: 5px;
+    background: var(--frost); border: 1px solid var(--border); border-radius: 999px;
+    box-shadow: var(--shadow-sm);
+    -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+    position: sticky; top: 10px; z-index: 20;
   }
-  .btn:hover { background: var(--track); }
-  .btn:active { transform: translateY(1px); }
-  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-  .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
-  .btn svg { width: 14px; height: 14px; fill: currentColor; }
-
-  .seg-label { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); margin: 12px 0 6px; }
-  .seg-label:first-of-type { margin-top: 0; }
-  .seg { display: flex; background: var(--track); border-radius: 9px; padding: 3px; gap: 3px; }
-  .seg button {
-    flex: 1; font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--ink-2);
-    border: 0; background: transparent; border-radius: 7px; padding: 7px 4px; cursor: pointer;
+  .tab {
+    flex: 1; font: inherit; font-size: 0.82rem; font-weight: 650; color: var(--ink-2);
+    border: 0; background: transparent; border-radius: 999px; padding: 9px 4px; cursor: pointer;
+    transition: color 0.15s ease;
   }
-  .seg button:hover { color: var(--ink); }
-  .seg button.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / 0.15); }
-
-  /* rooms */
-  .chips { display: flex; flex-wrap: wrap; gap: 7px; }
-  .chip {
-    font-size: 0.8rem; font-weight: 600; color: var(--ink-2);
-    border: 1px solid var(--border); background: transparent;
-    border-radius: 999px; padding: 6px 13px; cursor: pointer; font-family: inherit;
+  .tab:hover { color: var(--ink); }
+  .tab.active {
+    background: var(--card-solid); color: var(--accent);
+    box-shadow: 0 1px 3px rgb(23 60 84 / 0.14);
   }
-  .chip:hover { background: var(--track); }
-  .chip.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-  #clean-btn { margin-top: 12px; width: 100%; }
-  #clean-btn:disabled { opacity: 0.45; cursor: default; transform: none; }
 
-  .routine-list { display: flex; flex-direction: column; gap: 8px; }
+  .panel { display: none; flex-direction: column; gap: 16px; animation: fade 0.25s ease; }
+  .panel.active { display: flex; }
+  @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
-  .cons { display: flex; flex-direction: column; gap: 10px; }
-
-  /* toast */
-  #toast {
-    position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 16px);
-    background: var(--ink); color: var(--card); font-size: 0.85rem; font-weight: 600;
-    padding: 10px 18px; border-radius: 10px; opacity: 0; pointer-events: none;
-    transition: opacity 0.25s ease, transform 0.25s ease; max-width: 90vw;
+  /* ---------- status ---------- */
+  .state-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .state-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 1.1rem; font-weight: 700; text-transform: capitalize;
   }
-  #toast.show { opacity: 1; transform: translate(-50%, 0); }
-  #toast.err { background: var(--critical); color: #fff; }
-
-  /* connect panel */
-  .note { font-size: 0.78rem; color: var(--ink-3); margin: 0 0 12px; line-height: 1.4; }
-  .note.foot { margin: 12px 0 0; }
-  .field { display: flex; flex-direction: column; gap: 6px; }
-  .field label { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); }
-  .input {
-    font: inherit; font-size: 0.9rem; padding: 9px 11px; border-radius: 9px;
-    border: 1px solid var(--border); background: var(--card); color: var(--ink);
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--ink-3); box-shadow: 0 0 0 4px transparent; }
+  .dot.active { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+  .dot.good { background: var(--good); box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 20%, transparent); }
+  .dot.bad { background: var(--critical); box-shadow: 0 0 0 4px color-mix(in srgb, var(--critical) 20%, transparent); }
+  .pill {
+    font-size: 0.72rem; font-weight: 650; padding: 4px 11px; border-radius: 999px;
+    background: var(--track); color: var(--ink-2);
   }
-  .input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
-  #connect-card .btn { width: 100%; margin-top: 10px; }
-  .disc { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
-  .disc-row { display: flex; justify-content: space-between; gap: 12px; font-size: 0.82rem; }
-  .disc-row b { font-weight: 600; color: var(--ink-2); }
-  .disc-row span { color: var(--ink); font-weight: 600; text-align: right; }
-
-  /* two-stage */
-  #two-stage-btn { width: 100%; margin-top: 4px; }
-  #two-stage-btn:disabled { opacity: 0.55; cursor: default; transform: none; }
-  .stage-track { display: flex; gap: 6px; margin-top: 14px; }
-  .stage-step {
-    flex: 1; text-align: center; font-size: 0.66rem; font-weight: 600;
-    color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em;
-  }
-  .stage-step .bar {
-    height: 5px; border-radius: 3px; background: var(--track);
-    margin-bottom: 6px; transition: background 0.3s ease;
-  }
-  .stage-step.done .bar { background: var(--good); }
-  .stage-step.active .bar { background: var(--accent); }
-  .stage-step.active { color: var(--accent); }
-  .stage-step.done { color: var(--ink-2); }
-  .stage-msg { margin-top: 10px; font-size: 0.82rem; color: var(--ink-2); font-weight: 600; min-height: 1.1em; }
-  #two-stage-error {
-    display: none; margin-top: 10px; padding: 9px 12px; border-radius: 9px;
+  .pill.on { background: var(--accent-soft); color: var(--accent); }
+  #error-banner {
+    display: none; margin-top: 14px; padding: 10px 13px; border-radius: 12px;
     background: color-mix(in srgb, var(--critical) 12%, transparent);
     color: var(--critical); font-size: 0.85rem; font-weight: 600;
   }
+  .battery { margin-top: 16px; }
+  .meter-row { display: flex; align-items: baseline; justify-content: space-between; font-size: 0.82rem; }
+  .meter-row b { font-weight: 600; color: var(--ink-2); }
+  .meter-row span { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 700; }
+  .meter-row .low { color: var(--warning); font-weight: 700; margin-left: 6px; }
+  .meter { height: 8px; border-radius: 999px; background: var(--track); margin-top: 7px; overflow: hidden; }
+  .meter i {
+    display: block; height: 100%; border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    transition: width 0.6s ease;
+  }
+
+  /* ---------- buttons ---------- */
+  .btn {
+    width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    font: inherit; font-size: 0.92rem; font-weight: 650;
+    padding: 13px 14px; border-radius: 14px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card-solid); color: var(--ink);
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.1s ease, background 0.2s ease;
+  }
+  .btn:hover { background: var(--track); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary {
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border-color: transparent; color: var(--accent-ink); box-shadow: var(--glow);
+  }
+  .btn.primary:hover { filter: brightness(1.04); background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+  .btn svg { width: 15px; height: 15px; fill: currentColor; }
+  .btn-row { display: flex; gap: 10px; }
+  .btn-row .btn { width: auto; flex: 1; }
+
+  /* ---------- segmented ---------- */
+  .seg-label { font-size: 0.78rem; font-weight: 600; color: var(--ink-2); margin: 16px 0 7px; }
+  .seg-label:first-of-type { margin-top: 0; }
+  .seg { display: flex; background: var(--track); border-radius: 13px; padding: 4px; gap: 4px; }
+  .seg button {
+    flex: 1; font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--ink-2);
+    border: 0; background: transparent; border-radius: 10px; padding: 9px 4px; cursor: pointer;
+    transition: color 0.15s ease;
+  }
+  .seg button:hover { color: var(--ink); }
+  .seg button.active { background: var(--card-solid); color: var(--accent); box-shadow: 0 1px 3px rgb(23 60 84 / 0.16); }
+
+  /* ---------- rooms ---------- */
+  .chips { display: flex; flex-wrap: wrap; gap: 9px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 0.85rem; font-weight: 600; color: var(--ink-2);
+    border: 1px solid var(--border); background: var(--card-solid);
+    border-radius: 999px; padding: 9px 16px; cursor: pointer; font-family: inherit;
+    box-shadow: var(--shadow-sm); transition: transform 0.1s ease;
+  }
+  .chip::before {
+    content: ""; width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent); opacity: 0.85; flex-shrink: 0;
+  }
+  .chip:nth-child(5n+1)::before { background: #12b3c9; }
+  .chip:nth-child(5n+2)::before { background: #7a5cff; }
+  .chip:nth-child(5n+3)::before { background: #f2a51c; }
+  .chip:nth-child(5n+4)::before { background: #16b877; }
+  .chip:nth-child(5n+5)::before { background: #e5678f; }
+  .chip:hover { background: var(--track); }
+  .chip:active { transform: scale(0.96); }
+  .chip.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  #clean-btn { margin-top: 16px; }
+  #clean-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: var(--shadow-sm); }
+
+  .routine-list { display: flex; flex-direction: column; gap: 10px; }
+  .cons { display: flex; flex-direction: column; gap: 14px; }
+  .note { font-size: 0.82rem; color: var(--ink-3); margin: 0 0 14px; line-height: 1.45; }
+  .note.foot { margin: 14px 0 0; }
+  .model-line { font-size: 0.78rem; color: var(--ink-3); font-weight: 600; margin: 0 0 14px; }
+  .model-line span { color: var(--ink-2); }
+
+  /* ---------- two-stage card ---------- */
+  .stage-track { display: flex; gap: 7px; margin-top: 6px; }
+  .stage-step {
+    flex: 1; text-align: center; font-size: 0.64rem; font-weight: 700;
+    color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .stage-step .bar {
+    height: 6px; border-radius: 999px; background: var(--track);
+    margin-bottom: 7px; transition: background 0.3s ease;
+  }
+  .stage-step.done .bar { background: var(--good); }
+  .stage-step.active .bar { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .stage-step.active { color: var(--accent); }
+  .stage-step.done { color: var(--ink-2); }
+  .stage-msg { margin-top: 12px; font-size: 0.84rem; color: var(--ink-2); font-weight: 600; min-height: 1.1em; }
+  #two-stage-error {
+    display: none; margin-top: 12px; padding: 10px 13px; border-radius: 12px;
+    background: color-mix(in srgb, var(--critical) 12%, transparent);
+    color: var(--critical); font-size: 0.85rem; font-weight: 600;
+  }
+
+  /* ---------- connect ---------- */
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 0.78rem; font-weight: 600; color: var(--ink-2); }
+  .input {
+    font: inherit; font-size: 0.92rem; padding: 11px 13px; border-radius: 12px;
+    border: 1px solid var(--border); background: var(--card-solid); color: var(--ink);
+  }
+  .input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  #connect-card .btn { margin-top: 12px; }
+  .disc { margin-top: 14px; display: flex; flex-direction: column; gap: 9px; }
+  .disc-row { display: flex; justify-content: space-between; gap: 12px; font-size: 0.84rem; }
+  .disc-row b { font-weight: 600; color: var(--ink-2); }
+  .disc-row span { color: var(--ink); font-weight: 600; text-align: right; }
+
+  /* ---------- bottom action bar (floating on mobile, inline on desktop) ---------- */
+  .actionbar {
+    position: fixed; left: 50%; transform: translateX(-50%);
+    bottom: 18px; width: calc(100% - 32px); max-width: 468px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 22px; border-radius: 30px;
+    background: var(--frost); border: 1px solid var(--border);
+    box-shadow: var(--shadow);
+    -webkit-backdrop-filter: blur(22px) saturate(1.4); backdrop-filter: blur(22px) saturate(1.4);
+    z-index: 40;
+  }
+  @media (min-width: 1100px) {
+    .actionbar {
+      position: sticky; left: auto; bottom: auto; transform: none;
+      width: 100%; max-width: none; margin-top: 2px;
+      padding: 14px 30px;
+      justify-content: center; gap: 44px;
+    }
+  }
+  .round-action {
+    width: 58px; height: 58px; border-radius: 50%;
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    background: var(--card-solid); border: 1px solid var(--border);
+    color: var(--ink-2); cursor: pointer; box-shadow: var(--shadow-sm);
+    font: inherit; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.03em;
+    transition: transform 0.12s ease;
+  }
+  .round-action:hover { color: var(--ink); }
+  .round-action:active { transform: scale(0.93); }
+  .round-action svg { width: 20px; height: 20px; fill: currentColor; }
+  .primary-action {
+    width: 84px; height: 84px; margin-top: -30px; border-radius: 50%;
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    border: 0; cursor: pointer; color: var(--accent-ink);
+    background: linear-gradient(140deg, var(--accent), var(--accent-2));
+    box-shadow: var(--glow), 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent);
+    font: inherit; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+    transition: transform 0.12s ease, filter 0.2s ease;
+    animation: breathe 3.2s ease-in-out infinite;
+  }
+  .primary-action svg { width: 30px; height: 30px; fill: currentColor; }
+  .primary-action:hover { filter: brightness(1.05); }
+  .primary-action:active { transform: scale(0.95); }
+  .primary-action:disabled { opacity: 0.6; cursor: default; animation: none; filter: grayscale(0.2); }
+  @keyframes breathe {
+    0%, 100% { box-shadow: var(--glow), 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent); }
+    50%      { box-shadow: var(--glow), 0 0 0 12px color-mix(in srgb, var(--accent) 6%, transparent); }
+  }
+
+  /* ---------- connect sheet ---------- */
+  .scrim {
+    position: fixed; inset: 0; background: rgb(6 20 30 / 0.42);
+    opacity: 0; pointer-events: none; transition: opacity 0.28s ease; z-index: 50;
+    -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  }
+  .scrim.show { opacity: 1; pointer-events: auto; }
+  .sheet {
+    position: fixed; left: 50%; bottom: 0; transform: translate(-50%, 100%);
+    width: 100%; max-width: 500px; z-index: 60;
+    background: var(--card-solid); border: 1px solid var(--border);
+    border-radius: 26px 26px 0 0; padding: 10px 18px calc(24px + env(safe-area-inset-bottom));
+    box-shadow: 0 -18px 50px rgb(6 20 30 / 0.3);
+    transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+    max-height: 88vh; overflow-y: auto;
+  }
+  .sheet.show { transform: translate(-50%, 0); }
+  .sheet-grip { width: 42px; height: 5px; border-radius: 999px; background: var(--track); margin: 4px auto 12px; }
+  .sheet-head { display: flex; align-items: center; margin-bottom: 12px; }
+  .sheet-head h2 { font-size: 1.05rem; font-weight: 750; margin: 0; }
+  .sheet-close {
+    margin-left: auto; width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid var(--border); background: var(--card); color: var(--ink-2);
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+  }
+  .sheet-close svg { width: 15px; height: 15px; fill: currentColor; }
+  .sheet .card { box-shadow: none; border: 0; background: transparent; padding: 0; -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+  /* ---------- toast ---------- */
+  #toast {
+    position: fixed; left: 50%; bottom: 120px; transform: translate(-50%, 16px);
+    background: var(--ink); color: var(--bg2); font-size: 0.86rem; font-weight: 650;
+    padding: 11px 20px; border-radius: 14px; opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease; max-width: 90vw; z-index: 70;
+    box-shadow: var(--shadow);
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.err { background: var(--critical); color: #fff; }
 </style>
 </head>
 <body>
-<div class="shell">
-  <header>
-    <h1>roborock-webapp</h1>
-    <span class="model" id="model"></span>
-    <a class="model" href="https://site-mu-ten-70.vercel.app" target="_blank" rel="noopener" style="text-decoration:none">About ↗</a>
-    <span id="offline">● connection lost — is the app still running?</span>
+<div class="app">
+  <header class="topbar">
+    <div class="topbar-row">
+      <button class="brand" onclick="showTab('clean')" title="Home">
+        <svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5 1.2-1.2L7.4 8l3.8-3.8z"/></svg>
+        roborock
+      </button>
+      <span id="offline">● connection lost — is the app still running?</span>
+      <div class="hdr-icons">
+        <button class="frost-btn" onclick="showTab('setup')" title="Settings">
+          <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 4a7 7 0 0 0-.13-1.28l2.03-1.58-2-3.46-2.39.96a7 7 0 0 0-2.22-1.28L15.8 2h-4l-.43 2.62a7 7 0 0 0-2.22 1.28l-2.39-.96-2 3.46 2.03 1.58a7 7 0 0 0 0 2.56L2.77 14.1l2 3.46 2.39-.96a7 7 0 0 0 2.22 1.28L11.8 20h4l.43-2.62a7 7 0 0 0 2.22-1.28l2.39.96 2-3.46-2.03-1.58c.09-.42.13-.85.13-1.28z"/></svg>
+        </button>
+        <button class="frost-btn" onclick="openConnectSheet()" title="Account & discover">
+          <svg viewBox="0 0 24 24"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10zm0 2c-4.4 0-8 2.7-8 6v2h16v-2c0-3.3-3.6-6-8-6z"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="hdr-main">
+      <div class="hdr-titles">
+        <h1 class="device-name">Qrevo L Pro</h1>
+        <div class="device-sub">
+          <a class="model link" href="https://site-mu-ten-70.vercel.app" target="_blank" rel="noopener">About ↗</a>
+        </div>
+      </div>
+      <div class="head-status">
+        <div class="batt-ring" id="hdr-batt">
+          <svg viewBox="0 0 42 42">
+            <circle class="track-c" cx="21" cy="21" r="16"></circle>
+            <circle class="fill-c" id="hdr-ring-fill" cx="21" cy="21" r="16"
+                    stroke-dasharray="100.53" stroke-dashoffset="100.53"></circle>
+          </svg>
+          <span class="bolt" aria-hidden="true">
+            <svg viewBox="0 0 16 16"><path d="M9 1 3 9h3l-1 6 6-8H8z"/></svg>
+          </span>
+        </div>
+        <div class="txt">
+          <div class="pct" id="hdr-batt-pct">—</div>
+          <div class="sub" id="hdr-batt-state">connecting…</div>
+        </div>
+      </div>
+    </div>
   </header>
 
-  <div class="grid">
-    <div class="col">
-      <div class="card" id="connect-card">
-        <h2>Connect your Roborock</h2>
-        <p class="note" id="connect-demo-note" hidden>Demo mode — no Roborock account needed.</p>
-
-        <div id="connect-connected" hidden>
-          <div class="state-row">
-            <span class="state-badge"><span class="dot good"></span>Connected</span>
-            <span class="pill on" id="connect-email-display"></span>
-          </div>
-        </div>
-
-        <div id="connect-form">
-          <div class="field">
-            <label for="connect-email">Email</label>
-            <input class="input" id="connect-email" type="email" placeholder="you@example.com" autocomplete="email" />
-          </div>
-          <button class="btn" id="connect-send-btn" onclick="sendCode()">Send code</button>
-
-          <div id="connect-step2" hidden>
-            <div class="field" style="margin-top: 12px">
-              <label for="connect-code">Verification code</label>
-              <input class="input" id="connect-code" type="text" inputmode="numeric" placeholder="Code from email" autocomplete="one-time-code" />
-            </div>
-            <button class="btn primary" id="connect-submit-btn" onclick="submitCode()">Connect</button>
-          </div>
-        </div>
-
-        <button class="btn" id="discover-btn" onclick="discover()">Discover</button>
-        <p class="note foot">Capturing duid + carpet integers is a manual owner step after live login.</p>
-        <div id="discover-results"></div>
-      </div>
-
+  <div class="layout">
+    <div class="col-left">
       <div class="card map-card">
         <div class="map-head">
           <h2>Map</h2>
           <span class="map-badge" id="map-badge">⚠ placeholder — live map unavailable</span>
-          <button class="icon-btn" onclick="rotateMap()" title="Rotate map 90°">
-            <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><path d="M8 3a5 5 0 1 0 5 5h-1.5A3.5 3.5 0 1 1 8 4.5V7l3.5-3L8 1v2z"/></svg>
+          <button class="rotate-btn" onclick="rotateMap()" title="Rotate map 90°">
+            <svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 5 5h-1.5A3.5 3.5 0 1 1 8 4.5V7l3.5-3L8 1v2z"/></svg>
             Rotate
           </button>
         </div>
         <div class="map-stage"><img id="map" alt="live map" /></div>
       </div>
 
-      <div class="card">
-        <h2>Rooms</h2>
-        <div class="chips" id="rooms"></div>
-        <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
+      <!-- floating bottom action bar (inline sticky on desktop) -->
+      <div class="actionbar">
+        <button class="round-action" onclick="cmd('/start')" title="Start">
+          <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Start
+        </button>
+        <button class="primary-action" id="two-stage-btn" onclick="startTwoStage()" title="Vacuum, then mop avoiding carpet">
+          <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Clean
+        </button>
+        <button class="round-action" onclick="cmd('/dock')" title="Dock">
+          <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
+        </button>
       </div>
     </div>
 
-    <div class="col">
-      <div class="card" id="two-stage-card">
-        <h2>Two-stage clean</h2>
-        <p class="note">Vacuums the whole floor, then mops while avoiding carpet.</p>
-        <button class="btn primary" id="two-stage-btn" onclick="startTwoStage()">
-          <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Vacuum, then mop avoiding carpet
-        </button>
-        <div class="stage-track" id="two-stage-track">
-          <div class="stage-step"><div class="bar"></div>Vacuum</div>
-          <div class="stage-step"><div class="bar"></div>Wait</div>
-          <div class="stage-step"><div class="bar"></div>Mop</div>
-          <div class="stage-step"><div class="bar"></div>Wait</div>
-          <div class="stage-step"><div class="bar"></div>Done</div>
-        </div>
-        <div class="stage-msg" id="two-stage-message"></div>
-        <div id="two-stage-error"></div>
+    <div class="col-right">
+      <div class="tabs">
+        <button class="tab active" data-tab="clean" onclick="showTab('clean')">Clean</button>
+        <button class="tab" data-tab="rooms" onclick="showTab('rooms')">Rooms</button>
+        <button class="tab" data-tab="routines" onclick="showTab('routines')">Routines</button>
+        <button class="tab" data-tab="setup" onclick="showTab('setup')">Setup</button>
       </div>
 
-      <div class="card">
-        <h2>Status</h2>
-        <div class="state-row">
-          <span class="state-badge"><span class="dot" id="s-dot"></span><span id="s-state">—</span></span>
-          <span class="pill" id="p-cleaning">cleaning</span>
-          <span class="pill" id="p-docked">docked</span>
+      <!-- CLEAN -->
+      <section class="panel active" data-panel="clean">
+        <div class="card" id="two-stage-card">
+          <h2>Two-stage clean</h2>
+          <p class="note">Vacuums the whole floor, then mops while avoiding carpet. Tap the glowing button to start.</p>
+          <div class="stage-track" id="two-stage-track">
+            <div class="stage-step"><div class="bar"></div>Vacuum</div>
+            <div class="stage-step"><div class="bar"></div>Wait</div>
+            <div class="stage-step"><div class="bar"></div>Mop</div>
+            <div class="stage-step"><div class="bar"></div>Wait</div>
+            <div class="stage-step"><div class="bar"></div>Done</div>
+          </div>
+          <div class="stage-msg" id="two-stage-message"></div>
+          <div id="two-stage-error"></div>
         </div>
-        <div id="error-banner"></div>
-        <div class="battery">
-          <div class="meter-row"><b>Battery</b><span><span id="s-battery">—</span><span class="low" id="s-low" hidden>low</span></span></div>
-          <div class="meter"><i id="battery-bar" style="width:0%"></i></div>
-        </div>
-      </div>
 
-      <div class="card">
-        <h2>Controls</h2>
-        <div class="btn-row">
-          <button class="btn primary" onclick="cmd('/start')">
-            <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Start
-          </button>
-          <button class="btn" onclick="cmd('/pause')">
-            <svg viewBox="0 0 16 16"><path d="M4 2h3v12H4zM9 2h3v12H9z"/></svg>Pause
-          </button>
-          <button class="btn" onclick="cmd('/dock')">
-            <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
-          </button>
+        <div class="card">
+          <h2>Status</h2>
+          <div class="state-row">
+            <span class="state-badge"><span class="dot" id="s-dot"></span><span id="s-state">—</span></span>
+            <span class="pill" id="p-cleaning">cleaning</span>
+            <span class="pill" id="p-docked">docked</span>
+          </div>
+          <div id="error-banner"></div>
+          <div class="battery">
+            <div class="meter-row"><b>Battery</b><span><span id="s-battery">—</span><span class="low" id="s-low" hidden>low</span></span></div>
+            <div class="meter"><i id="battery-bar" style="width:0%"></i></div>
+          </div>
         </div>
-      </div>
 
-      <div class="card">
-        <h2>Cleaning settings</h2>
-        <div class="seg-label">Fan power</div>
-        <div class="seg" id="seg-fan">
-          <button data-v="quiet">Quiet</button><button data-v="balanced">Balanced</button>
-          <button data-v="turbo">Turbo</button><button data-v="max">Max</button>
+        <div class="card">
+          <h2>Controls</h2>
+          <div class="btn-row">
+            <button class="btn primary" onclick="cmd('/start')">
+              <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Start
+            </button>
+            <button class="btn" onclick="cmd('/pause')">
+              <svg viewBox="0 0 16 16"><path d="M4 2h3v12H4zM9 2h3v12H9z"/></svg>Pause
+            </button>
+            <button class="btn" onclick="cmd('/dock')">
+              <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
+            </button>
+          </div>
         </div>
-        <div class="seg-label">Mop intensity</div>
-        <div class="seg" id="seg-mop">
-          <button data-v="standard">Standard</button><button data-v="deep">Deep</button>
-        </div>
-        <div class="seg-label">Carpet</div>
-        <div class="seg" id="seg-carpet">
-          <button data-v="rise">Rise (vacuum over)</button><button data-v="avoid">Avoid</button>
-        </div>
-      </div>
+      </section>
 
-      <div class="card">
-        <h2>Routines</h2>
-        <div class="routine-list" id="routines"></div>
-      </div>
+      <!-- ROOMS -->
+      <section class="panel" data-panel="rooms">
+        <div class="card">
+          <h2>Rooms</h2>
+          <div class="chips" id="rooms"></div>
+          <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
+        </div>
+      </section>
 
-      <div class="card">
-        <h2>Consumables</h2>
-        <div class="cons" id="cons"></div>
-      </div>
+      <!-- ROUTINES -->
+      <section class="panel" data-panel="routines">
+        <div class="card">
+          <h2>Routines</h2>
+          <div class="routine-list" id="routines"></div>
+        </div>
+      </section>
+
+      <!-- SETUP -->
+      <section class="panel" data-panel="setup">
+        <div class="card" id="connect-card">
+          <h2>Connect your Roborock</h2>
+          <p class="model-line">Model: <span id="model">—</span></p>
+          <p class="note" id="connect-demo-note" hidden>Demo mode — no Roborock account needed.</p>
+
+          <div id="connect-connected" hidden>
+            <div class="state-row">
+              <span class="state-badge"><span class="dot good"></span>Connected</span>
+              <span class="pill on" id="connect-email-display"></span>
+            </div>
+          </div>
+
+          <div id="connect-form">
+            <div class="field">
+              <label for="connect-email">Email</label>
+              <input class="input" id="connect-email" type="email" placeholder="you@example.com" autocomplete="email" />
+            </div>
+            <button class="btn" id="connect-send-btn" onclick="sendCode()">Send code</button>
+
+            <div id="connect-step2" hidden>
+              <div class="field" style="margin-top: 12px">
+                <label for="connect-code">Verification code</label>
+                <input class="input" id="connect-code" type="text" inputmode="numeric" placeholder="Code from email" autocomplete="one-time-code" />
+              </div>
+              <button class="btn primary" id="connect-submit-btn" onclick="submitCode()">Connect</button>
+            </div>
+          </div>
+
+          <button class="btn" id="discover-btn" onclick="discover()">Discover</button>
+          <p class="note foot">Capturing duid + carpet integers is a manual owner step after live login.</p>
+          <div id="discover-results"></div>
+        </div>
+
+        <div class="card">
+          <h2>Cleaning settings</h2>
+          <div class="seg-label">Fan power</div>
+          <div class="seg" id="seg-fan">
+            <button data-v="quiet">Quiet</button><button data-v="balanced">Balanced</button>
+            <button data-v="turbo">Turbo</button><button data-v="max">Max</button>
+          </div>
+          <div class="seg-label">Mop intensity</div>
+          <div class="seg" id="seg-mop">
+            <button data-v="standard">Standard</button><button data-v="deep">Deep</button>
+          </div>
+          <div class="seg-label">Carpet</div>
+          <div class="seg" id="seg-carpet">
+            <button data-v="rise">Rise (vacuum over)</button><button data-v="avoid">Avoid</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Consumables</h2>
+          <div class="cons" id="cons"></div>
+        </div>
+      </section>
     </div>
   </div>
+</div>
+
+<!-- connect slide-up sheet -->
+<div class="scrim" id="connect-scrim" onclick="closeConnectSheet()"></div>
+<div class="sheet" id="connect-sheet">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <h2>Roborock account</h2>
+    <button class="sheet-close" onclick="closeConnectSheet()" title="Close">
+      <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" fill="none"/></svg>
+    </button>
+  </div>
+  <div id="connect-sheet-body"></div>
 </div>
 
 <div id="toast"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
+
+/* ---------- tab navigation ---------- */
+function showTab(name) {
+  document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
+}
+
+/* ---------- connect sheet ---------- */
+// The connect card lives in the Setup panel by default; the sheet borrows it so the
+// account flow can also slide up on demand (and auto-appears when a live login is needed).
+function openConnectSheet() {
+  const card = $("connect-card");
+  if (card.parentElement.id !== "connect-sheet-body") $("connect-sheet-body").appendChild(card);
+  $("connect-scrim").classList.add("show");
+  $("connect-sheet").classList.add("show");
+}
+function closeConnectSheet() {
+  $("connect-scrim").classList.remove("show");
+  $("connect-sheet").classList.remove("show");
+}
 
 /* ---------- feedback ---------- */
 let toastTimer;
@@ -413,6 +749,7 @@ function syncCleanBtn() {
 /* ---------- polling ---------- */
 const STATE_DOTS = { cleaning: "active", segment_cleaning: "active", zoned_cleaning: "active",
                      returning_home: "active", charging: "good", charging_complete: "good", error: "bad" };
+const RING_CIRC = 2 * Math.PI * 16;
 
 async function refreshStatus() {
   let s;
@@ -421,7 +758,8 @@ async function refreshStatus() {
     $("offline").style.display = "none";
   } catch { $("offline").style.display = "inline"; return; }
 
-  $("s-state").textContent = s.state_name.replaceAll("_", " ");
+  const stateLabel = s.state_name.replaceAll("_", " ");
+  $("s-state").textContent = stateLabel;
   $("s-dot").className = "dot " + (STATE_DOTS[s.state_name] || "");
   $("p-cleaning").classList.toggle("on", s.in_cleaning);
   $("p-docked").classList.toggle("on", s.docked);
@@ -433,6 +771,17 @@ async function refreshStatus() {
   eb.textContent = s.error ? "⚠ " + s.error : "";
   // Explicit false only: a server that predates map_ok omits the field, which is not a failure.
   $("map-badge").style.display = s.map_ok === false ? "inline-block" : "none";
+
+  // header battery ring mirror
+  const charging = s.state_name === "charging" || s.state_name === "charging_complete";
+  $("hdr-batt-pct").textContent = s.battery + "%";
+  $("hdr-ring-fill").style.strokeDashoffset = RING_CIRC * (1 - s.battery / 100);
+  const ring = $("hdr-batt");
+  ring.classList.toggle("low", s.battery < 20);
+  ring.classList.toggle("charging", charging);
+  $("hdr-batt-state").textContent = charging
+    ? (s.state_name === "charging_complete" ? "Charged" : "Charging")
+    : stateLabel;
 }
 
 function refreshMap() { $("map").src = "/map.png?t=" + Date.now(); }
@@ -456,6 +805,8 @@ async function loadAuthStatus() {
   $("connect-connected").hidden = !liveConnected;
   $("connect-form").hidden = liveConnected;
   if (liveConnected) $("connect-email-display").textContent = s.email || "connected";
+  // A live account that still needs sign-in gets the slide-up sheet on first load.
+  if (s.mode === "live" && !s.connected) openConnectSheet();
 }
 
 async function sendCode() {
@@ -542,6 +893,7 @@ async function startTwoStage() {
   const btn = $("two-stage-btn");
   btn.disabled = true;
   lastTwoStageError = null;
+  showTab("clean");
   try {
     const r = await fetch("/clean/two-stage", {
       method: "POST", headers: { "content-type": "application/json" }, body: "{}",

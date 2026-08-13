@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from roborock_auto.adapters.web.server import app
+from roborock_auto.domain.models import CleaningMode
 
 
 @pytest.fixture
@@ -51,6 +52,49 @@ def test_clean_rooms(client):
     assert client.post("/clean/rooms", json={"segment_ids": [16, 17]}).json() == {"ok": True}
 
 
+def test_map_data_shape(client):
+    assert client.get("/map-data").json() == {
+        "rooms": [
+            {"segment_id": 16, "name": "Living Room", "bbox": [0.0, 0.0, 0.5, 0.5]},
+            {"segment_id": 17, "name": "Kitchen", "bbox": [0.5, 0.0, 1.0, 0.5]},
+            {"segment_id": 18, "name": "Bedroom", "bbox": [0.0, 0.5, 0.5, 1.0]},
+            {"segment_id": 19, "name": "Hallway", "bbox": [0.5, 0.5, 1.0, 1.0]},
+        ],
+        "robot": {"x": 50, "y": 50},
+        "image_width": 100,
+        "image_height": 100,
+    }
+
+
+@pytest.mark.parametrize("mode", ["vacuum", "mop", "vac_and_mop"])
+def test_clean_segments_happy(client, mode):
+    assert client.post(
+        "/clean/segments", json={"segment_ids": [16, 17], "mode": mode}
+    ).json() == {"ok": True}
+    assert client.app.state.gateway.commands == [
+        ("connect",),
+        ("set_cleaning_mode", CleaningMode(mode)),
+        ("clean_rooms", (16, 17)),
+    ]
+
+
+def test_clean_segments_empty_ids_is_422(client):
+    assert client.post(
+        "/clean/segments", json={"segment_ids": [], "mode": "vacuum"}
+    ).status_code == 422
+
+
+def test_clean_segments_bad_mode_is_422(client):
+    assert client.post(
+        "/clean/segments", json={"segment_ids": [16], "mode": "bogus"}
+    ).status_code == 422
+
+
+def test_two_stage_scoped_starts_running(client):
+    assert client.post("/clean/two-stage", json={"segment_ids": [16]}).json() == {"ok": True}
+    assert client.get("/clean/two-stage/status").json()["running"] is True
+
+
 def test_auth_status(client):
     assert client.get("/auth/status").json() == {
         "connected": True,
@@ -83,10 +127,10 @@ def test_auth_discover_shape(client):
         "mode": "fake",
         "carpet_mode": "avoid",
         "rooms": [
-            {"segment_id": 16, "name": "Living Room"},
-            {"segment_id": 17, "name": "Kitchen"},
-            {"segment_id": 18, "name": "Bedroom"},
-            {"segment_id": 19, "name": "Hallway"},
+            {"segment_id": 16, "name": "Living Room", "bbox": None},
+            {"segment_id": 17, "name": "Kitchen", "bbox": None},
+            {"segment_id": 18, "name": "Bedroom", "bbox": None},
+            {"segment_id": 19, "name": "Hallway", "bbox": None},
         ],
         "routines": [
             {"id": 1001, "name": "Vacuum whole house"},

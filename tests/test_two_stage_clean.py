@@ -162,6 +162,18 @@ async def test_two_stage_reports_stage_sequence():
     assert stages == ["vacuuming", "vacuum_waiting", "mopping", "mop_waiting", "done"]
 
 
+async def test_two_stage_scoped_departs_with_clean_rooms():
+    """Room-scoped run departs each stage with clean_rooms(segments), never bare start()."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    await run_two_stage(
+        gw, _config(), clock=clock, sleep=clock.sleep, interval=5,
+        segment_ids=[16, 17], log=lambda m: None,
+    )
+    departs = [c for c in gw.commands if c[0] in ("start", "clean_rooms")]
+    assert departs == [("clean_rooms", (16, 17)), ("clean_rooms", (16, 17))]
+
+
 async def test_two_stage_aborts_if_carpet_mode_does_not_take():
     """Safety: if the carpet write silently fails, abort before starting the clean."""
     clock = FakeClock()

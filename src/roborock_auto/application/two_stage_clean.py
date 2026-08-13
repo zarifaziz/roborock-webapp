@@ -94,10 +94,14 @@ async def run_two_stage(
     clock: Clock = time.monotonic,
     sleep: Sleep = asyncio.sleep,
     interval: float | None = None,
+    segment_ids: list[int] | None = None,
     log: Callable[[str], None] = print,
     on_stage: Callable[[str], None] = lambda _stage: None,
 ) -> None:
     poll = interval if interval is not None else config.poll_interval_sec
+    # Whole-house departs with start(); a room-scoped run departs with clean_rooms(segments).
+    depart = (lambda: gw.clean_rooms(segment_ids)) if segment_ids else gw.start
+    scope = "selected rooms" if segment_ids else "whole-house"
 
     start = await gw.get_status()
     if not ready_to_start(start):
@@ -105,23 +109,23 @@ async def run_two_stage(
             f"robot not docked/idle at start (state={start.state_name}); aborting"
         )
 
-    log("vacuum stage: carpet -> Rise, clean mode -> vacuum, starting whole-house clean")
+    log(f"vacuum stage: carpet -> Rise, clean mode -> vacuum, starting {scope} clean")
     on_stage("vacuuming")
     await _set_carpet_verified(gw, CarpetMode.RISE, sleep=sleep)
     await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.VACUUM), sleep=sleep)
-    await with_retry(gw.start, sleep=sleep)
+    await with_retry(depart, sleep=sleep)
     await wait_for_departure(gw, clock=clock, sleep=sleep, interval=poll)
     log("vacuum stage: robot left the dock, waiting for it to finish")
     on_stage("vacuum_waiting")
     await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
     log("vacuum stage: complete")
 
-    log("mop stage: carpet -> Avoid, clean mode -> mop, starting whole-house clean")
+    log(f"mop stage: carpet -> Avoid, clean mode -> mop, starting {scope} clean")
     on_stage("mopping")
     # Read-back before mopping: if carpet Avoid did not stick, wet pads would cross carpet.
     await _set_carpet_verified(gw, CarpetMode.AVOID, sleep=sleep)
     await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.MOP), sleep=sleep)
-    await with_retry(gw.start, sleep=sleep)
+    await with_retry(depart, sleep=sleep)
     await wait_for_departure(gw, clock=clock, sleep=sleep, interval=poll)
     log("mop stage: robot left the dock, waiting for it to finish")
     on_stage("mop_waiting")

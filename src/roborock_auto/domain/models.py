@@ -50,6 +50,9 @@ class DeviceStatus:
 class Room:
     segment_id: int
     name: str
+    # Normalized (x0, y0, x1, y1) fractions 0..1 of the rendered map image, top-left origin,
+    # for click-to-select overlays. None when the geometry is unknown (e.g. list_rooms).
+    bbox: tuple[float, float, float, float] | None = None
 
 
 @dataclass(frozen=True)

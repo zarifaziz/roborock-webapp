@@ -201,11 +201,25 @@
     background: radial-gradient(120% 120% at 30% 20%, #1e3f74, #13284d);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
   }
+  .map-rotor {
+    position: absolute; inset: 0;
+    transition: transform 0.35s ease; will-change: transform;
+  }
   .map-stage img {
     position: absolute; inset: 0;
     width: 100%; height: 100%; object-fit: contain;
     image-rendering: pixelated;
-    transition: transform 0.35s ease;
+  }
+  .map-overlay { position: absolute; inset: 0; }
+  .map-region {
+    position: absolute; padding: 0; border: 0; background: transparent;
+    border-radius: 10px; cursor: pointer;
+    transition: background 0.18s ease, box-shadow 0.18s ease;
+  }
+  .map-region:hover { background: rgb(255 255 255 / 0.12); }
+  .map-region.sel {
+    background: color-mix(in srgb, var(--rc, var(--accent)) 26%, transparent);
+    box-shadow: inset 0 0 0 2px var(--rc, var(--accent));
   }
 
   /* ---------- tabs ---------- */
@@ -455,8 +469,7 @@
   <header class="topbar">
     <div class="topbar-row">
       <button class="brand" onclick="showTab('clean')" title="Home">
-        <svg viewBox="0 0 16 16"><path d="M10 3 5 8l5 5 1.2-1.2L7.4 8l3.8-3.8z"/></svg>
-        roborock
+        roborock-webapp
       </button>
       <span id="offline">● connection lost — is the app still running?</span>
       <div class="hdr-icons">
@@ -505,7 +518,13 @@
             Rotate
           </button>
         </div>
-        <div class="map-stage"><img id="map" alt="live map" /></div>
+        <!-- rotor wraps img + overlay so click regions rotate together with the map -->
+        <div class="map-stage">
+          <div class="map-rotor" id="map-rotor">
+            <img id="map" alt="live map" />
+            <div class="map-overlay" id="map-overlay"></div>
+          </div>
+        </div>
       </div>
 
       <!-- floating bottom action bar (inline sticky on desktop) -->
@@ -581,6 +600,13 @@
         <div class="card">
           <h2>Rooms</h2>
           <div class="chips" id="rooms"></div>
+          <div class="seg-label" style="margin-top: 16px">Mode</div>
+          <div class="seg" id="seg-room-mode">
+            <button data-v="vacuum" title="Vacuum only">Vacuum</button>
+            <button data-v="mop" title="Mop only">Mop</button>
+            <button data-v="vac_and_mop" title="Vacuum and mop together">Vac + Mop</button>
+            <button data-v="two-stage" class="active" title="Vacuum, then mop avoiding carpet">Two-stage</button>
+          </div>
           <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
         </div>
       </section>
@@ -731,19 +757,67 @@ for (const [segId, path, key] of SEGMENTS) {
 
 /* ---------- map rotation ---------- */
 let rot = Number(localStorage.getItem("mapRot") || 0);
-function applyRot() { $("map").style.transform = `rotate(${rot}deg)`; }
+function applyRot() { $("map-rotor").style.transform = `rotate(${rot}deg)`; }
 function rotateMap() { rot = (rot + 90) % 360; localStorage.setItem("mapRot", rot); applyRot(); }
 
 /* ---------- rooms ---------- */
+// Chip accents cycle every 5 (mirrors the .chip:nth-child CSS); map regions reuse them.
+const ROOM_COLORS = ["#12b3c9", "#7a5cff", "#f2a51c", "#16b877", "#e5678f"];
+
+// Chips and map regions share one selection: toggling either syncs the other.
+function toggleRoom(id) {
+  const chip = document.querySelector(`#rooms .chip[data-id="${id}"]`);
+  const region = document.querySelector(`#map-overlay .map-region[data-id="${id}"]`);
+  const src = chip || region;
+  if (!src) return;
+  const next = !src.classList.contains("sel");
+  if (chip) chip.classList.toggle("sel", next);
+  if (region) region.classList.toggle("sel", next);
+  syncCleanBtn();
+}
+
+function selectedRoomIds() {
+  return [...document.querySelectorAll("#rooms .chip.sel")].map((el) => Number(el.dataset.id));
+}
+function roomMode() {
+  const b = $("seg-room-mode").querySelector("button.active");
+  return b ? b.dataset.v : "two-stage";
+}
+
+async function buildMapRegions() {
+  let data;
+  try { data = await (await fetch("/map-data")).json(); }
+  catch { return; }  // no map geometry — chips still drive selection
+  const overlay = $("map-overlay");
+  // Index over the full room list (not the filtered one) so region accents line up with chips.
+  overlay.innerHTML = (data.rooms || []).map((r, i) => {
+    if (!r.bbox) return "";
+    const [x0, y0, x1, y1] = r.bbox;
+    const c = ROOM_COLORS[i % ROOM_COLORS.length];
+    return `<button class="map-region" data-id="${r.segment_id}" title="${r.name}"
+      style="left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%;--rc:${c}"></button>`;
+  }).join("");
+  overlay.addEventListener("click", (e) => {
+    const region = e.target.closest(".map-region");
+    if (region) toggleRoom(Number(region.dataset.id));
+  });
+}
+
 function cleanRooms() {
-  const ids = [...document.querySelectorAll("#rooms .chip.sel")].map((el) => Number(el.dataset.id));
-  if (ids.length) post("/clean/rooms", { segment_ids: ids }, `cleaning ${ids.length} room${ids.length > 1 ? "s" : ""}`);
+  const ids = selectedRoomIds();
+  if (!ids.length) return;
+  const mode = roomMode();
+  if (mode === "two-stage") {
+    startTwoStage(ids);  // switches to Clean tab + drives the 5-step progress poller
+  } else {
+    post("/clean/segments", { segment_ids: ids, mode }, `cleaning ${ids.length} room${ids.length > 1 ? "s" : ""}`);
+  }
 }
 function syncCleanBtn() {
   const n = document.querySelectorAll("#rooms .chip.sel").length;
   const b = $("clean-btn");
   b.disabled = n === 0;
-  b.textContent = n ? `Clean ${n} selected room${n > 1 ? "s" : ""}` : "Clean selected rooms";
+  b.textContent = n ? `Clean ${n} room${n > 1 ? "s" : ""}` : "Clean selected rooms";
 }
 
 /* ---------- polling ---------- */
@@ -889,14 +963,16 @@ function stopTwoStagePoll() {
   twoStageTimer = null;
 }
 
-async function startTwoStage() {
+async function startTwoStage(segmentIds) {
   const btn = $("two-stage-btn");
   btn.disabled = true;
   lastTwoStageError = null;
   showTab("clean");
+  // segmentIds present -> scoped two-stage; absent (whole-house orb) -> empty body = whole house.
+  const body = Array.isArray(segmentIds) && segmentIds.length ? JSON.stringify({ segment_ids: segmentIds }) : "{}";
   try {
     const r = await fetch("/clean/two-stage", {
-      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+      method: "POST", headers: { "content-type": "application/json" }, body,
     });
     if (r.status === 409) { toast("A two-stage clean is already running", true); }
     else if (!r.ok) { toast(`Two-stage start failed (${r.status})`, true); btn.disabled = false; return; }
@@ -924,9 +1000,14 @@ async function boot() {
     `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
   $("rooms").addEventListener("click", (e) => {
     const chip = e.target.closest(".chip");
-    if (!chip) return;
-    chip.classList.toggle("sel");
-    syncCleanBtn();
+    if (chip) toggleRoom(Number(chip.dataset.id));
+  });
+  await buildMapRegions();
+
+  $("seg-room-mode").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    [...$("seg-room-mode").children].forEach((b) => b.classList.toggle("active", b === btn));
   });
 
   const routines = await (await fetch("/routines")).json();

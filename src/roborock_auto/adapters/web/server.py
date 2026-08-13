@@ -20,7 +20,7 @@ from roborock_auto.adapters import get_auth, get_gateway
 from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
-from roborock_auto.domain.models import CarpetMode, FanPower, MopMode
+from roborock_auto.domain.models import CarpetMode, CleaningMode, FanPower, MopMode
 from roborock_auto.ports import RobotGateway
 from roborock_auto.ports.auth import AuthPort
 
@@ -232,8 +232,23 @@ async def auth_discover(request: Request):
     }
 
 
+@app.post("/clean/segments")
+async def clean_segments(
+    request: Request,
+    segment_ids: list[int] = Body(..., embed=True),
+    mode: str = Body(..., embed=True),
+):
+    if not segment_ids:
+        raise HTTPException(422, "segment_ids must not be empty")
+    parsed = _parse(CleaningMode, mode)
+    gw = _gw(request)
+    await gw.set_cleaning_mode(parsed)
+    await gw.clean_rooms(segment_ids)
+    return {"ok": True}
+
+
 @app.post("/clean/two-stage")
-async def clean_two_stage(request: Request):
+async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, embed=True)):
     progress = request.app.state.two_stage
     if progress["running"]:
         raise HTTPException(409, "a two-stage clean is already running")
@@ -247,7 +262,9 @@ async def clean_two_stage(request: Request):
 
     async def runner() -> None:
         try:
-            await run_two_stage(gw, config, on_stage=on_stage, log=lambda _m: None)
+            await run_two_stage(
+                gw, config, segment_ids=segment_ids or None, on_stage=on_stage, log=lambda _m: None
+            )
         except Exception as exc:  # noqa: BLE001 - surface any failure to the status endpoint
             progress.update(stage="error", message=str(exc), error=str(exc))
         finally:

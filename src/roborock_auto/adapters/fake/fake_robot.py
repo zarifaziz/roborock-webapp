@@ -31,6 +31,13 @@ _ROOMS = [
     Room(18, "Bedroom"),
     Room(19, "Hallway"),
 ]
+# Quadrant bboxes matching the 2x2 fake map, for the click-to-select overlay.
+_MAP_ROOMS = [
+    Room(16, "Living Room", bbox=(0.0, 0.0, 0.5, 0.5)),
+    Room(17, "Kitchen", bbox=(0.5, 0.0, 1.0, 0.5)),
+    Room(18, "Bedroom", bbox=(0.0, 0.5, 0.5, 1.0)),
+    Room(19, "Hallway", bbox=(0.5, 0.5, 1.0, 1.0)),
+]
 _ROUTINES = [
     Routine(1001, "Vacuum whole house"),
     Routine(1002, "Mop whole house"),
@@ -102,7 +109,7 @@ class FakeRobot:
         return SAMPLE_MAP_PNG
 
     async def get_map_data(self) -> MapData:
-        return MapData(rooms=_ROOMS, robot=Point(50, 50), image_width=100, image_height=100)
+        return MapData(rooms=_MAP_ROOMS, robot=Point(50, 50), image_width=100, image_height=100)
 
     async def list_rooms(self) -> list[Room]:
         return list(_ROOMS)

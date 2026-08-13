@@ -152,13 +152,21 @@ class RoborockCloudAdapter:
                 mc = self._v1.map_content
                 await mc.refresh()
                 data = mc.map_data
-                rooms = [Room(int(r.segment_id), getattr(r, "name", None) or f"Room {r.segment_id}")
-                         for r in (getattr(data, "rooms", None) or [])]
+                width = int(getattr(data, "image_width", 0) or 0)
+                height = int(getattr(data, "image_height", 0) or 0)
+                rooms = [
+                    Room(
+                        int(r.segment_id),
+                        getattr(r, "name", None) or f"Room {r.segment_id}",
+                        bbox=_room_bbox(r, width, height),
+                    )
+                    for r in (getattr(data, "rooms", None) or [])
+                ]
                 robot = None
                 pos = getattr(data, "vacuum_position", None)
                 if pos is not None:
                     robot = Point(int(getattr(pos, "x", 0)), int(getattr(pos, "y", 0)))
-                return MapData(rooms=rooms, robot=robot)
+                return MapData(rooms=rooms, robot=robot, image_width=width, image_height=height)
 
             data = await self._locked_retry(read)
             self._map_ok = True
@@ -254,6 +262,30 @@ class RoborockCloudAdapter:
             await self._web.execute_scene(self._user_data, routine_id)
 
         await self._retry_no_lock(do)
+
+
+def _room_bbox(room: Any, width: int, height: int) -> tuple[float, float, float, float] | None:
+    """Normalize a parsed room's pixel box to 0..1 fractions, top-left origin, clamped.
+
+    Best-effort: the parser's pixel->fraction mapping (axis order, origin) is unverified and
+    may need tuning against the real robot's map. Return None (never raise) when the geometry
+    or image dimensions are missing so get_map_data's fallback stays intact.
+    """
+    if width <= 0 or height <= 0:
+        return None
+    try:
+        x0, y0, x1, y1 = (room.x0, room.y0, room.x1, room.y1)
+    except AttributeError:
+        return None
+    if None in (x0, y0, x1, y1):
+        return None
+
+    def _clamp(v: float) -> float:
+        return min(1.0, max(0.0, v))
+
+    fx0, fx1 = sorted((_clamp(x0 / width), _clamp(x1 / width)))
+    fy0, fy1 = sorted((_clamp(y0 / height), _clamp(y1 / height)))
+    return (fx0, fy0, fx1, fy1)
 
 
 def _pick_device(devices: list, duid: str) -> Any:

@@ -70,8 +70,27 @@ class RoborockCloudAdapter:
         self._web = RoborockApiClient(username=self._config.email)
         params = UserParams(username=self._config.email, user_data=self._user_data)
         # Render the map at a higher scale than the library default (4) so the big map view
-        # stays crisp. Room geometry is scaled by the same factor, so bboxes stay correct.
-        map_config = MapParserConfig(map_scale=8)
+        # stays crisp (room geometry scales by the same factor, so bboxes stay correct), and
+        # draw the richer map elements the phone app shows: obstacles (furniture), virtual
+        # walls, no-go / no-mop / no-carpet zones, and room-name labels.
+        from vacuum_map_parser_base.config.drawable import Drawable
+
+        map_config = MapParserConfig(
+            map_scale=8,
+            drawables=[
+                Drawable.CHARGER,
+                Drawable.VACUUM_POSITION,
+                Drawable.PATH,
+                Drawable.ROOM_NAMES,
+                Drawable.OBSTACLES,
+                Drawable.IGNORED_OBSTACLES,
+                Drawable.VIRTUAL_WALLS,
+                Drawable.NO_GO_AREAS,
+                Drawable.NO_MOPPING_AREAS,
+                Drawable.NO_CARPET_AREAS,
+                Drawable.ZONES,
+            ],
+        )
         self._manager = await create_device_manager(params, map_parser_config=map_config)
         devices = await self._manager.get_devices()
         self._device = _pick_device(devices, self._config.duid)

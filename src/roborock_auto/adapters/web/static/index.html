@@ -92,7 +92,7 @@
   /* two-column desktop shell */
   @media (min-width: 1100px) {
     .app {
-      max-width: none;
+      max-width: 1360px;
       padding: 26px clamp(24px, 3vw, 56px) 40px;
     }
     .layout {
@@ -197,16 +197,15 @@
   .rotate-btn:hover { background: var(--card-solid); }
   .rotate-btn svg { width: 13px; height: 13px; fill: currentColor; }
   .map-stage {
-    position: relative; width: 100%;
-    /* aspect-ratio is set from the actual map image (JS) so the stage matches it exactly:
-       the map fills edge to edge (no letterbox) and the click regions stay aligned. */
-    aspect-ratio: var(--map-ar, 1);
-    max-height: calc(100vh - 210px); margin-inline: auto;
+    position: relative; margin-inline: auto;
+    /* Width/height are set in px by sizeMap() (JS) to match the map image's natural
+       aspect ratio while fitting the viewport, so the stage never overflows and the
+       img (object-fit: fill) stays perfectly aligned with the click regions. */
+    width: 100%; aspect-ratio: var(--map-ar, 1);
     border-radius: 18px; overflow: hidden;
     background: radial-gradient(120% 120% at 30% 20%, #1e3f74, #13284d);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
   }
-  @media (min-width: 1100px) { .map-stage { max-height: calc(100vh - 150px); } }
   .map-rotor {
     position: absolute; inset: 0;
     transition: transform 0.35s ease; will-change: transform;
@@ -314,6 +313,15 @@
   }
   .seg button:hover { color: var(--ink); }
   .seg button.active { background: var(--card-solid); color: var(--accent); box-shadow: 0 1px 3px rgb(23 60 84 / 0.16); }
+  /* Room mode picker: four equal-width buttons so every label (incl. "Vac + Mop",
+     "Two-stage") fits with even spacing instead of being squeezed to the right. */
+  #seg-room-mode button {
+    flex: 1 1 0; min-width: 0; white-space: nowrap; text-align: center;
+    font-size: 0.74rem; padding: 9px 2px;
+  }
+  .seg-help {
+    font-size: 0.78rem; color: var(--ink-3); line-height: 1.45; margin: 9px 2px 0;
+  }
 
   /* ---------- rooms ---------- */
   .chips { display: flex; flex-wrap: wrap; gap: 9px; }
@@ -385,7 +393,7 @@
   .actionbar {
     position: fixed; left: 50%; transform: translateX(-50%);
     bottom: 18px; width: calc(100% - 32px); max-width: 468px;
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex; align-items: center; justify-content: center; gap: 48px;
     padding: 12px 22px; border-radius: 30px;
     background: var(--frost); border: 1px solid var(--border);
     box-shadow: var(--shadow);
@@ -421,7 +429,12 @@
     transition: transform 0.12s ease, filter 0.2s ease;
     animation: breathe 3.2s ease-in-out infinite;
   }
-  .primary-action svg { width: 30px; height: 30px; fill: currentColor; }
+  .primary-action svg { width: 28px; height: 28px; fill: currentColor; }
+  .primary-action .orb-sub {
+    font-size: 0.5rem; font-weight: 700; letter-spacing: 0.02em; text-transform: none;
+    opacity: 0.9; line-height: 1; max-width: 74px; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
   .primary-action:hover { filter: brightness(1.05); }
   .primary-action:active { transform: scale(0.95); }
   .primary-action:disabled { opacity: 0.6; cursor: default; animation: none; filter: grayscale(0.2); }
@@ -535,11 +548,9 @@
 
       <!-- floating bottom action bar (inline sticky on desktop) -->
       <div class="actionbar">
-        <button class="round-action" onclick="cmd('/start')" title="Start">
-          <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Start
-        </button>
-        <button class="primary-action" id="two-stage-btn" onclick="startTwoStage()" title="Vacuum, then mop avoiding carpet">
+        <button class="primary-action" id="two-stage-btn" onclick="runPrimary()" title="Clean — selected rooms, or the whole floor">
           <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Clean
+          <span class="orb-sub" id="two-stage-scope">whole floor</span>
         </button>
         <button class="round-action" onclick="cmd('/dock')" title="Dock">
           <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
@@ -613,6 +624,7 @@
             <button data-v="vac_and_mop" title="Vacuum and mop together">Vac + Mop</button>
             <button data-v="two-stage" class="active" title="Vacuum, then mop avoiding carpet">Two-stage</button>
           </div>
+          <p class="seg-help">Two-stage sets carpet automatically — Rise while vacuuming, then Avoid while mopping (overrides the Setup carpet setting for this run). The Setup carpet setting applies to the Vacuum / Mop modes.</p>
           <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
         </div>
       </section>
@@ -777,8 +789,11 @@ function toggleRoom(id) {
   const src = chip || region;
   if (!src) return;
   const next = !src.classList.contains("sel");
+  const hadSelection = selectedRoomIds().length > 0;
   if (chip) chip.classList.toggle("sel", next);
   if (region) region.classList.toggle("sel", next);
+  // First room selected -> reveal the mode picker + run button ("room mode").
+  if (!hadSelection && selectedRoomIds().length > 0) showTab("rooms");
   syncCleanBtn();
 }
 
@@ -824,6 +839,15 @@ function syncCleanBtn() {
   const b = $("clean-btn");
   b.disabled = n === 0;
   b.textContent = n ? `Clean ${n} room${n > 1 ? "s" : ""}` : "Clean selected rooms";
+  // Keep the floating orb's sub-label in sync with what it will do when tapped.
+  $("two-stage-scope").textContent = n ? `${n} room${n > 1 ? "s" : ""}` : "whole floor";
+}
+
+// The floating orb is the one contextual clean action: selected rooms run the chosen
+// room mode; nothing selected runs a whole-floor two-stage clean.
+function runPrimary() {
+  if (selectedRoomIds().length) cleanRooms();
+  else startTwoStage();
 }
 
 /* ---------- polling ---------- */
@@ -864,14 +888,30 @@ async function refreshStatus() {
     : stateLabel;
 }
 
+// Size #map-stage in px to the map image's natural aspect ratio, fitting within the
+// available column width and a viewport-relative max height, so the map never overflows
+// the screen. Stage aspect == image aspect, so object-fit: fill stays undistorted and the
+// click regions remain aligned.
+function sizeMap() {
+  const img = $("map");
+  const stage = $("map-stage");
+  const ar = (img.naturalWidth && img.naturalHeight) ? img.naturalWidth / img.naturalHeight : 1;
+  stage.style.setProperty("--map-ar", ar);
+  const parent = stage.parentElement;
+  const pad = getComputedStyle(parent);
+  const avail = parent.clientWidth - parseFloat(pad.paddingLeft) - parseFloat(pad.paddingRight);
+  if (avail <= 0) return;
+  const narrow = window.innerWidth < 1100;
+  const maxH = narrow ? window.innerHeight * 0.5 : Math.min(window.innerHeight * 0.62, 720);
+  let w = avail, h = w / ar;
+  if (h > maxH) { h = maxH; w = h * ar; }
+  stage.style.width = w + "px";
+  stage.style.height = h + "px";
+}
+
 function refreshMap() {
   const img = $("map");
-  // Size the stage to the real map's aspect so it fills the space (no letterbox) and the
-  // click regions stay aligned, whatever the map's shape.
-  img.onload = () => {
-    if (img.naturalWidth && img.naturalHeight)
-      $("map-stage").style.setProperty("--map-ar", img.naturalWidth / img.naturalHeight);
-  };
+  img.onload = sizeMap;
   img.src = "/map.png?t=" + Date.now();
 }
 
@@ -1005,6 +1045,7 @@ async function startTwoStage(segmentIds) {
 async function boot() {
   applyRot();
   refreshMap();
+  window.addEventListener("resize", sizeMap);
   try {
     const caps = await (await fetch("/capabilities")).json();
     $("model").textContent = caps.model;

@@ -7,6 +7,7 @@ PNG is only re-read when the parsed map data changes, so polling stays cheap.
 from __future__ import annotations
 
 import dataclasses
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -30,7 +31,7 @@ async def lifespan(app: FastAPI):
     await gw.connect()
     app.state.gateway = gw
     app.state.config = config
-    app.state.map_cache = {"sig": None, "png": b""}
+    app.state.map_cache = {"at": 0.0, "png": b""}
     try:
         yield
     finally:
@@ -61,14 +62,18 @@ async def map_data(request: Request):
     return dataclasses.asdict(await _gw(request).get_map_data())
 
 
+_MAP_TTL_SEC = 15.0  # the map is fetched at most this often, independent of status polling
+
+
 @app.get("/map.png")
 async def map_png(request: Request):
-    gw = _gw(request)
+    # A map fetch holds the single device lock for seconds; refresh on a TTL so it does not
+    # queue behind every 5s status poll and slow down start/pause/dock.
     cache = request.app.state.map_cache
-    sig = repr(await gw.get_map_data())
-    if cache["sig"] != sig:
-        cache["png"] = await gw.get_map_png()
-        cache["sig"] = sig
+    now = time.monotonic()
+    if not cache["png"] or now - cache["at"] >= _MAP_TTL_SEC:
+        cache["png"] = await _gw(request).get_map_png()
+        cache["at"] = now
     return Response(content=cache["png"], media_type="image/png")
 
 
@@ -132,7 +137,10 @@ async def mop(request: Request, mode: str = Body(..., embed=True)):
 
 @app.post("/carpet")
 async def carpet(request: Request, mode: str = Body(..., embed=True)):
-    await _gw(request).set_carpet_mode(_parse(CarpetMode, mode))
+    parsed = _parse(CarpetMode, mode)
+    if parsed is CarpetMode.UNKNOWN:
+        raise HTTPException(422, "cannot set carpet mode to 'unknown'")
+    await _gw(request).set_carpet_mode(parsed)
     return {"ok": True}
 
 

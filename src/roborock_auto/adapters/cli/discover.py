@@ -51,7 +51,7 @@ async def main() -> None:
 
         routines = await _section("routines", gw.list_routines())
         if routines is not None:
-            _p("routines (use the id for VACUUM_SCENE_ID / MOP_SCENE_ID):")
+            _p("routines:")
             for routine in routines:
                 _p(f"  {routine.id:>8}  {routine.name}")
 

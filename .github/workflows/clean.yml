@@ -2,7 +2,7 @@ name: carpet-aware clean
 
 # Unattended two-stage clean. Disabled until secrets are set: the schedule is commented out
 # so a fresh fork does not fire against nothing. Uncomment and adjust the cron once the
-# ROBOROCK_USER_DATA secret and the *_SCENE_ID / CARPET_* repo variables exist.
+# ROBOROCK_USER_DATA secret and the CARPET_* repo variables exist.
 on:
   workflow_dispatch: {}
   # schedule:
@@ -15,8 +15,6 @@ jobs:
       GATEWAY: live
       ROBOROCK_EMAIL: ${{ vars.ROBOROCK_EMAIL }}
       ROBOROCK_DUID: ${{ vars.ROBOROCK_DUID }}
-      VACUUM_SCENE_ID: ${{ vars.VACUUM_SCENE_ID }}
-      MOP_SCENE_ID: ${{ vars.MOP_SCENE_ID }}
       CARPET_RISE_VALUE: ${{ vars.CARPET_RISE_VALUE }}
       CARPET_AVOID_VALUE: ${{ vars.CARPET_AVOID_VALUE }}
     steps:

@@ -18,13 +18,23 @@ DOCKED_STATES = {
     RoborockStateCode.charging_complete,
     RoborockStateCode.charging_problem,
 }
+# A job is not finished until the robot is fully idle on the dock. Every "moving,
+# cleaning, mopping, or servicing at the dock" state counts as busy, so the mop stage
+# never starts while the robot is still working. Built by name so a missing code on some
+# firmware is skipped rather than crashing.
+_ACTIVE_STATE_NAMES = [
+    "cleaning", "spot_cleaning", "zoned_cleaning", "segment_cleaning",
+    "returning_home", "going_to_target", "docking",
+    "emptying_the_bin", "washing_the_mop", "washing_the_mop_2",
+    "going_to_wash_the_mop", "attaching_the_mop", "detaching_the_mop",
+    # Qrevo mopping / dock-servicing states (6301-6310).
+    "robot_status_mopping", "clean_mop_cleaning", "clean_mop_mopping",
+    "segment_mopping", "segment_clean_mop_cleaning", "segment_clean_mop_mopping",
+    "zoned_mopping", "zoned_clean_mop_cleaning", "zoned_clean_mop_mopping",
+    "back_to_dock_washing_duster",
+]
 ACTIVE_STATES = {
-    RoborockStateCode.cleaning,
-    RoborockStateCode.spot_cleaning,
-    RoborockStateCode.zoned_cleaning,
-    RoborockStateCode.segment_cleaning,
-    RoborockStateCode.returning_home,
-    RoborockStateCode.going_to_target,
+    getattr(RoborockStateCode, n) for n in _ACTIVE_STATE_NAMES if hasattr(RoborockStateCode, n)
 }
 
 # Param shapes to confirm on live bring-up. Non-destructive settings; wrong values only

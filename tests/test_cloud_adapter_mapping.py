@@ -13,10 +13,12 @@ import pytest
 from roborock import RoborockCommand
 from roborock.data.v1 import RoborockInCleaning, RoborockStateCode
 
-from roborock_auto.adapters.roborock_cloud.adapter import RoborockCloudAdapter
+from roborock_auto.adapters.roborock_cloud.adapter import RoborockCloudAdapter, _pick_device
 from roborock_auto.adapters.roborock_cloud.codes import (
     derive_in_cleaning,
+    extract_carpet_value,
     is_docked,
+    life_pct,
     state_name,
 )
 from roborock_auto.config import Config
@@ -25,8 +27,8 @@ from roborock_auto.domain.models import CarpetMode, DeviceStatus, FanPower, MopM
 
 def _config(**over) -> Config:
     base = dict(
-        gateway="live", email="e@x.com", duid="DUID1", vacuum_scene_id=1001, mop_scene_id=1002,
-        carpet_rise_value=0, carpet_avoid_value=1, poll_interval_sec=5.0, app_port=8000,
+        gateway="live", email="e@x.com", duid="DUID1",
+        carpet_rise_value=2, carpet_avoid_value=0, poll_interval_sec=5.0, app_port=8000,
         session_path="user_data.json",
     )
     base.update(over)
@@ -49,9 +51,37 @@ def test_in_cleaning_survives_midjob_recharge():
     assert derive_in_cleaning(RoborockStateCode.charging, RoborockInCleaning.segment_clean_not_complete)
     # genuinely done: docked and flag complete.
     assert not derive_in_cleaning(RoborockStateCode.charging, RoborockInCleaning.complete)
-    # active state with no flag still counts.
+    # active states (incl. Qrevo mopping + dock servicing) with no flag still count as busy.
     assert derive_in_cleaning(RoborockStateCode.segment_cleaning, None)
+    assert derive_in_cleaning(RoborockStateCode.segment_mopping, None)
+    assert derive_in_cleaning(RoborockStateCode.washing_the_mop, None)
+    assert derive_in_cleaning(RoborockStateCode.docking, None)
     assert not derive_in_cleaning(RoborockStateCode.idle, None)
+    # KNOWN LIMITATION: charging + no flag reads as done. If the firmware ever drops the
+    # flag during a mid-job recharge, this would mis-declare completion.
+    assert not derive_in_cleaning(RoborockStateCode.charging, None)
+
+
+def test_life_pct():
+    assert life_pct(0, 300) == 100
+    assert life_pct(150 * 3600, 300) == 50
+    assert life_pct(400 * 3600, 300) == 0  # over lifetime clamps to 0
+    assert life_pct(None, 300) == 100
+
+
+def test_extract_carpet_value():
+    assert extract_carpet_value([{"carpet_clean_mode": 2}]) == 2
+    assert extract_carpet_value({"carpet_clean_mode": 0}) == 0
+    assert extract_carpet_value([5]) == 5
+
+
+def test_pick_device_by_duid():
+    from types import SimpleNamespace
+    a = SimpleNamespace(duid="A", v1_properties=object())
+    b = SimpleNamespace(duid="B", v1_properties=object())
+    assert _pick_device([a, b], "B") is b
+    with pytest.raises(ValueError, match="no device"):
+        _pick_device([a, b], "Z")
 
 
 # --- command wiring -------------------------------------------------------
@@ -82,9 +112,14 @@ async def test_carpet_sends_configured_value(gw):
     await gw.set_carpet_mode(CarpetMode.RISE)
     call = _last_send(gw)
     assert call.args[0] == RoborockCommand.SET_CARPET_CLEAN_MODE
-    assert call.kwargs["params"] == [{"carpet_clean_mode": 0}]   # carpet_rise_value
+    assert call.kwargs["params"] == [{"carpet_clean_mode": 2}]   # carpet_rise_value
     await gw.set_carpet_mode(CarpetMode.AVOID)
-    assert _last_send(gw).kwargs["params"] == [{"carpet_clean_mode": 1}]  # carpet_avoid_value
+    assert _last_send(gw).kwargs["params"] == [{"carpet_clean_mode": 0}]  # carpet_avoid_value
+
+
+async def test_set_carpet_rejects_unknown(gw):
+    with pytest.raises(ValueError, match="carpet mode"):
+        await gw.set_carpet_mode(CarpetMode.UNKNOWN)
 
 
 async def test_clean_rooms_params(gw):
@@ -116,9 +151,9 @@ async def test_set_cleaning_mode_calls_status_trait(gw):
 
 
 async def test_get_carpet_mode_maps_back(gw):
-    gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 0}])
+    gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 2}])
     assert await gw.get_carpet_mode() == CarpetMode.RISE
-    gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 1}])
+    gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 0}])
     assert await gw.get_carpet_mode() == CarpetMode.AVOID
     gw._device.v1_properties.command.send = AsyncMock(return_value=[{"carpet_clean_mode": 99}])
     assert await gw.get_carpet_mode() == CarpetMode.UNKNOWN

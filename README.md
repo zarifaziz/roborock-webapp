@@ -39,10 +39,9 @@ uv run pytest
    ```
    uv run python -m roborock_auto.adapters.cli.discover
    ```
-   From the output, copy into `.env`: your `ROBOROCK_DUID`, the routine ids for
-   `VACUUM_SCENE_ID` and `MOP_SCENE_ID`, and the carpet integer for `CARPET_RISE_VALUE` /
-   `CARPET_AVOID_VALUE` (toggle carpet mode in the Roborock app and re-run discover to see
-   both values).
+   From the output, copy into `.env`: your `ROBOROCK_DUID` and the carpet integer for
+   `CARPET_RISE_VALUE` / `CARPET_AVOID_VALUE` (toggle carpet mode in the Roborock app and
+   re-run discover to see both values). Live mode refuses to start until these are set.
 4. Launch the app the same way as fake mode. It now talks to the real robot.
 
 The `RoborockCloudAdapter` command names are verified against python-roborock, but a few

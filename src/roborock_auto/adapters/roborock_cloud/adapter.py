@@ -86,23 +86,29 @@ class RoborockCloudAdapter:
         return await self._locked_retry(once)
 
     async def _locked_retry(self, fn, attempts: int = 2, base_delay: float = 1.0) -> Any:
-        """Serialize device I/O and retry transient failures.
-
-        Deliberately does NOT call connect() on failure: the cloud login endpoint is rate
-        limited (error 9002), and reconnecting on every hiccup turns one failure into a
-        storm. Programming errors are re-raised immediately, not retried.
-        """
+        """Serialize device I/O (single MQTT session) and retry transient failures."""
         async with self._lock:
-            for i in range(attempts):
-                try:
-                    return await fn()
-                except (AttributeError, TypeError, KeyError):
+            return await self._retry(fn, attempts, base_delay)
+
+    async def _retry_no_lock(self, fn, attempts: int = 2, base_delay: float = 1.0) -> Any:
+        """For web-API calls that do not touch the device connection, so no lock needed."""
+        return await self._retry(fn, attempts, base_delay)
+
+    async def _retry(self, fn, attempts: int, base_delay: float) -> Any:
+        """Retry transient failures. Deliberately does NOT reconnect: the cloud login
+        endpoint is rate limited (error 9002) and reconnecting on every hiccup turns one
+        failure into a storm. Programming errors are re-raised immediately.
+        """
+        for i in range(attempts):
+            try:
+                return await fn()
+            except (AttributeError, TypeError, KeyError):
+                raise
+            except Exception:
+                if i == attempts - 1:
                     raise
-                except Exception:
-                    if i == attempts - 1:
-                        raise
-                    _LOGGER.warning("device call failed, retrying (attempt %d)", i + 1)
-                    await asyncio.sleep(base_delay * (2**i))
+                _LOGGER.warning("call failed, retrying (attempt %d)", i + 1)
+                await asyncio.sleep(base_delay * (2**i))
 
     # --- reads ------------------------------------------------------------
     async def get_status(self) -> DeviceStatus:
@@ -169,7 +175,7 @@ class RoborockCloudAdapter:
             scenes = await self._web.get_scenes(self._user_data, self._config.duid)
             return [Routine(int(s.id), s.name) for s in scenes]
 
-        return await self._locked_retry(read)
+        return await self._retry_no_lock(read)
 
     async def get_consumables(self) -> Consumables:
         async def read() -> Consumables:
@@ -222,15 +228,20 @@ class RoborockCloudAdapter:
         await self._locked_retry(do)
 
     async def set_carpet_mode(self, mode: CarpetMode) -> None:
-        value = (
-            self._config.carpet_rise_value
-            if mode == CarpetMode.RISE
-            else self._config.carpet_avoid_value
-        )
+        if mode is CarpetMode.RISE:
+            value = self._config.carpet_rise_value
+        elif mode is CarpetMode.AVOID:
+            value = self._config.carpet_avoid_value
+        else:
+            raise ValueError(f"cannot set carpet mode to {mode}")
         await self._send(RoborockCommand.SET_CARPET_CLEAN_MODE, [{"carpet_clean_mode": value}])
 
     async def run_routine(self, routine_id: int) -> None:
-        await self._web.execute_scene(self._user_data, routine_id)
+        # Web-API call: retry, but no device lock (it does not touch the device connection).
+        async def do() -> None:
+            await self._web.execute_scene(self._user_data, routine_id)
+
+        await self._retry_no_lock(do)
 
 
 def _pick_device(devices: list, duid: str) -> Any:

@@ -63,12 +63,16 @@ class RoborockCloudAdapter:
     # --- lifecycle --------------------------------------------------------
     async def connect(self) -> None:
         from roborock.devices.device_manager import UserParams, create_device_manager
+        from roborock.map.map_parser import MapParserConfig
         from roborock.web_api import RoborockApiClient
 
         self._user_data = load_user_data(self._config.session_path)
         self._web = RoborockApiClient(username=self._config.email)
         params = UserParams(username=self._config.email, user_data=self._user_data)
-        self._manager = await create_device_manager(params)
+        # Render the map at a higher scale than the library default (4) so the big map view
+        # stays crisp. Room geometry is scaled by the same factor, so bboxes stay correct.
+        map_config = MapParserConfig(map_scale=8)
+        self._manager = await create_device_manager(params, map_parser_config=map_config)
         devices = await self._manager.get_devices()
         self._device = _pick_device(devices, self._config.duid)
 
@@ -152,20 +156,29 @@ class RoborockCloudAdapter:
                 mc = self._v1.map_content
                 await mc.refresh()
                 data = mc.map_data
-                width = int(getattr(data, "image_width", 0) or 0)
-                height = int(getattr(data, "image_height", 0) or 0)
+                # map_data.rooms is dict[segment_id -> Room(x0,y0,x1,y1,...)]; image.dimensions
+                # carries the scale/trim/rotation used to render the PNG.
+                dims = getattr(getattr(data, "image", None), "dimensions", None)
+                width = int(dims.width * dims.scale) if dims else 0
+                height = int(dims.height * dims.scale) if dims else 0
+                raw = getattr(data, "rooms", None) or {}
+                items = raw.items() if hasattr(raw, "items") else enumerate(raw)
                 rooms = [
                     Room(
-                        int(r.segment_id),
-                        getattr(r, "name", None) or f"Room {r.segment_id}",
-                        bbox=_room_bbox(r, width, height),
+                        int(seg_id),
+                        getattr(r, "name", None) or f"Room {seg_id}",
+                        bbox=_room_bbox(r, dims, width, height),
                     )
-                    for r in (getattr(data, "rooms", None) or [])
+                    for seg_id, r in items
                 ]
                 robot = None
                 pos = getattr(data, "vacuum_position", None)
-                if pos is not None:
-                    robot = Point(int(getattr(pos, "x", 0)), int(getattr(pos, "y", 0)))
+                if pos is not None and dims is not None:
+                    try:
+                        rp = dims.to_img(pos)
+                        robot = Point(int(rp.x), int(rp.y))
+                    except Exception:  # noqa: BLE001 - robot marker is cosmetic
+                        robot = None
                 return MapData(rooms=rooms, robot=robot, image_width=width, image_height=height)
 
             data = await self._locked_retry(read)
@@ -264,27 +277,30 @@ class RoborockCloudAdapter:
         await self._retry_no_lock(do)
 
 
-def _room_bbox(room: Any, width: int, height: int) -> tuple[float, float, float, float] | None:
-    """Normalize a parsed room's pixel box to 0..1 fractions, top-left origin, clamped.
+def _room_bbox(
+    room: Any, dims: Any, width: int, height: int
+) -> tuple[float, float, float, float] | None:
+    """Room box (map coords x0,y0,x1,y1) -> normalized 0..1 fractions of the rendered PNG.
 
-    Best-effort: the parser's pixel->fraction mapping (axis order, origin) is unverified and
-    may need tuning against the real robot's map. Return None (never raise) when the geometry
-    or image dimensions are missing so get_map_data's fallback stays intact.
+    Uses the parser's own dims.to_img() so scale, the y-flip, and rotation match the image the
+    UI shows. Returns None (never raises) when geometry/dimensions are missing so get_map_data's
+    fallback stays intact.
     """
-    if width <= 0 or height <= 0:
+    if dims is None or width <= 0 or height <= 0:
         return None
     try:
-        x0, y0, x1, y1 = (room.x0, room.y0, room.x1, room.y1)
-    except AttributeError:
-        return None
-    if None in (x0, y0, x1, y1):
+        from vacuum_map_parser_base.map_data import Point as MPoint
+
+        p0 = dims.to_img(MPoint(room.x0, room.y0))
+        p1 = dims.to_img(MPoint(room.x1, room.y1))
+    except Exception:  # noqa: BLE001 - unverified geometry must never break the map
         return None
 
     def _clamp(v: float) -> float:
         return min(1.0, max(0.0, v))
 
-    fx0, fx1 = sorted((_clamp(x0 / width), _clamp(x1 / width)))
-    fy0, fy1 = sorted((_clamp(y0 / height), _clamp(y1 / height)))
+    fx0, fx1 = sorted((_clamp(p0.x / width), _clamp(p1.x / width)))
+    fy0, fy1 = sorted((_clamp(p0.y / height), _clamp(p1.y / height)))
     return (fx0, fy0, fx1, fy1)
 
 

@@ -92,13 +92,13 @@
   /* two-column desktop shell */
   @media (min-width: 1100px) {
     .app {
-      max-width: 1180px;
-      padding: 28px 26px 44px;
+      max-width: none;
+      padding: 26px clamp(24px, 3vw, 56px) 40px;
     }
     .layout {
       display: grid;
-      grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
-      gap: 22px;
+      grid-template-columns: minmax(0, 1fr) 380px;
+      gap: 26px;
       align-items: start;
     }
     .col-left { position: sticky; top: 22px; }
@@ -197,18 +197,24 @@
   .rotate-btn:hover { background: var(--card-solid); }
   .rotate-btn svg { width: 13px; height: 13px; fill: currentColor; }
   .map-stage {
-    position: relative; aspect-ratio: 1; border-radius: 18px; overflow: hidden;
+    position: relative; width: 100%;
+    /* aspect-ratio is set from the actual map image (JS) so the stage matches it exactly:
+       the map fills edge to edge (no letterbox) and the click regions stay aligned. */
+    aspect-ratio: var(--map-ar, 1);
+    max-height: calc(100vh - 210px); margin-inline: auto;
+    border-radius: 18px; overflow: hidden;
     background: radial-gradient(120% 120% at 30% 20%, #1e3f74, #13284d);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
   }
+  @media (min-width: 1100px) { .map-stage { max-height: calc(100vh - 150px); } }
   .map-rotor {
     position: absolute; inset: 0;
     transition: transform 0.35s ease; will-change: transform;
   }
   .map-stage img {
     position: absolute; inset: 0;
-    width: 100%; height: 100%; object-fit: contain;
-    image-rendering: pixelated;
+    width: 100%; height: 100%; object-fit: fill;
+    image-rendering: -webkit-optimize-contrast;
   }
   .map-overlay { position: absolute; inset: 0; }
   .map-region {
@@ -519,7 +525,7 @@
           </button>
         </div>
         <!-- rotor wraps img + overlay so click regions rotate together with the map -->
-        <div class="map-stage">
+        <div class="map-stage" id="map-stage">
           <div class="map-rotor" id="map-rotor">
             <img id="map" alt="live map" />
             <div class="map-overlay" id="map-overlay"></div>
@@ -858,7 +864,16 @@ async function refreshStatus() {
     : stateLabel;
 }
 
-function refreshMap() { $("map").src = "/map.png?t=" + Date.now(); }
+function refreshMap() {
+  const img = $("map");
+  // Size the stage to the real map's aspect so it fills the space (no letterbox) and the
+  // click regions stay aligned, whatever the map's shape.
+  img.onload = () => {
+    if (img.naturalWidth && img.naturalHeight)
+      $("map-stage").style.setProperty("--map-ar", img.naturalWidth / img.naturalHeight);
+  };
+  img.src = "/map.png?t=" + Date.now();
+}
 
 /* ---------- connect ---------- */
 let authMode = null;  // "fake" | "live"; drives demo-vs-real messaging below

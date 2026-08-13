@@ -126,7 +126,7 @@ async def test_clean_rooms_params(gw):
     await gw.clean_rooms([16, 17])
     call = _last_send(gw)
     assert call.args[0] == RoborockCommand.APP_SEGMENT_CLEAN
-    assert call.kwargs["params"] == [{"segments": [16, 17], "repeat": 1}]
+    assert call.kwargs["params"] == {"segments": [16, 17], "repeat": 1}
 
 
 async def test_fan_and_mop(gw):

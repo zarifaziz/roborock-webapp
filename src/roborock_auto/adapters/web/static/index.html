@@ -755,7 +755,12 @@ async function post(path, body, okMsg) {
     return true;
   } catch { toast(`${path} failed — no connection`, true); return false; }
 }
-const cmd = (path) => post(path, {}, path.slice(1) + " sent");
+// On the real robot, confirm actions that move the whole robot; frictionless in demo/fake mode.
+function liveConfirm(msg) { return authMode !== "live" || window.confirm(msg); }
+const cmd = (path) => {
+  if (path === "/start" && !liveConfirm("Start cleaning the WHOLE floor now?")) return;
+  return post(path, {}, path.slice(1) + " sent");
+};
 
 /* ---------- segmented settings ---------- */
 const SEGMENTS = [
@@ -846,8 +851,8 @@ function syncCleanBtn() {
 // The floating orb is the one contextual clean action: selected rooms run the chosen
 // room mode; nothing selected runs a whole-floor two-stage clean.
 function runPrimary() {
-  if (selectedRoomIds().length) cleanRooms();
-  else startTwoStage();
+  if (selectedRoomIds().length) { cleanRooms(); return; }
+  if (liveConfirm("Start a whole-floor two-stage clean (vacuum, then mop avoiding carpet)?")) startTwoStage();
 }
 
 /* ---------- polling ---------- */

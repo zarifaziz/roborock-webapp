@@ -263,8 +263,11 @@ class RoborockCloudAdapter:
         await self._send(RoborockCommand.APP_CHARGE)
 
     async def clean_rooms(self, segment_ids: list[int]) -> None:
-        # confirm on live bring-up: some firmwares want [{"segments": [...], "repeat": 1}]
-        await self._send(RoborockCommand.APP_SEGMENT_CLEAN, [{"segments": segment_ids, "repeat": 1}])
+        # This firmware rejected the list form ([{...}]) with -10005 "param is not an object",
+        # so send the params AS the object. Confirm on the next supervised live room clean.
+        await self._send(
+            RoborockCommand.APP_SEGMENT_CLEAN, {"segments": segment_ids, "repeat": 1}
+        )
 
     async def set_fan_power(self, power: FanPower) -> None:
         await self._send(RoborockCommand.SET_CUSTOM_MODE, [FAN_LEVELS[power]])

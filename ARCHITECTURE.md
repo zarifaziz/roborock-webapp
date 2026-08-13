@@ -200,24 +200,24 @@ before then.
 
 ## 6. Application layer: use cases own orchestration and retries
 
-Thin async functions (or small classes) that take ports as parameters, apply policies,
-and sequence commands. HTTP knows nothing about retries; adapters know nothing about
-sequencing. Examples:
+Thin async functions that take ports as parameters, apply policies, and sequence
+commands. HTTP knows nothing about retries; adapters know nothing about sequencing.
 
 ```
 application/
-  panel.py            # GetPanelSnapshot: status + map sig + consumables for the UI poll
-  cleaning.py         # StartClean, PauseClean, DockRobot, CleanRooms (guard: ready_to_start)
-  settings.py         # ChangeFanPower, ChangeMopMode, ChangeCarpetMode
-  two_stage_clean.py  # the PLAN.md automation, unchanged semantics
-  retry.py            # the one shared retry helper (today duplicated in automation.py + live.py)
+  two_stage_clean.py  # the PLAN.md automation; waits expressed over domain policies
+  retry.py            # workflow-level retry helper + AutomationError
 ```
 
-The retry policy consolidates here: today `with_retry` lives in `automation.py` and a
-second copy (`_locked_retry`, with reconnect) hides in the adapter. Split responsibilities
-cleanly: **transport-level** retry/reconnect stays in the adapter (it owns the
-connection); **workflow-level** retry (should this step be reattempted at all?) lives in
-the use case. One helper each, no duplication.
+A use case exists where there is real orchestration. Trivial one-command endpoints
+(start, pause, fan power) go straight from the driving adapter to the port — a use-case
+function that only forwards a call is ceremony, and we skip it until a guard or sequence
+gives it a job. `two_stage_clean` is the template for when one does.
+
+The retry split: **transport-level** retry stays in the adapter, which owns the
+connection (and deliberately does not reconnect per failure — the cloud login endpoint is
+rate limited); **workflow-level** retry (should this step be reattempted at all?) lives
+in `retry.py`. One helper each, no duplication.
 
 ## 7. Adapters
 
@@ -243,45 +243,44 @@ transitions on a fake clock, which is what lets the two-stage tests and the fron
 run in milliseconds. Every new port method lands in the fake in the same PR that adds it
 to the live adapter — that discipline is what keeps the ports honest.
 
-## 8. Target layout
+## 8. Layout (as built)
 
 ```
 src/roborock_auto/
+  config.py             # env-driven settings, shared by wiring and adapters
   domain/
-    models.py           # value objects + enums (moved from models.py)
-    policies.py         # job_is_active, home_and_idle, ready_to_start, ...
+    models.py           # value objects + enums
+    policies.py         # job_is_active, home_and_idle, ready_to_start
     capabilities.py     # DeviceCapabilities + QREVO_L_PRO
   ports/
+    __init__.py         # re-exports + RobotGateway (union of all ports, for wiring)
     robot.py            # RobotStatusPort, CleaningControlPort, CleaningSettingsPort, RoutinePort
     mapping.py          # MapPort
     maintenance.py      # MaintenancePort
     lifecycle.py        # ConnectionPort
   application/
-    panel.py  cleaning.py  settings.py  two_stage_clean.py  retry.py
+    two_stage_clean.py  retry.py
   adapters/
+    __init__.py         # get_gateway(config): picks live or fake
+    sample_map.py       # placeholder PNG shared by fake and the live map fallback
     roborock_cloud/     # adapter.py  codes.py  session.py
-    fake/               # fake_robot.py
+    fake/               # fake_robot.py (FakeRobot)
     web/                # server.py  static/
     cron/               # run.py
     cli/                # login.py  discover.py
 ```
 
-## 9. Migration from today's code (mechanical, test-covered)
+Entrypoints: `uvicorn roborock_auto.adapters.web.server:app`,
+`python -m roborock_auto.adapters.cron.run`, `python -m roborock_auto.adapters.cli.login`,
+`python -m roborock_auto.adapters.cli.discover`.
 
-Current code maps almost one-to-one; this is a re-homing, not a rewrite:
+## 9. Test layout
 
-1. `models.py` -> `domain/models.py`; extract `policies.py` from the predicates inside
-   `automation.py` and `live.py`. Verify: existing tests pass with import updates only.
-2. Split `gateway/base.py` into the `ports/` protocols. `LiveGateway` ->
-   `adapters/roborock_cloud/adapter.py` (also absorb `core.py` as `session.py`, and move
-   the `_FAN_LEVELS`/`_MOP_MODES`/state-code tables to `codes.py`). Verify:
-   `test_live_mapping.py` green.
-3. `gateway/fake.py` -> `adapters/fake/`; narrow each test's fake to the ports it uses.
-4. `automation.py` -> `application/two_stage_clean.py`, waits rewritten over policies;
-   pull the guard/settings/webapp glue into the other use-case modules. Verify:
-   `test_automation.py`, `test_api.py` green.
-5. `webapp/` + `run.py` -> `adapters/web/`, `adapters/cron/`; endpoints call use cases
-   instead of the gateway directly.
+- `test_policies.py` — domain rules stated as documentation
+- `test_two_stage_clean.py` — the process over `FakeRobot` with an injected clock
+- `test_fake_robot.py` — FakeRobot honors the full RobotGateway contract
+- `test_cloud_adapter_mapping.py` — pins each command/param the live adapter sends
+- `test_api.py` — HTTP endpoints over the fake, via TestClient
 
 ## 10. Rules of thumb going forward
 

@@ -1,4 +1,4 @@
-"""FastAPI control panel over the Gateway.
+"""Driving adapter: FastAPI control panel over the ports.
 
 One shared gateway is created in the lifespan handler and reused across requests. The map
 PNG is only re-read when the parsed map data changes, so polling stays cheap.
@@ -15,10 +15,11 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from roborock_auto.adapters import get_gateway
 from roborock_auto.config import Config
-from roborock_auto.gateway import get_gateway
-from roborock_auto.gateway.base import Gateway
-from roborock_auto.models import CarpetMode, FanPower, MopMode
+from roborock_auto.domain.capabilities import QREVO_L_PRO
+from roborock_auto.domain.models import CarpetMode, FanPower, MopMode
+from roborock_auto.ports import RobotGateway
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -40,8 +41,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="roborock-auto", lifespan=lifespan)
 
 
-def _gw(request: Request) -> Gateway:
+def _gw(request: Request) -> RobotGateway:
     return request.app.state.gateway
+
+
+@app.get("/capabilities")
+async def capabilities():
+    caps = dataclasses.asdict(QREVO_L_PRO)
+    caps["carpet_modes"] = sorted(m.value for m in QREVO_L_PRO.carpet_modes)
+    return caps
 
 
 @app.get("/status")

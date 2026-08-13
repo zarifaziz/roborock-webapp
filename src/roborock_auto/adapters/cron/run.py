@@ -1,6 +1,6 @@
 """Cron entrypoint: run the carpet-aware two-stage clean once and exit non-zero on failure.
 
-    uv run python -m roborock_auto.run
+    uv run python -m roborock_auto.adapters.cron.run
 """
 
 from __future__ import annotations
@@ -8,9 +8,10 @@ from __future__ import annotations
 import asyncio
 import sys
 
-from roborock_auto.automation import AutomationError, run_two_stage
+from roborock_auto.adapters import get_gateway
+from roborock_auto.application.retry import AutomationError
+from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
-from roborock_auto.gateway import get_gateway
 
 
 async def main() -> int:

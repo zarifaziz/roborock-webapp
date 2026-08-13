@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from roborock_auto.webapp.server import app
+from roborock_auto.adapters.web.server import app
 
 
 @pytest.fixture

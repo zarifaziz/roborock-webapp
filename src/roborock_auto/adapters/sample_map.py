@@ -1,4 +1,4 @@
-"""Bundled sample map PNG for FakeGateway (base64-embedded, no asset files)."""
+"""Bundled sample map PNG for FakeRobot and the live map fallback (base64-embedded, no asset files)."""
 import base64
 
 _B64 = (

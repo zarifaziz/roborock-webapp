@@ -1,6 +1,6 @@
 """One-time interactive login. Run locally, once, to create user_data.json.
 
-    uv run python -m roborock_auto.login
+    uv run python -m roborock_auto.adapters.cli.login
 
 Sends an email code, you type it back, and the resulting session is saved. Account only:
 in fake mode there is nothing to log in to.
@@ -12,8 +12,8 @@ import asyncio
 
 from roborock.web_api import RoborockApiClient
 
+from roborock_auto.adapters.roborock_cloud.session import save_user_data
 from roborock_auto.config import Config
-from roborock_auto.core import save_user_data
 
 
 async def main() -> None:

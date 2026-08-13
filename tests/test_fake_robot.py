@@ -1,10 +1,9 @@
-"""P1: FakeGateway conforms to the Gateway contract and is observation-free."""
+"""P1: FakeRobot conforms to the full RobotGateway contract and is observation-free."""
 
 from __future__ import annotations
 
-from roborock_auto.gateway.base import Gateway
-from roborock_auto.gateway.fake import FakeGateway
-from roborock_auto.models import (
+from roborock_auto.adapters.fake import FakeRobot
+from roborock_auto.domain.models import (
     CarpetMode,
     Consumables,
     DeviceStatus,
@@ -14,6 +13,7 @@ from roborock_auto.models import (
     Room,
     Routine,
 )
+from roborock_auto.ports import RobotGateway
 
 
 class Clock:
@@ -25,11 +25,11 @@ class Clock:
 
 
 def test_satisfies_protocol():
-    assert isinstance(FakeGateway(), Gateway)
+    assert isinstance(FakeRobot(), RobotGateway)
 
 
 async def test_reads_return_expected_types():
-    gw = FakeGateway()
+    gw = FakeRobot()
     assert isinstance(await gw.get_status(), DeviceStatus)
     assert (await gw.get_map_png())[:8] == b"\x89PNG\r\n\x1a\n"
     assert isinstance(await gw.get_map_data(), MapData)
@@ -40,14 +40,14 @@ async def test_reads_return_expected_types():
 
 
 async def test_idle_when_no_job():
-    status = await FakeGateway().get_status()
+    status = await FakeRobot().get_status()
     assert status.docked and not status.in_cleaning
 
 
 async def test_polling_does_not_advance_progress():
     """Same clock time -> same status, no matter how many times we poll."""
     clock = Clock()
-    gw = FakeGateway(clock=clock)
+    gw = FakeRobot(clock=clock)
     await gw.start()
     clock.now = 10.0  # inside the cleaning window
     first = await gw.get_status()
@@ -58,7 +58,7 @@ async def test_polling_does_not_advance_progress():
 
 async def test_machine_lifecycle_docked_cleaning_docked():
     clock = Clock()
-    gw = FakeGateway(clock=clock)
+    gw = FakeRobot(clock=clock)
     await gw.start()
     clock.now = 1.0
     assert (await gw.get_status()).docked            # lingering on dock, in_cleaning true
@@ -71,7 +71,7 @@ async def test_machine_lifecycle_docked_cleaning_docked():
 
 
 async def test_commands_recorded_and_carpet_roundtrip():
-    gw = FakeGateway()
+    gw = FakeRobot()
     await gw.set_carpet_mode(CarpetMode.RISE)
     assert await gw.get_carpet_mode() == CarpetMode.RISE
     await gw.set_fan_power(FanPower.TURBO)
@@ -83,7 +83,7 @@ async def test_commands_recorded_and_carpet_roundtrip():
 
 async def test_timeline_is_clock_relative():
     clock = Clock()
-    gw = FakeGateway(clock=clock)
+    gw = FakeRobot(clock=clock)
     a = DeviceStatus("cleaning", 90, in_cleaning=True, docked=False)
     b = DeviceStatus("charging", 88, in_cleaning=False, docked=True)
     gw.set_timeline([(0, a), (5, b)])

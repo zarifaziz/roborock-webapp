@@ -1,7 +1,7 @@
 [project]
-name = "roborock-auto"
+name = "roborock-webapp"
 version = "0.1.0"
-description = "Local control app + carpet-aware two-stage clean for a Roborock Qrevo L Pro"
+description = "Local web app to control a Roborock Qrevo L Pro, with a one-click carpet-aware two-stage clean"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

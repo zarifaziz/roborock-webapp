@@ -3,113 +3,599 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>roborock-auto</title>
+<title>roborock-webapp</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font-family: system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
-  h1 { font-size: 1.3rem; }
-  .card { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: 10px; padding: 14px 16px; margin: 12px 0; }
-  .status { display: flex; gap: 20px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
-  .status b { display: block; font-size: 0.72rem; opacity: 0.6; text-transform: uppercase; letter-spacing: .04em; }
-  button { font: inherit; padding: 8px 14px; margin: 4px 6px 4px 0; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: color-mix(in srgb, currentColor 6%, transparent); cursor: pointer; }
-  button:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
-  #map { width: 100%; max-width: 320px; image-rendering: pixelated; border-radius: 8px; border: 1px solid color-mix(in srgb, currentColor 20%, transparent); }
-  label.room { display: inline-flex; gap: 6px; align-items: center; margin-right: 12px; }
-  select { font: inherit; padding: 6px; border-radius: 6px; }
-  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .muted { opacity: 0.6; font-size: 0.85rem; }
+  :root {
+    color-scheme: light;
+    --surface:      #f4f4f2;
+    --card:         #fcfcfb;
+    --border:       #e3e2de;
+    --ink:          #0b0b0b;
+    --ink-2:        #52514e;
+    --ink-3:        #8a8984;
+    --accent:       #2a78d6;
+    --accent-ink:   #ffffff;
+    --accent-soft:  #e4eefb;
+    --track:        #ebeae6;
+    --good:         #0ca30c;
+    --warning:      #fab219;
+    --critical:     #d03b3b;
+    --shadow:       0 1px 2px rgb(0 0 0 / 0.05), 0 4px 16px rgb(0 0 0 / 0.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface:      #121211;
+      --card:         #1a1a19;
+      --border:       #2e2e2c;
+      --ink:          #ffffff;
+      --ink-2:        #c3c2b7;
+      --ink-3:        #85847d;
+      --accent:       #3987e5;
+      --accent-ink:   #ffffff;
+      --accent-soft:  #1c2c40;
+      --track:        #292927;
+      --shadow:       0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.35);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--surface); color: var(--ink);
+    margin: 0; padding: 24px 20px 48px;
+  }
+  .shell { max-width: 1060px; margin: 0 auto; }
+
+  header { display: flex; align-items: baseline; gap: 12px; margin-bottom: 18px; flex-wrap: wrap; }
+  header h1 { font-size: 1.25rem; margin: 0; letter-spacing: -0.01em; }
+  .model { color: var(--ink-3); font-size: 0.85rem; font-weight: 500; }
+  #offline {
+    display: none; margin-left: auto; font-size: 0.8rem; font-weight: 600;
+    color: var(--critical);
+  }
+
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+    padding: 16px 18px; box-shadow: var(--shadow);
+  }
+  .card h2 {
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--ink-3); margin: 0 0 12px;
+  }
+
+  /* status */
+  .state-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .state-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 1.05rem; font-weight: 650; text-transform: capitalize;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-3); }
+  .dot.active { background: var(--accent); }
+  .dot.good { background: var(--good); }
+  .dot.bad { background: var(--critical); }
+  .pill {
+    font-size: 0.72rem; font-weight: 600; padding: 3px 9px; border-radius: 999px;
+    background: var(--track); color: var(--ink-2);
+  }
+  .pill.on { background: var(--accent-soft); color: var(--accent); }
+  #error-banner {
+    display: none; margin-top: 12px; padding: 9px 12px; border-radius: 9px;
+    background: color-mix(in srgb, var(--critical) 12%, transparent);
+    color: var(--critical); font-size: 0.85rem; font-weight: 600;
+  }
+  .battery { margin-top: 14px; }
+  .meter-row { display: flex; align-items: baseline; justify-content: space-between; font-size: 0.8rem; }
+  .meter-row b { font-weight: 600; color: var(--ink-2); }
+  .meter-row span { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 650; }
+  .meter-row .low { color: var(--warning); font-weight: 700; margin-left: 6px; }
+  .meter { height: 6px; border-radius: 3px; background: var(--track); margin-top: 6px; overflow: hidden; }
+  .meter i { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.6s ease; }
+
+  /* map */
+  .map-card { padding: 14px; }
+  .map-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .map-head h2 { margin: 0; flex: 1; }
+  .map-badge {
+    display: none; font-size: 0.72rem; font-weight: 700; padding: 3px 9px; border-radius: 999px;
+    background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning);
+  }
+  .icon-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    font: inherit; font-size: 0.78rem; font-weight: 600; color: var(--ink-2);
+    background: transparent; border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 10px; cursor: pointer;
+  }
+  .icon-btn:hover { background: var(--track); }
+  .map-stage {
+    position: relative; aspect-ratio: 1; border-radius: 10px; overflow: hidden;
+    background: #16305e;
+  }
+  .map-stage img {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%; object-fit: contain;
+    image-rendering: pixelated;
+    transition: transform 0.35s ease;
+  }
+
+  /* controls */
+  .btn-row { display: flex; gap: 8px; }
+  .btn {
+    flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    font: inherit; font-size: 0.9rem; font-weight: 650;
+    padding: 11px 12px; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card); color: var(--ink);
+  }
+  .btn:hover { background: var(--track); }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+  .btn.primary:hover { background: color-mix(in srgb, var(--accent) 88%, black); }
+  .btn svg { width: 14px; height: 14px; fill: currentColor; }
+
+  .seg-label { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); margin: 12px 0 6px; }
+  .seg-label:first-of-type { margin-top: 0; }
+  .seg { display: flex; background: var(--track); border-radius: 9px; padding: 3px; gap: 3px; }
+  .seg button {
+    flex: 1; font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--ink-2);
+    border: 0; background: transparent; border-radius: 7px; padding: 7px 4px; cursor: pointer;
+  }
+  .seg button:hover { color: var(--ink); }
+  .seg button.active { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgb(0 0 0 / 0.15); }
+
+  /* rooms */
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; }
+  .chip {
+    font-size: 0.8rem; font-weight: 600; color: var(--ink-2);
+    border: 1px solid var(--border); background: transparent;
+    border-radius: 999px; padding: 6px 13px; cursor: pointer; font-family: inherit;
+  }
+  .chip:hover { background: var(--track); }
+  .chip.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  #clean-btn { margin-top: 12px; width: 100%; }
+  #clean-btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+
+  .routine-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .cons { display: flex; flex-direction: column; gap: 10px; }
+
+  /* toast */
+  #toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translate(-50%, 16px);
+    background: var(--ink); color: var(--card); font-size: 0.85rem; font-weight: 600;
+    padding: 10px 18px; border-radius: 10px; opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease; max-width: 90vw;
+  }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.err { background: var(--critical); color: #fff; }
+
+  /* connect panel */
+  .note { font-size: 0.78rem; color: var(--ink-3); margin: 0 0 12px; line-height: 1.4; }
+  .note.foot { margin: 12px 0 0; }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field label { font-size: 0.75rem; font-weight: 600; color: var(--ink-2); }
+  .input {
+    font: inherit; font-size: 0.9rem; padding: 9px 11px; border-radius: 9px;
+    border: 1px solid var(--border); background: var(--card); color: var(--ink);
+  }
+  .input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  #connect-card .btn { width: 100%; margin-top: 10px; }
+  .disc { margin-top: 12px; display: flex; flex-direction: column; gap: 8px; }
+  .disc-row { display: flex; justify-content: space-between; gap: 12px; font-size: 0.82rem; }
+  .disc-row b { font-weight: 600; color: var(--ink-2); }
+  .disc-row span { color: var(--ink); font-weight: 600; text-align: right; }
+
+  /* two-stage */
+  #two-stage-btn { width: 100%; margin-top: 4px; }
+  #two-stage-btn:disabled { opacity: 0.55; cursor: default; transform: none; }
+  .stage-track { display: flex; gap: 6px; margin-top: 14px; }
+  .stage-step {
+    flex: 1; text-align: center; font-size: 0.66rem; font-weight: 600;
+    color: var(--ink-3); text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .stage-step .bar {
+    height: 5px; border-radius: 3px; background: var(--track);
+    margin-bottom: 6px; transition: background 0.3s ease;
+  }
+  .stage-step.done .bar { background: var(--good); }
+  .stage-step.active .bar { background: var(--accent); }
+  .stage-step.active { color: var(--accent); }
+  .stage-step.done { color: var(--ink-2); }
+  .stage-msg { margin-top: 10px; font-size: 0.82rem; color: var(--ink-2); font-weight: 600; min-height: 1.1em; }
+  #two-stage-error {
+    display: none; margin-top: 10px; padding: 9px 12px; border-radius: 9px;
+    background: color-mix(in srgb, var(--critical) 12%, transparent);
+    color: var(--critical); font-size: 0.85rem; font-weight: 600;
+  }
 </style>
 </head>
 <body>
-  <h1>roborock-auto <span id="mode" class="muted"></span></h1>
+<div class="shell">
+  <header>
+    <h1>roborock-webapp</h1>
+    <span class="model" id="model"></span>
+    <a class="model" href="https://site-mu-ten-70.vercel.app" target="_blank" rel="noopener" style="text-decoration:none">About ↗</a>
+    <span id="offline">● connection lost — is the app still running?</span>
+  </header>
 
-  <div class="card status" id="statusCard">
-    <div><b>State</b><span id="s-state">—</span></div>
-    <div><b>Battery</b><span id="s-battery">—</span></div>
-    <div><b>Cleaning</b><span id="s-cleaning">—</span></div>
-    <div><b>Docked</b><span id="s-docked">—</span></div>
-    <div><b>Error</b><span id="s-error">none</span></div>
-  </div>
+  <div class="grid">
+    <div class="col">
+      <div class="card" id="connect-card">
+        <h2>Connect your Roborock</h2>
+        <p class="note" id="connect-demo-note" hidden>Demo mode — no Roborock account needed.</p>
 
-  <div class="card">
-    <img id="map" alt="map" />
-  </div>
+        <div id="connect-connected" hidden>
+          <div class="state-row">
+            <span class="state-badge"><span class="dot good"></span>Connected</span>
+            <span class="pill on" id="connect-email-display"></span>
+          </div>
+        </div>
 
-  <div class="card">
-    <button onclick="cmd('/start')">Start</button>
-    <button onclick="cmd('/pause')">Pause</button>
-    <button onclick="cmd('/dock')">Dock</button>
-  </div>
+        <div id="connect-form">
+          <div class="field">
+            <label for="connect-email">Email</label>
+            <input class="input" id="connect-email" type="email" placeholder="you@example.com" autocomplete="email" />
+          </div>
+          <button class="btn" id="connect-send-btn" onclick="sendCode()">Send code</button>
 
-  <div class="card">
-    <div class="row">
-      <label>Fan
-        <select id="fan" onchange="post('/fan',{power:this.value})">
-          <option value="quiet">Quiet</option><option value="balanced" selected>Balanced</option>
-          <option value="turbo">Turbo</option><option value="max">Max</option>
-        </select>
-      </label>
-      <label>Mop
-        <select id="mop" onchange="post('/mop',{mode:this.value})">
-          <option value="standard" selected>Standard</option><option value="deep">Deep</option>
-        </select>
-      </label>
-      <label>Carpet
-        <select id="carpet" onchange="post('/carpet',{mode:this.value})">
-          <option value="rise">Rise</option><option value="avoid">Avoid</option>
-        </select>
-      </label>
+          <div id="connect-step2" hidden>
+            <div class="field" style="margin-top: 12px">
+              <label for="connect-code">Verification code</label>
+              <input class="input" id="connect-code" type="text" inputmode="numeric" placeholder="Code from email" autocomplete="one-time-code" />
+            </div>
+            <button class="btn primary" id="connect-submit-btn" onclick="submitCode()">Connect</button>
+          </div>
+        </div>
+
+        <button class="btn" id="discover-btn" onclick="discover()">Discover</button>
+        <p class="note foot">Capturing duid + carpet integers is a manual owner step after live login.</p>
+        <div id="discover-results"></div>
+      </div>
+
+      <div class="card map-card">
+        <div class="map-head">
+          <h2>Map</h2>
+          <span class="map-badge" id="map-badge">⚠ placeholder — live map unavailable</span>
+          <button class="icon-btn" onclick="rotateMap()" title="Rotate map 90°">
+            <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor"><path d="M8 3a5 5 0 1 0 5 5h-1.5A3.5 3.5 0 1 1 8 4.5V7l3.5-3L8 1v2z"/></svg>
+            Rotate
+          </button>
+        </div>
+        <div class="map-stage"><img id="map" alt="live map" /></div>
+      </div>
+
+      <div class="card">
+        <h2>Rooms</h2>
+        <div class="chips" id="rooms"></div>
+        <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
+      </div>
+    </div>
+
+    <div class="col">
+      <div class="card" id="two-stage-card">
+        <h2>Two-stage clean</h2>
+        <p class="note">Vacuums the whole floor, then mops while avoiding carpet.</p>
+        <button class="btn primary" id="two-stage-btn" onclick="startTwoStage()">
+          <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Vacuum, then mop avoiding carpet
+        </button>
+        <div class="stage-track" id="two-stage-track">
+          <div class="stage-step"><div class="bar"></div>Vacuum</div>
+          <div class="stage-step"><div class="bar"></div>Wait</div>
+          <div class="stage-step"><div class="bar"></div>Mop</div>
+          <div class="stage-step"><div class="bar"></div>Wait</div>
+          <div class="stage-step"><div class="bar"></div>Done</div>
+        </div>
+        <div class="stage-msg" id="two-stage-message"></div>
+        <div id="two-stage-error"></div>
+      </div>
+
+      <div class="card">
+        <h2>Status</h2>
+        <div class="state-row">
+          <span class="state-badge"><span class="dot" id="s-dot"></span><span id="s-state">—</span></span>
+          <span class="pill" id="p-cleaning">cleaning</span>
+          <span class="pill" id="p-docked">docked</span>
+        </div>
+        <div id="error-banner"></div>
+        <div class="battery">
+          <div class="meter-row"><b>Battery</b><span><span id="s-battery">—</span><span class="low" id="s-low" hidden>low</span></span></div>
+          <div class="meter"><i id="battery-bar" style="width:0%"></i></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Controls</h2>
+        <div class="btn-row">
+          <button class="btn primary" onclick="cmd('/start')">
+            <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Start
+          </button>
+          <button class="btn" onclick="cmd('/pause')">
+            <svg viewBox="0 0 16 16"><path d="M4 2h3v12H4zM9 2h3v12H9z"/></svg>Pause
+          </button>
+          <button class="btn" onclick="cmd('/dock')">
+            <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
+          </button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Cleaning settings</h2>
+        <div class="seg-label">Fan power</div>
+        <div class="seg" id="seg-fan">
+          <button data-v="quiet">Quiet</button><button data-v="balanced">Balanced</button>
+          <button data-v="turbo">Turbo</button><button data-v="max">Max</button>
+        </div>
+        <div class="seg-label">Mop intensity</div>
+        <div class="seg" id="seg-mop">
+          <button data-v="standard">Standard</button><button data-v="deep">Deep</button>
+        </div>
+        <div class="seg-label">Carpet</div>
+        <div class="seg" id="seg-carpet">
+          <button data-v="rise">Rise (vacuum over)</button><button data-v="avoid">Avoid</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Routines</h2>
+        <div class="routine-list" id="routines"></div>
+      </div>
+
+      <div class="card">
+        <h2>Consumables</h2>
+        <div class="cons" id="cons"></div>
+      </div>
     </div>
   </div>
+</div>
 
-  <div class="card">
-    <div id="rooms" class="row"></div>
-    <button onclick="cleanRooms()">Clean selected rooms</button>
-  </div>
-
-  <div class="card">
-    <div id="routines"></div>
-  </div>
-
-  <div class="card muted" id="consumables">consumables —</div>
+<div id="toast"></div>
 
 <script>
 const $ = (id) => document.getElementById(id);
 
-async function post(path, body) {
-  const r = await fetch(path, { method: "POST", headers: {"content-type":"application/json"}, body: JSON.stringify(body) });
-  if (!r.ok) console.warn(path, r.status, await r.text());
-  refresh();
+/* ---------- feedback ---------- */
+let toastTimer;
+function toast(msg, isErr = false) {
+  const t = $("toast");
+  t.textContent = msg;
+  t.className = "show" + (isErr ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.className = ""), 2600);
 }
-const cmd = (path) => post(path, {});
 
+async function post(path, body, okMsg) {
+  try {
+    const r = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) { toast(`${path} failed (${r.status})`, true); return false; }
+    if (okMsg) toast(okMsg);
+    refreshStatus();
+    return true;
+  } catch { toast(`${path} failed — no connection`, true); return false; }
+}
+const cmd = (path) => post(path, {}, path.slice(1) + " sent");
+
+/* ---------- segmented settings ---------- */
+const SEGMENTS = [
+  ["seg-fan", "/fan", "power"],
+  ["seg-mop", "/mop", "mode"],
+  ["seg-carpet", "/carpet", "mode"],
+];
+for (const [segId, path, key] of SEGMENTS) {
+  $(segId).addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    if (await post(path, { [key]: btn.dataset.v }, `${key} → ${btn.dataset.v}`)) {
+      [...$(segId).children].forEach((b) => b.classList.toggle("active", b === btn));
+    }
+  });
+}
+
+/* ---------- map rotation ---------- */
+let rot = Number(localStorage.getItem("mapRot") || 0);
+function applyRot() { $("map").style.transform = `rotate(${rot}deg)`; }
+function rotateMap() { rot = (rot + 90) % 360; localStorage.setItem("mapRot", rot); applyRot(); }
+
+/* ---------- rooms ---------- */
 function cleanRooms() {
-  const ids = [...document.querySelectorAll("#rooms input:checked")].map(el => Number(el.value));
-  if (ids.length) post("/clean/rooms", { segment_ids: ids });
+  const ids = [...document.querySelectorAll("#rooms .chip.sel")].map((el) => Number(el.dataset.id));
+  if (ids.length) post("/clean/rooms", { segment_ids: ids }, `cleaning ${ids.length} room${ids.length > 1 ? "s" : ""}`);
+}
+function syncCleanBtn() {
+  const n = document.querySelectorAll("#rooms .chip.sel").length;
+  const b = $("clean-btn");
+  b.disabled = n === 0;
+  b.textContent = n ? `Clean ${n} selected room${n > 1 ? "s" : ""}` : "Clean selected rooms";
 }
 
-async function refresh() {
-  const s = await (await fetch("/status")).json();
-  $("s-state").textContent = s.state_name;
+/* ---------- polling ---------- */
+const STATE_DOTS = { cleaning: "active", segment_cleaning: "active", zoned_cleaning: "active",
+                     returning_home: "active", charging: "good", charging_complete: "good", error: "bad" };
+
+async function refreshStatus() {
+  let s;
+  try {
+    s = await (await fetch("/status")).json();
+    $("offline").style.display = "none";
+  } catch { $("offline").style.display = "inline"; return; }
+
+  $("s-state").textContent = s.state_name.replaceAll("_", " ");
+  $("s-dot").className = "dot " + (STATE_DOTS[s.state_name] || "");
+  $("p-cleaning").classList.toggle("on", s.in_cleaning);
+  $("p-docked").classList.toggle("on", s.docked);
   $("s-battery").textContent = s.battery + "%";
-  $("s-cleaning").textContent = s.in_cleaning ? "yes" : "no";
-  $("s-docked").textContent = s.docked ? "yes" : "no";
-  $("s-error").textContent = s.error || "none";
-  $("map").src = "/map.png?t=" + Date.now();
+  $("battery-bar").style.width = s.battery + "%";
+  $("s-low").hidden = s.battery >= 20;
+  const eb = $("error-banner");
+  eb.style.display = s.error ? "block" : "none";
+  eb.textContent = s.error ? "⚠ " + s.error : "";
+  // Explicit false only: a server that predates map_ok omits the field, which is not a failure.
+  $("map-badge").style.display = s.map_ok === false ? "inline-block" : "none";
 }
 
+function refreshMap() { $("map").src = "/map.png?t=" + Date.now(); }
+
+/* ---------- connect ---------- */
+let authMode = null;  // "fake" | "live"; drives demo-vs-real messaging below
+async function loadAuthStatus() {
+  let s;
+  try { s = await (await fetch("/auth/status")).json(); }
+  catch { return; }
+  authMode = s.mode;
+  const fake = s.mode === "fake";
+  $("connect-demo-note").hidden = !fake;
+  if (fake) {
+    // Fake mode sends no real email and accepts any code — say so, or the flow looks broken.
+    $("connect-demo-note").textContent = "Demo mode — no email is sent. Click Send code, then enter any code to connect.";
+    $("connect-code").placeholder = "Any code (demo mode)";
+  }
+  // A compact "Connected" state only makes sense for a real (live) account.
+  const liveConnected = s.connected && s.mode === "live";
+  $("connect-connected").hidden = !liveConnected;
+  $("connect-form").hidden = liveConnected;
+  if (liveConnected) $("connect-email-display").textContent = s.email || "connected";
+}
+
+async function sendCode() {
+  const email = $("connect-email").value.trim();
+  if (!email) { toast("Enter your email", true); return; }
+  const msg = authMode === "fake" ? "Demo mode — enter any code, then Connect" : "Code sent — check your email";
+  if (await post("/auth/request-code", { email }, msg)) {
+    $("connect-step2").hidden = false;
+    $("connect-code").focus();
+  }
+}
+
+async function submitCode() {
+  const email = $("connect-email").value.trim();
+  const code = $("connect-code").value.trim();
+  if (!email || !code) { toast(authMode === "fake" ? "Enter any code to continue" : "Enter the code from your email", true); return; }
+  const msg = authMode === "fake" ? "Connected (demo mode)" : "Connected to Roborock";
+  if (await post("/auth/submit-code", { email, code }, msg)) {
+    loadAuthStatus();
+  }
+}
+
+async function discover() {
+  let d;
+  try { d = await (await fetch("/auth/discover")).json(); }
+  catch { toast("Discover failed — no connection", true); return; }
+  const pct = (v) => (v == null ? "—" : v + "%");
+  const names = (list) => (list && list.length ? list.map((x) => x.name).join(", ") : "—");
+  $("discover-results").innerHTML = `
+    <div class="disc">
+      <div class="disc-row"><b>Mode</b><span>${d.mode ?? "—"}</span></div>
+      <div class="disc-row"><b>Carpet mode</b><span>${d.carpet_mode ?? "—"}</span></div>
+      <div class="disc-row"><b>Rooms</b><span>${names(d.rooms)}</span></div>
+      <div class="disc-row"><b>Routines</b><span>${names(d.routines)}</span></div>
+      <div class="disc-row"><b>Main brush</b><span>${pct(d.consumables?.main_brush_pct)}</span></div>
+      <div class="disc-row"><b>Side brush</b><span>${pct(d.consumables?.side_brush_pct)}</span></div>
+      <div class="disc-row"><b>Filter</b><span>${pct(d.consumables?.filter_pct)}</span></div>
+    </div>`;
+}
+
+/* ---------- two-stage clean ---------- */
+const TWO_STAGE_ORDER = { vacuuming: 0, vacuum_waiting: 1, mopping: 2, mop_waiting: 3, done: 4 };
+let twoStageTimer = null;
+let lastTwoStageError = null;
+
+function renderTwoStage(st) {
+  $("two-stage-btn").disabled = !!st.running;
+  const idx = st.stage in TWO_STAGE_ORDER ? TWO_STAGE_ORDER[st.stage] : -1;
+  const steps = document.querySelectorAll("#two-stage-track .stage-step");
+  steps.forEach((el, i) => {
+    const done = st.stage === "done" || (idx >= 0 && i < idx);
+    el.classList.toggle("active", st.stage !== "done" && i === idx);
+    el.classList.toggle("done", done);
+  });
+  $("two-stage-message").textContent = st.message || "";
+  const err = $("two-stage-error");
+  err.style.display = st.error ? "block" : "none";
+  err.textContent = st.error ? "⚠ " + st.error : "";
+  if (st.error && st.error !== lastTwoStageError) toast(st.error, true);
+  lastTwoStageError = st.error || null;
+}
+
+async function fetchTwoStageStatus() {
+  try { return await (await fetch("/clean/two-stage/status")).json(); }
+  catch { return null; }
+}
+
+async function pollTwoStage() {
+  const st = await fetchTwoStageStatus();
+  if (!st) return;
+  renderTwoStage(st);
+  if (!st.running) stopTwoStagePoll();
+}
+
+function startTwoStagePoll() {
+  if (!twoStageTimer) twoStageTimer = setInterval(pollTwoStage, 2000);
+}
+function stopTwoStagePoll() {
+  clearInterval(twoStageTimer);
+  twoStageTimer = null;
+}
+
+async function startTwoStage() {
+  const btn = $("two-stage-btn");
+  btn.disabled = true;
+  lastTwoStageError = null;
+  try {
+    const r = await fetch("/clean/two-stage", {
+      method: "POST", headers: { "content-type": "application/json" }, body: "{}",
+    });
+    if (r.status === 409) { toast("A two-stage clean is already running", true); }
+    else if (!r.ok) { toast(`Two-stage start failed (${r.status})`, true); btn.disabled = false; return; }
+    else { toast("Two-stage clean started"); }
+  } catch {
+    toast("Two-stage start failed — no connection", true);
+    btn.disabled = false;
+    return;
+  }
+  startTwoStagePoll();
+  pollTwoStage();
+}
+
+/* ---------- boot ---------- */
 async function boot() {
+  applyRot();
+  refreshMap();
+  try {
+    const caps = await (await fetch("/capabilities")).json();
+    $("model").textContent = caps.model;
+  } catch { /* capabilities are cosmetic */ }
+
   const rooms = await (await fetch("/rooms")).json();
-  $("rooms").innerHTML = rooms.map(r =>
-    `<label class="room"><input type="checkbox" value="${r.segment_id}">${r.name}</label>`).join("");
+  $("rooms").innerHTML = rooms.map((r) =>
+    `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
+  $("rooms").addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (!chip) return;
+    chip.classList.toggle("sel");
+    syncCleanBtn();
+  });
+
   const routines = await (await fetch("/routines")).json();
-  $("routines").innerHTML = routines.map(r =>
-    `<button onclick="post('/routine',{routine_id:${r.id}})">${r.name}</button>`).join("");
+  $("routines").innerHTML = routines.map((r) =>
+    `<button class="btn" onclick="post('/routine',{routine_id:${r.id}},'${r.name} started')">${r.name}</button>`).join("");
+
   const c = await (await fetch("/consumables")).json();
-  $("consumables").textContent = `consumables — brush ${c.main_brush_pct}% · side ${c.side_brush_pct}% · filter ${c.filter_pct}%`;
-  await refresh();
-  const interval = 5000;
-  setInterval(refresh, interval);
+  const items = [["Main brush", c.main_brush_pct], ["Side brush", c.side_brush_pct], ["Filter", c.filter_pct]];
+  $("cons").innerHTML = items.map(([name, pct]) => `
+    <div>
+      <div class="meter-row"><b>${name}</b><span>${pct}%</span></div>
+      <div class="meter"><i style="width:${pct}%"></i></div>
+    </div>`).join("");
+
+  await loadAuthStatus();
+  const st0 = await fetchTwoStageStatus();
+  if (st0) { renderTwoStage(st0); if (st0.running) startTwoStagePoll(); }
+
+  await refreshStatus();
+  setInterval(refreshStatus, 5000);
+  setInterval(refreshMap, 15000);  // matches the server-side map TTL
 }
 boot();
 </script>

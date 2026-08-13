@@ -40,6 +40,8 @@ CLEANING = DeviceStatus("cleaning", 90, in_cleaning=True, docked=False)
 DOCKED_IDLE = DeviceStatus("charging", 100, in_cleaning=False, docked=True)
 RECHARGING_MIDJOB = DeviceStatus("charging", 20, in_cleaning=True, docked=True)
 ERRORED = DeviceStatus("error", 50, in_cleaning=False, docked=False, error="brush stuck")
+PAUSED = DeviceStatus("paused", 80, in_cleaning=True, docked=False)
+CANCELLED_OFF_DOCK = DeviceStatus("idle", 80, in_cleaning=False, docked=False)
 
 
 async def test_departure_returns_when_job_active():
@@ -80,6 +82,44 @@ async def test_return_raises_on_error():
         await wait_for_return(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
 
 
+async def test_return_aborts_after_persistent_pause():
+    """A pause nobody resumes fails in stall_timeout, not the full 2h return timeout."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([(0, CLEANING), (10, PAUSED)])
+    with pytest.raises(AutomationError, match="stalled"):
+        await wait_for_return(
+            gw, clock=clock, sleep=clock.sleep, interval=5, timeout=7200, stall_timeout=60
+        )
+    assert clock.now < 120  # aborted shortly after the 60s stall window, not at 7200
+
+
+async def test_return_survives_brief_pause():
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([
+        (0, CLEANING),
+        (10, PAUSED),        # paused briefly...
+        (30, CLEANING),      # ...then resumed before the stall window expires
+        (40, DOCKED_IDLE),
+    ])
+    await wait_for_return(
+        gw, clock=clock, sleep=clock.sleep, interval=5, timeout=7200, stall_timeout=60
+    )
+    assert clock.now == 40.0
+
+
+async def test_return_aborts_when_cancelled_off_dock():
+    """A user cancel that leaves the robot idle off-dock is a stall, not a 2h wait."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([(0, CLEANING), (10, CANCELLED_OFF_DOCK)])
+    with pytest.raises(AutomationError, match="stalled"):
+        await wait_for_return(
+            gw, clock=clock, sleep=clock.sleep, interval=5, timeout=7200, stall_timeout=60
+        )
+
+
 async def test_return_times_out_when_stuck():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)
@@ -108,6 +148,18 @@ async def test_two_stage_happy_path_ordering():
     )
     # Each stage sets carpet+mode before it starts.
     assert kinds.index(("set_cleaning_mode", CleaningMode.VACUUM)) < kinds.index(("start",))
+
+
+async def test_two_stage_reports_stage_sequence():
+    """on_stage fires the exact stage tokens, in order, the status endpoint reports."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    stages: list[str] = []
+    await run_two_stage(
+        gw, _config(), clock=clock, sleep=clock.sleep, interval=5,
+        log=lambda m: None, on_stage=stages.append,
+    )
+    assert stages == ["vacuuming", "vacuum_waiting", "mopping", "mop_waiting", "done"]
 
 
 async def test_two_stage_aborts_if_carpet_mode_does_not_take():

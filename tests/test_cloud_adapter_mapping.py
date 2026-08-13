@@ -159,6 +159,21 @@ async def test_get_carpet_mode_maps_back(gw):
     assert await gw.get_carpet_mode() == CarpetMode.UNKNOWN
 
 
+async def test_map_ok_flips_on_placeholder_fallback(gw):
+    from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
+
+    assert gw.map_ok() is True
+    # No map_content on the mocked device -> fetch fails -> placeholder + map_ok False.
+    assert await gw.get_map_png() == SAMPLE_MAP_PNG
+    assert gw.map_ok() is False
+    # A later successful fetch clears the flag.
+    gw._device.v1_properties.map_content = SimpleNamespace(
+        refresh=AsyncMock(), image_content=b"\x89PNG\r\n\x1a\nreal"
+    )
+    assert await gw.get_map_png() == b"\x89PNG\r\n\x1a\nreal"
+    assert gw.map_ok() is True
+
+
 async def test_get_status_maps_trait(gw):
     status_trait = SimpleNamespace(
         refresh=AsyncMock(),

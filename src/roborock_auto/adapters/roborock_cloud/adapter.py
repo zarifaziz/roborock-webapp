@@ -58,6 +58,7 @@ class RoborockCloudAdapter:
         self._device: Any = None
         self._web: Any = None
         self._user_data: Any = None
+        self._map_ok = True
 
     # --- lifecycle --------------------------------------------------------
     async def connect(self) -> None:
@@ -135,9 +136,14 @@ class RoborockCloudAdapter:
                 return mc.image_content
 
             png = await self._locked_retry(read)
-            return png or SAMPLE_MAP_PNG
+            if png:
+                self._map_ok = True
+                return png
+            self._map_ok = False
+            return SAMPLE_MAP_PNG
         except Exception:
             _LOGGER.warning("live map fetch failed; serving placeholder", exc_info=True)
+            self._map_ok = False
             return SAMPLE_MAP_PNG
 
     async def get_map_data(self) -> MapData:
@@ -154,10 +160,16 @@ class RoborockCloudAdapter:
                     robot = Point(int(getattr(pos, "x", 0)), int(getattr(pos, "y", 0)))
                 return MapData(rooms=rooms, robot=robot)
 
-            return await self._locked_retry(read)
+            data = await self._locked_retry(read)
+            self._map_ok = True
+            return data
         except Exception:
             _LOGGER.warning("live map data fetch failed", exc_info=True)
+            self._map_ok = False
             return MapData()
+
+    def map_ok(self) -> bool:
+        return self._map_ok
 
     async def list_rooms(self) -> list[Room]:
         async def read() -> list[Room]:

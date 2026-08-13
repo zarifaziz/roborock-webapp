@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>roborock-webapp — control your Roborock from a clean local web UI</title>
+<meta name="description" content="A clean, local web UI for your Roborock. One-click vacuum-then-mop that avoids carpet. Runs on your machine, your session never leaves it." />
+<style>
+  :root {
+    color-scheme: light;
+    --surface:      #f6f6f4;
+    --surface-2:    #eeeeeb;
+    --card:         #ffffff;
+    --border:       #e5e4e0;
+    --border-2:     #d9d8d3;
+    --ink:          #0b0b0b;
+    --ink-2:        #52514e;
+    --ink-3:        #8a8984;
+    --accent:       #2a78d6;
+    --accent-2:     #6b5ef0;
+    --accent-ink:   #ffffff;
+    --accent-soft:  #e7effc;
+    --track:        #ecebe7;
+    --good:         #0ca30c;
+    --dot:          rgb(0 0 0 / 0.045);
+    --shadow-sm:    0 1px 2px rgb(0 0 0 / 0.05), 0 4px 14px rgb(0 0 0 / 0.05);
+    --shadow-lg:    0 24px 60px -20px rgb(20 40 90 / 0.28), 0 8px 24px -12px rgb(0 0 0 / 0.14);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface:      #0e0e0d;
+      --surface-2:    #161615;
+      --card:         #1a1a19;
+      --border:       #2c2c2a;
+      --border-2:     #37372f;
+      --ink:          #ffffff;
+      --ink-2:        #c6c5ba;
+      --ink-3:        #8a897f;
+      --accent:       #4a92f0;
+      --accent-2:     #8b7dff;
+      --accent-ink:   #ffffff;
+      --accent-soft:  #182a44;
+      --track:        #26261f;
+      --dot:          rgb(255 255 255 / 0.05);
+      --shadow-sm:    0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px rgb(0 0 0 / 0.35);
+      --shadow-lg:    0 30px 70px -20px rgb(0 0 0 / 0.7), 0 10px 30px -12px rgb(0 0 0 / 0.5);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--surface); color: var(--ink);
+    margin: 0; padding: 0; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    background-image: radial-gradient(var(--dot) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+  /* ambient accent glow */
+  body::before {
+    content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+    background:
+      radial-gradient(1100px 560px at 78% -8%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 62%),
+      radial-gradient(760px 460px at -5% 4%, color-mix(in srgb, var(--accent-2) 16%, transparent), transparent 58%);
+  }
+  .shell { max-width: 1100px; margin: 0 auto; padding: 0 22px; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .mono, code {
+    font-family: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, monospace;
+    font-size: 0.86em;
+  }
+
+  /* nav */
+  nav { display: flex; align-items: center; gap: 12px; padding: 20px 0; flex-wrap: wrap; }
+  .brand { display: inline-flex; align-items: center; gap: 9px; font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
+  .brand .glyph {
+    width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    color: #fff; box-shadow: var(--shadow-sm);
+  }
+  .brand .glyph svg { width: 15px; height: 15px; fill: currentColor; }
+  .brand .dot { color: var(--accent); }
+  .spacer { flex: 1; }
+  .ghlink {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 0.85rem; font-weight: 600; color: var(--ink-2);
+    border: 1px solid var(--border); border-radius: 999px;
+    padding: 7px 14px; background: var(--card);
+  }
+  .ghlink:hover { background: var(--track); text-decoration: none; }
+  .ghlink svg { width: 16px; height: 16px; fill: currentColor; }
+
+  /* buttons */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    font: inherit; font-size: 0.95rem; font-weight: 650;
+    padding: 12px 20px; border-radius: 11px; cursor: pointer;
+    border: 1px solid var(--border-2); background: var(--card); color: var(--ink);
+    transition: transform 0.12s ease, background 0.15s ease;
+  }
+  .btn:hover { background: var(--track); text-decoration: none; transform: translateY(-1px); }
+  .btn.primary {
+    border: 0; color: var(--accent-ink);
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 8px 20px -8px color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  .btn.primary:hover { filter: brightness(1.05); }
+  .btn svg { width: 16px; height: 16px; fill: currentColor; }
+
+  /* hero */
+  .hero { display: grid; grid-template-columns: 1fr 1.02fr; gap: 44px; align-items: center; padding: 34px 0 26px; }
+  @media (max-width: 900px) { .hero { grid-template-columns: 1fr; gap: 32px; } }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 0.72rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase;
+    color: var(--accent); background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
+    padding: 5px 11px; border-radius: 999px; margin-bottom: 18px;
+  }
+  .hero h1 {
+    font-size: clamp(2.1rem, 5.2vw, 3.35rem); line-height: 1.06; letter-spacing: -0.025em;
+    margin: 0 0 18px; max-width: 15ch;
+  }
+  .hero h1 .grad {
+    background: linear-gradient(120deg, var(--accent), var(--accent-2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .hero p.lede { font-size: 1.14rem; color: var(--ink-2); margin: 0 0 26px; max-width: 46ch; }
+  .cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 22px; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 0.8rem; font-weight: 600; color: var(--ink-2);
+    background: var(--card); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px;
+  }
+  .chip .tick { color: var(--good); font-weight: 800; }
+
+  /* browser mockup */
+  .browser {
+    border: 1px solid var(--border-2); border-radius: 14px; overflow: hidden;
+    background: var(--card); box-shadow: var(--shadow-lg);
+  }
+  .hero .browser { transform: perspective(1600px) rotateY(-4deg) rotateX(1.5deg); animation: float 7s ease-in-out infinite; }
+  @keyframes float { 0%,100% { transform: perspective(1600px) rotateY(-4deg) rotateX(1.5deg) translateY(0); } 50% { transform: perspective(1600px) rotateY(-4deg) rotateX(1.5deg) translateY(-9px); } }
+  @media (prefers-reduced-motion: reduce) { .hero .browser { animation: none; } }
+  @media (max-width: 900px) { .hero .browser { transform: none; animation: none; } }
+  .browser-bar {
+    display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+    background: var(--surface-2); border-bottom: 1px solid var(--border);
+  }
+  .browser-bar .dots { display: flex; gap: 6px; }
+  .browser-bar .dots i { width: 11px; height: 11px; border-radius: 50%; background: var(--border-2); }
+  .browser-bar .url {
+    flex: 1; text-align: center; font-size: 0.76rem; color: var(--ink-3);
+    background: var(--card); border-radius: 6px; padding: 4px 10px; margin: 0 6px;
+    font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .browser-body { position: relative; aspect-ratio: 16 / 10; background: var(--surface); }
+  .browser-body img { width: 100%; height: 100%; object-fit: cover; object-position: top left; display: block; position: relative; z-index: 1; }
+  .browser-body .ph {
+    position: absolute; inset: 0; z-index: 0; display: grid; place-items: center; text-align: center;
+    color: var(--ink-3); font-size: 0.82rem; font-weight: 600; padding: 16px;
+  }
+
+  /* sections */
+  section { padding: 46px 0; }
+  .section-head { max-width: 62ch; margin-bottom: 26px; }
+  .section-tag {
+    font-size: 0.72rem; font-weight: 650; letter-spacing: 0.07em; text-transform: uppercase;
+    color: var(--ink-3); margin: 0 0 10px;
+  }
+  h2.title { font-size: clamp(1.55rem, 3.2vw, 2.15rem); letter-spacing: -0.015em; margin: 0 0 12px; }
+  p.body { color: var(--ink-2); font-size: 1.03rem; margin: 0; }
+  .card {
+    background: var(--card); border: 1px solid var(--border); border-radius: 16px;
+    padding: 22px 24px; box-shadow: var(--shadow-sm);
+  }
+
+  /* headline feature */
+  .feature { display: grid; grid-template-columns: 1.15fr 1fr; gap: 22px; align-items: stretch; }
+  @media (max-width: 820px) { .feature { grid-template-columns: 1fr; } }
+  .flow-card { background: linear-gradient(160deg, color-mix(in srgb, var(--accent) 8%, var(--card)), var(--card) 60%); }
+  .flow { display: flex; flex-direction: column; }
+  .flow-step { display: flex; gap: 15px; align-items: flex-start; }
+  .flow-num {
+    flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff;
+    font-weight: 700; font-size: 0.9rem; box-shadow: var(--shadow-sm);
+  }
+  .flow-step h3 { margin: 2px 0 4px; font-size: 1.05rem; }
+  .flow-step h3 .tag {
+    font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; font-weight: 700;
+    background: var(--accent-soft); color: var(--accent); padding: 2px 7px; border-radius: 6px; margin-left: 4px;
+    vertical-align: middle;
+  }
+  .flow-step p { margin: 0; color: var(--ink-2); font-size: 0.94rem; }
+  .flow-connector { width: 2px; height: 22px; margin: 6px 0 6px 16px; background: linear-gradient(var(--accent), var(--accent-2)); opacity: 0.5; border-radius: 2px; }
+  .oneclick {
+    display: inline-flex; align-items: center; gap: 10px; margin-top: 20px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff;
+    border-radius: 12px; padding: 13px 20px; font-weight: 650; font-size: 1rem;
+    box-shadow: 0 10px 24px -10px color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  .oneclick svg { width: 17px; height: 17px; fill: currentColor; }
+  .feature-copy { display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+  .feature-copy p { margin: 0; color: var(--ink-2); font-size: 1.02rem; }
+  .feature-copy .kicker { font-weight: 650; color: var(--ink); font-size: 1.08rem; }
+
+  /* trust */
+  .trust-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  @media (max-width: 820px) { .trust-grid { grid-template-columns: 1fr; } }
+  .trust-grid .ico {
+    width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 12px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .trust-grid .ico svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.7; }
+  .trust-grid h3 { margin: 0 0 6px; font-size: 1.02rem; }
+  .trust-grid p { margin: 0; color: var(--ink-2); font-size: 0.93rem; }
+  code.inline { background: var(--track); border-radius: 6px; padding: 1px 6px; color: var(--ink); font-size: 0.85rem; }
+
+  /* quickstart */
+  .qs { display: grid; grid-template-columns: 1fr 1.25fr; gap: 22px; align-items: start; }
+  @media (max-width: 820px) { .qs { grid-template-columns: 1fr; } }
+  .steps { display: flex; flex-direction: column; gap: 16px; }
+  .step { display: flex; gap: 14px; align-items: flex-start; }
+  .step .n {
+    flex: none; width: 27px; height: 27px; border-radius: 50%; display: grid; place-items: center;
+    font-weight: 700; font-size: 0.8rem; background: var(--track); color: var(--ink-2);
+  }
+  .step .txt { flex: 1; min-width: 0; }
+  .step .txt b { font-weight: 650; }
+  .step .txt p { margin: 2px 0 0; color: var(--ink-2); font-size: 0.92rem; }
+  .terminal { border: 1px solid var(--border-2); border-radius: 14px; overflow: hidden; box-shadow: var(--shadow-sm); }
+  .terminal .browser-bar .url { text-align: left; }
+  pre.code {
+    margin: 0; padding: 18px 18px; overflow-x: auto; background: var(--card); color: var(--ink);
+    font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 0.85rem; line-height: 1.75;
+  }
+  pre.code .tok-cmd { color: var(--accent); font-weight: 600; }
+  pre.code .tok-dim { color: var(--ink-3); }
+
+  /* screenshots */
+  .shots { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 820px) { .shots { grid-template-columns: 1fr; } }
+  .shot { display: flex; flex-direction: column; gap: 10px; }
+  .shot .cap { font-size: 0.85rem; color: var(--ink-3); text-align: center; }
+
+  /* footer */
+  footer {
+    border-top: 1px solid var(--border); margin-top: 24px;
+    padding: 26px 0 48px; color: var(--ink-3); font-size: 0.85rem;
+    display: flex; gap: 12px; flex-wrap: wrap; align-items: center;
+  }
+</style>
+</head>
+<body>
+<div class="shell">
+
+  <nav>
+    <span class="brand">
+      <span class="glyph"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 3.2A2.8 2.8 0 1 1 8 9.8 2.8 2.8 0 0 1 8 4.2z"/></svg></span>
+      roborock<span class="dot">·</span>webapp
+    </span>
+    <span class="spacer"></span>
+    <a class="ghlink" href="https://github.com/zarifaziz/roborock-automation" target="_blank" rel="noopener">
+      <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      GitHub
+    </a>
+  </nav>
+
+  <header class="hero">
+    <div>
+      <div class="eyebrow">Local web UI · runs on your machine</div>
+      <h1>Control your Roborock from a <span class="grad">clean local web UI</span></h1>
+      <p class="lede">A fast, dependency-free control panel for your robot — with one headline trick
+        the mobile app simply doesn't offer: vacuum everywhere, then mop only the hard floors.</p>
+      <div class="cta-row">
+        <a class="btn primary" href="#quickstart">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>
+          Quickstart
+        </a>
+        <a class="btn" href="https://github.com/zarifaziz/roborock-automation" target="_blank" rel="noopener">View on GitHub</a>
+      </div>
+      <div class="chips">
+        <span class="chip"><span class="tick">✓</span> Binds to 127.0.0.1</span>
+        <span class="chip"><span class="tick">✓</span> No cloud middleman</span>
+        <span class="chip"><span class="tick">✓</span> Zero build step</span>
+      </div>
+    </div>
+
+    <div class="browser" aria-hidden="true">
+      <div class="browser-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="url">127.0.0.1:8000</span>
+      </div>
+      <div class="browser-body">
+        <div class="ph">Control panel screenshot<br />site/screenshots/app.png</div>
+        <img src="screenshots/app.png" alt="roborock-webapp control panel" onerror="this.remove()" />
+      </div>
+    </div>
+  </header>
+
+  <section id="feature">
+    <div class="section-head">
+      <p class="section-tag">The headline feature</p>
+      <h2 class="title">One click: “Vacuum, then mop — avoiding carpet”</h2>
+      <p class="body">Carpet and a wet mop pad don't mix. This runs a carpet-aware two-stage clean so your
+        robot vacuums everywhere including carpet, then comes back to mop only the hard floors.</p>
+    </div>
+
+    <div class="feature">
+      <div class="card flow-card">
+        <div class="flow">
+          <div class="flow-step">
+            <div class="flow-num">1</div>
+            <div>
+              <h3>Vacuum <span class="tag">carpet Rise</span></h3>
+              <p>The robot lifts its mop and vacuums the whole floor plan, riding up and over carpet for a proper deep pass.</p>
+            </div>
+          </div>
+          <div class="flow-connector"></div>
+          <div class="flow-step">
+            <div class="flow-num">2</div>
+            <div>
+              <h3>Mop <span class="tag">carpet Avoid</span></h3>
+              <p>It returns to mop the hard floors only, actively avoiding every carpet zone so a wet pad never touches your rugs.</p>
+            </div>
+          </div>
+        </div>
+        <div class="oneclick">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9-5.5z"/></svg>
+          Vacuum, then mop avoiding carpet
+        </div>
+      </div>
+
+      <div class="feature-copy">
+        <p class="kicker">Two passes, one button.</p>
+        <p>Orchestrated for you and triggered by a single click. No fiddling with carpet modes between
+          runs, no babysitting the app to swap settings halfway through.</p>
+        <p>It's the kind of routine the mobile app makes you build by hand — here it just works, with
+          live stage progress from vacuum to done.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="trust">
+    <div class="section-head">
+      <p class="section-tag">Runs locally</p>
+      <h2 class="title">Your session stays on your machine</h2>
+      <p class="body">No cloud middleman for the UI, no account handed to a third party. The server runs
+        on your own computer and talks to your robot — nothing about your session leaves the box.</p>
+    </div>
+    <div class="trust-grid">
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg></div>
+        <h3>Binds to localhost</h3>
+        <p>The web server listens on <code class="inline">127.0.0.1</code> only — reachable from your machine and nowhere else.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3>Session stays put</h3>
+        <p>Your login session file lives on your machine and never leaves it. Credentials aren't uploaded, synced, or shared.</p>
+      </div>
+      <div class="card">
+        <div class="ico"><svg viewBox="0 0 24 24"><path d="M8 6L3 12l5 6"/><path d="M16 6l5 6-5 6"/></svg></div>
+        <h3>You run it, you own it</h3>
+        <p>Open source and self-hosted. Read the code, run it yourself, keep full control of your robot and your data.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="quickstart">
+    <div class="qs">
+      <div class="section-head" style="margin:0">
+        <p class="section-tag">Quickstart</p>
+        <h2 class="title">Up and running in one command</h2>
+        <p class="body">Python 3.12 with <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener">uv</a>.
+          It starts in fake mode with no account, so you can try it on your laptop right now.</p>
+      </div>
+
+      <div>
+        <div class="steps">
+          <div class="step">
+            <div class="n">1</div>
+            <div class="txt"><b>Get the code &amp; start the server</b>
+              <p>Runs entirely local, binds to localhost.</p></div>
+          </div>
+          <div class="step">
+            <div class="n">2</div>
+            <div class="txt"><b>Open the control panel</b>
+              <p>Everything below in your browser — no login needed in fake mode.</p></div>
+          </div>
+        </div>
+        <div class="terminal" style="margin-top:16px">
+          <div class="browser-bar"><span class="dots"><i></i><i></i><i></i></span><span class="url">bash</span></div>
+<pre class="code"><span class="tok-cmd">git clone</span> https://github.com/zarifaziz/roborock-automation
+<span class="tok-cmd">cd</span> roborock-automation
+<span class="tok-cmd">uv run</span> uvicorn roborock_auto.adapters.web.server:app \
+  --host 127.0.0.1 --port 8000
+<span class="tok-dim"># open http://127.0.0.1:8000</span></pre>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="screenshots">
+    <div class="section-head">
+      <p class="section-tag">A look inside</p>
+      <h2 class="title">The control panel</h2>
+      <p class="body">Connect flow, live map, room selection, controls, and the two-stage routine —
+        all in one clean page, light or dark.</p>
+    </div>
+    <div class="shots">
+      <div class="shot">
+        <div class="browser">
+          <div class="browser-bar"><span class="dots"><i></i><i></i><i></i></span><span class="url">127.0.0.1:8000</span></div>
+          <div class="browser-body">
+            <div class="ph">site/screenshots/app.png</div>
+            <img src="screenshots/app.png" alt="roborock-webapp control panel" loading="lazy" onerror="this.remove()" />
+          </div>
+        </div>
+        <span class="cap">Light mode</span>
+      </div>
+      <div class="shot">
+        <div class="browser">
+          <div class="browser-bar"><span class="dots"><i></i><i></i><i></i></span><span class="url">127.0.0.1:8000</span></div>
+          <div class="browser-body">
+            <div class="ph">site/screenshots/dark.png</div>
+            <img src="screenshots/dark.png" alt="roborock-webapp control panel in dark mode" loading="lazy" onerror="this.remove()" />
+          </div>
+        </div>
+        <span class="cap">Dark mode</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>roborock-webapp — a local web UI for Roborock.</span>
+    <span class="spacer"></span>
+    <a href="https://github.com/zarifaziz/roborock-automation" target="_blank" rel="noopener">github.com/zarifaziz/roborock-automation</a>
+  </footer>
+
+</div>
+</body>
+</html>

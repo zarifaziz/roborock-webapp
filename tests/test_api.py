@@ -17,7 +17,8 @@ def client(monkeypatch):
 
 def test_status_shape(client):
     body = client.get("/status").json()
-    assert set(body) == {"state_name", "battery", "in_cleaning", "docked", "error"}
+    assert set(body) == {"state_name", "battery", "in_cleaning", "docked", "error", "map_ok"}
+    assert body["map_ok"] is True
 
 
 def test_map_png_served(client):
@@ -48,3 +49,72 @@ def test_carpet_roundtrip(client):
 
 def test_clean_rooms(client):
     assert client.post("/clean/rooms", json={"segment_ids": [16, 17]}).json() == {"ok": True}
+
+
+def test_auth_status(client):
+    assert client.get("/auth/status").json() == {
+        "connected": True,
+        "mode": "fake",
+        "email": None,
+    }
+
+
+def test_auth_request_code_happy(client):
+    assert client.post("/auth/request-code", json={"email": "a@b.com"}).json() == {"ok": True}
+
+
+def test_auth_request_code_empty_is_422(client):
+    assert client.post("/auth/request-code", json={"email": "  "}).status_code == 422
+    assert client.post("/auth/request-code", json={}).status_code == 422
+
+
+def test_auth_submit_code_happy(client):
+    body = {"email": "a@b.com", "code": "1234"}
+    assert client.post("/auth/submit-code", json=body).json() == {"ok": True}
+
+
+def test_auth_submit_code_empty_is_422(client):
+    assert client.post("/auth/submit-code", json={"email": "a@b.com", "code": ""}).status_code == 422
+    assert client.post("/auth/submit-code", json={"code": "1234"}).status_code == 422
+
+
+def test_auth_discover_shape(client):
+    assert client.get("/auth/discover").json() == {
+        "mode": "fake",
+        "carpet_mode": "avoid",
+        "rooms": [
+            {"segment_id": 16, "name": "Living Room"},
+            {"segment_id": 17, "name": "Kitchen"},
+            {"segment_id": 18, "name": "Bedroom"},
+            {"segment_id": 19, "name": "Hallway"},
+        ],
+        "routines": [
+            {"id": 1001, "name": "Vacuum whole house"},
+            {"id": 1002, "name": "Mop whole house"},
+        ],
+        "consumables": {"main_brush_pct": 82, "side_brush_pct": 64, "filter_pct": 71},
+    }
+
+
+def test_two_stage_starts_and_reports_running(client):
+    assert client.get("/clean/two-stage/status").json() == {
+        "running": False,
+        "stage": "idle",
+        "message": "",
+        "error": None,
+    }
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+    status = client.get("/clean/two-stage/status").json()
+    assert status["running"] is True
+    # The fake advances on a real clock, so the exact live stage is timing-dependent; it is
+    # one of the active tokens, never idle/error, while running. Full ordering is pinned in
+    # test_two_stage_reports_stage_sequence.
+    assert status["stage"] in {"vacuuming", "vacuum_waiting", "mopping", "mop_waiting"}
+    assert status["error"] is None
+
+
+def test_two_stage_conflict_when_running(client):
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+    r = client.post("/clean/two-stage")
+    assert r.status_code == 409
+    assert r.json() == {"detail": "a two-stage clean is already running"}

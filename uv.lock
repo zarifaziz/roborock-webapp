@@ -543,7 +543,7 @@ wheels = [
 ]
 
 [[package]]
-name = "roborock-auto"
+name = "roborock-webapp"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

@@ -20,3 +20,11 @@ def home_and_idle(status: DeviceStatus) -> bool:
 
 def ready_to_start(status: DeviceStatus) -> bool:
     return status.docked and not status.in_cleaning and status.error is None
+
+
+def job_stalled(status: DeviceStatus) -> bool:
+    """Paused mid-job, or the job ended somewhere other than the dock (user cancelled).
+    Either way the robot is not progressing and will not come home on its own."""
+    if status.state_name == "paused":
+        return True
+    return not status.in_cleaning and not status.docked

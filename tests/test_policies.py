@@ -23,6 +23,15 @@ def test_home_and_idle_is_docked_and_not_cleaning():
     assert home_and_idle(_status(docked=False, state_name="cleaning", in_cleaning=True)) is False
 
 
+def test_job_stalled_on_pause_or_cancel_off_dock():
+    from roborock_auto.domain.policies import job_stalled
+
+    assert job_stalled(_status(state_name="paused", in_cleaning=True, docked=False)) is True
+    assert job_stalled(_status(state_name="idle", in_cleaning=False, docked=False)) is True
+    assert job_stalled(_status(state_name="cleaning", in_cleaning=True, docked=False)) is False
+    assert job_stalled(_status()) is False  # home and idle is done, not stalled
+
+
 def test_ready_to_start_requires_docked_idle_and_no_error():
     assert ready_to_start(_status()) is True
     assert ready_to_start(_status(in_cleaning=True)) is False

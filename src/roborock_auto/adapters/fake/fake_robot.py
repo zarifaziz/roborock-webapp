@@ -95,6 +95,9 @@ class FakeRobot:
             return DeviceStatus("charging", self._battery, in_cleaning=True, docked=True)
         return DeviceStatus("cleaning", self._battery, in_cleaning=True, docked=False)
 
+    def map_ok(self) -> bool:
+        return True
+
     async def get_map_png(self) -> bytes:
         return SAMPLE_MAP_PNG
 

@@ -6,6 +6,7 @@ PNG is only re-read when the parsed map data changes, so polling stays cheap.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import time
 from contextlib import asynccontextmanager
@@ -15,13 +16,28 @@ from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from roborock_auto.adapters import get_gateway
+from roborock_auto.adapters import get_auth, get_gateway
+from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
 from roborock_auto.domain.models import CarpetMode, FanPower, MopMode
 from roborock_auto.ports import RobotGateway
+from roborock_auto.ports.auth import AuthPort
 
 STATIC_DIR = Path(__file__).parent / "static"
+
+# Human-readable message per two-stage stage token, surfaced on the status endpoint.
+_STAGE_MESSAGES = {
+    "vacuuming": "Vacuuming (carpet raised)",
+    "vacuum_waiting": "Vacuum running, waiting for the robot to return",
+    "mopping": "Mopping (carpet avoided)",
+    "mop_waiting": "Mop running, waiting for the robot to return",
+    "done": "Two-stage clean complete",
+}
+
+
+def _idle_progress() -> dict:
+    return {"running": False, "stage": "idle", "message": "", "error": None}
 
 
 @asynccontextmanager
@@ -30,31 +46,47 @@ async def lifespan(app: FastAPI):
     gw = get_gateway(config)
     await gw.connect()
     app.state.gateway = gw
+    app.state.auth = get_auth(config)
     app.state.config = config
     app.state.map_cache = {"at": 0.0, "png": b""}
+    app.state.two_stage = _idle_progress()
+    app.state.two_stage_task = None
     try:
         yield
     finally:
+        task = app.state.two_stage_task
+        if task is not None:
+            task.cancel()
         await gw.close()
 
 
-app = FastAPI(title="roborock-auto", lifespan=lifespan)
+app = FastAPI(title="roborock-webapp", lifespan=lifespan)
 
 
 def _gw(request: Request) -> RobotGateway:
     return request.app.state.gateway
 
 
+def _auth(request: Request) -> AuthPort:
+    return request.app.state.auth
+
+
 @app.get("/capabilities")
 async def capabilities():
     caps = dataclasses.asdict(QREVO_L_PRO)
     caps["carpet_modes"] = sorted(m.value for m in QREVO_L_PRO.carpet_modes)
+    caps["model"] = "Qrevo L Pro"
     return caps
 
 
 @app.get("/status")
 async def status(request: Request):
-    return dataclasses.asdict(await _gw(request).get_status())
+    gw = _gw(request)
+    body = dataclasses.asdict(await gw.get_status())
+    # Piggybacked on the status poll so a placeholder map is visible in the UI without
+    # an extra device call (map_ok reads adapter state, no I/O).
+    body["map_ok"] = gw.map_ok()
+    return body
 
 
 @app.get("/map-data")
@@ -148,6 +180,86 @@ async def carpet(request: Request, mode: str = Body(..., embed=True)):
 async def routine(request: Request, routine_id: int = Body(..., embed=True)):
     await _gw(request).run_routine(routine_id)
     return {"ok": True}
+
+
+def _require_nonempty(**fields: str) -> None:
+    for name, value in fields.items():
+        if not isinstance(value, str) or not value.strip():
+            raise HTTPException(422, f"{name} must not be empty")
+
+
+@app.get("/auth/status")
+async def auth_status(request: Request):
+    config = request.app.state.config
+    if config.gateway == "fake":
+        return {"connected": True, "mode": "fake", "email": None}
+    return {
+        "connected": Path(config.session_path).exists(),
+        "mode": "live",
+        "email": config.email or None,
+    }
+
+
+@app.post("/auth/request-code")
+async def auth_request_code(request: Request, email: str = Body(..., embed=True)):
+    _require_nonempty(email=email)
+    await _auth(request).request_code(email)
+    return {"ok": True}
+
+
+@app.post("/auth/submit-code")
+async def auth_submit_code(
+    request: Request,
+    email: str = Body(..., embed=True),
+    code: str = Body(..., embed=True),
+):
+    _require_nonempty(email=email, code=code)
+    await _auth(request).submit_code(email, code)
+    return {"ok": True}
+
+
+@app.get("/auth/discover")
+async def auth_discover(request: Request):
+    gw = _gw(request)
+    config = request.app.state.config
+    carpet = await gw.get_carpet_mode()
+    return {
+        "mode": config.gateway,
+        "carpet_mode": carpet.value,
+        "rooms": [dataclasses.asdict(r) for r in await gw.list_rooms()],
+        "routines": [dataclasses.asdict(r) for r in await gw.list_routines()],
+        "consumables": dataclasses.asdict(await gw.get_consumables()),
+    }
+
+
+@app.post("/clean/two-stage")
+async def clean_two_stage(request: Request):
+    progress = request.app.state.two_stage
+    if progress["running"]:
+        raise HTTPException(409, "a two-stage clean is already running")
+    gw = _gw(request)
+    config = request.app.state.config
+    progress.update(running=True, stage="vacuuming", message="starting", error=None)
+
+    def on_stage(stage: str) -> None:
+        progress["stage"] = stage
+        progress["message"] = _STAGE_MESSAGES.get(stage, "")
+
+    async def runner() -> None:
+        try:
+            await run_two_stage(gw, config, on_stage=on_stage, log=lambda _m: None)
+        except Exception as exc:  # noqa: BLE001 - surface any failure to the status endpoint
+            progress.update(stage="error", message=str(exc), error=str(exc))
+        finally:
+            progress["running"] = False
+
+    request.app.state.two_stage_task = asyncio.create_task(runner())
+    return {"ok": True}
+
+
+@app.get("/clean/two-stage/status")
+async def clean_two_stage_status(request: Request):
+    return dict(request.app.state.two_stage)
 
 
 @app.get("/")

@@ -17,3 +17,6 @@ build/
 
 # OS
 .DS_Store
+
+# Local planning notes, kept out of the repo
+.plans/

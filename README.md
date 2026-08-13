@@ -7,8 +7,6 @@ laptop right now. Going live is filling in `.env` and setting `GATEWAY=live`; no
 
 - Landing page: https://site-mu-ten-70.vercel.app (source in `site/`)
 - Architecture (ports & adapters + DDD-lite): `ARCHITECTURE.md`
-- Design: `MVP_PLAN.md`
-- Background and why this exists: `handoff.md`
 
 ## Try it now (fake mode, no account)
 

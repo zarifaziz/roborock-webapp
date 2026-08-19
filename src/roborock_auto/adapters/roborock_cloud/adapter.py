@@ -288,7 +288,9 @@ class RoborockCloudAdapter:
             value = self._config.carpet_avoid_value
         else:
             raise ValueError(f"cannot set carpet mode to {mode}")
-        await self._send(RoborockCommand.SET_CARPET_CLEAN_MODE, [{"carpet_clean_mode": value}])
+        # Firmware wants a bare object; the list form is rejected with -10005 "param is
+        # not an object". (APP_SEGMENT_CLEAN is the opposite — it wants the list form.)
+        await self._send(RoborockCommand.SET_CARPET_CLEAN_MODE, {"carpet_clean_mode": value})
 
     async def run_routine(self, routine_id: int) -> None:
         # Web-API call: retry, but no device lock (it does not touch the device connection).

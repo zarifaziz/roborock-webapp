@@ -112,9 +112,11 @@ async def test_carpet_sends_configured_value(gw):
     await gw.set_carpet_mode(CarpetMode.RISE)
     call = _last_send(gw)
     assert call.args[0] == RoborockCommand.SET_CARPET_CLEAN_MODE
-    assert call.kwargs["params"] == [{"carpet_clean_mode": 2}]   # carpet_rise_value
+    # Firmware wants a bare object here; the list form is rejected with -10005 "param
+    # is not an object" (unlike APP_SEGMENT_CLEAN, which wants the list form).
+    assert call.kwargs["params"] == {"carpet_clean_mode": 2}   # carpet_rise_value
     await gw.set_carpet_mode(CarpetMode.AVOID)
-    assert _last_send(gw).kwargs["params"] == [{"carpet_clean_mode": 0}]  # carpet_avoid_value
+    assert _last_send(gw).kwargs["params"] == {"carpet_clean_mode": 0}  # carpet_avoid_value
 
 
 async def test_set_carpet_rejects_unknown(gw):

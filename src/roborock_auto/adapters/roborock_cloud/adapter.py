@@ -82,6 +82,9 @@ class RoborockCloudAdapter:
                 Drawable.CHARGER,
                 Drawable.VACUUM_POSITION,
                 Drawable.PATH,
+                # Translucent white overlay of where the robot mopped (the mobile app's mop
+                # annotation), so a mop clean is visible and not just the vacuum path line.
+                Drawable.MOP_PATH,
                 # ROOM_NAMES is intentionally omitted: the parser only knows generic
                 # "Room N" labels. The UI overlays the friendly names (from list_rooms).
                 Drawable.OBSTACLES,

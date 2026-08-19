@@ -142,12 +142,6 @@ async def dock(request: Request):
     return {"ok": True}
 
 
-@app.post("/clean/rooms")
-async def clean_rooms(request: Request, segment_ids: list[int] = Body(..., embed=True)):
-    await _gw(request).clean_rooms(segment_ids)
-    return {"ok": True}
-
-
 def _parse(enum_cls, value: str):
     try:
         return enum_cls(value)

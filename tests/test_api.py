@@ -48,10 +48,6 @@ def test_carpet_roundtrip(client):
     assert client.post("/carpet", json={"mode": "bogus"}).status_code == 422
 
 
-def test_clean_rooms(client):
-    assert client.post("/clean/rooms", json={"segment_ids": [16, 17]}).json() == {"ok": True}
-
-
 def test_map_data_shape(client):
     assert client.get("/map-data").json() == {
         "rooms": [
@@ -82,6 +78,12 @@ def test_clean_segments_empty_ids_is_422(client):
     assert client.post(
         "/clean/segments", json={"segment_ids": [], "mode": "vacuum"}
     ).status_code == 422
+
+
+def test_clean_segments_requires_mode(client):
+    # Room cleaning must always name a cleaning mode; without it the robot would inherit
+    # whatever mode it was last in (e.g. mopping on a "vacuum" request).
+    assert client.post("/clean/segments", json={"segment_ids": [16]}).status_code == 422
 
 
 def test_clean_segments_bad_mode_is_422(client):

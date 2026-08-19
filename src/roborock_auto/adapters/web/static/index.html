@@ -219,9 +219,16 @@
   .map-region {
     position: absolute; padding: 0; border: 0; background: transparent;
     border-radius: 10px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
     transition: background 0.18s ease, box-shadow 0.18s ease;
   }
   .map-region:hover { background: rgb(255 255 255 / 0.12); }
+  .map-label {
+    max-width: 92%; padding: 1px 6px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; line-height: 1.4; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; pointer-events: none;
+    color: #fff; background: rgb(20 24 40 / 0.55); backdrop-filter: blur(2px);
+  }
   .map-region.sel {
     background: color-mix(in srgb, var(--rc, var(--accent)) 26%, transparent);
     box-shadow: inset 0 0 0 2px var(--rc, var(--accent));
@@ -811,17 +818,23 @@ function roomMode() {
 }
 
 async function buildMapRegions() {
-  let data;
-  try { data = await (await fetch("/map-data")).json(); }
-  catch { return; }  // no map geometry — chips still drive selection
+  let data, names = {};
+  try {
+    // /map-data carries geometry with only generic "Room N" names; /rooms carries the
+    // friendly names. Join them by segment id so the map labels match the chips.
+    const [md, rl] = await Promise.all([fetch("/map-data"), fetch("/rooms")]);
+    data = await md.json();
+    for (const r of await rl.json()) names[r.segment_id] = r.name;
+  } catch { return; }  // no map geometry — chips still drive selection
   const overlay = $("map-overlay");
   // Index over the full room list (not the filtered one) so region accents line up with chips.
   overlay.innerHTML = (data.rooms || []).map((r, i) => {
     if (!r.bbox) return "";
     const [x0, y0, x1, y1] = r.bbox;
     const c = ROOM_COLORS[i % ROOM_COLORS.length];
-    return `<button class="map-region" data-id="${r.segment_id}" title="${r.name}"
-      style="left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%;--rc:${c}"></button>`;
+    const name = names[r.segment_id] || r.name;
+    return `<button class="map-region" data-id="${r.segment_id}" title="${name}"
+      style="left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%;--rc:${c}"><span class="map-label">${name}</span></button>`;
   }).join("");
   overlay.addEventListener("click", (e) => {
     const region = e.target.closest(".map-region");

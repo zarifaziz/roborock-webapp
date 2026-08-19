@@ -126,7 +126,7 @@ async def test_clean_rooms_params(gw):
     await gw.clean_rooms([16, 17])
     call = _last_send(gw)
     assert call.args[0] == RoborockCommand.APP_SEGMENT_CLEAN
-    assert call.kwargs["params"] == {"segments": [16, 17], "repeat": 1}
+    assert call.kwargs["params"] == [{"segments": [16, 17], "repeat": 1}]
 
 
 async def test_fan_and_mop(gw):
@@ -171,6 +171,19 @@ async def test_map_ok_flips_on_placeholder_fallback(gw):
         refresh=AsyncMock(), image_content=b"\x89PNG\r\n\x1a\nreal"
     )
     assert await gw.get_map_png() == b"\x89PNG\r\n\x1a\nreal"
+    assert gw.map_ok() is True
+
+
+async def test_map_ok_survives_map_data_failure(gw):
+    # A good PNG sets map_ok True; a later failing get_map_data (geometry only) must not
+    # flip the placeholder badge over the real map the user still sees.
+    gw._device.v1_properties.map_content = SimpleNamespace(
+        refresh=AsyncMock(), image_content=b"\x89PNG\r\n\x1a\nreal"
+    )
+    assert await gw.get_map_png() == b"\x89PNG\r\n\x1a\nreal"
+    assert gw.map_ok() is True
+    # No map_data on the mocked map_content -> get_map_data raises internally, returns empty.
+    assert (await gw.get_map_data()).rooms == []
     assert gw.map_ok() is True
 
 

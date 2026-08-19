@@ -81,7 +81,8 @@ class RoborockCloudAdapter:
                 Drawable.CHARGER,
                 Drawable.VACUUM_POSITION,
                 Drawable.PATH,
-                Drawable.ROOM_NAMES,
+                # ROOM_NAMES is intentionally omitted: the parser only knows generic
+                # "Room N" labels. The UI overlays the friendly names (from list_rooms).
                 Drawable.OBSTACLES,
                 Drawable.IGNORED_OBSTACLES,
                 Drawable.VIRTUAL_WALLS,
@@ -200,12 +201,11 @@ class RoborockCloudAdapter:
                         robot = None
                 return MapData(rooms=rooms, robot=robot, image_width=width, image_height=height)
 
-            data = await self._locked_retry(read)
-            self._map_ok = True
-            return data
+            return await self._locked_retry(read)
         except Exception:
+            # map_ok tracks the PNG the user sees, not this geometry read. A hiccup here
+            # (bboxes/robot marker) must not flip the "placeholder" badge over a real map.
             _LOGGER.warning("live map data fetch failed", exc_info=True)
-            self._map_ok = False
             return MapData()
 
     def map_ok(self) -> bool:
@@ -263,11 +263,10 @@ class RoborockCloudAdapter:
         await self._send(RoborockCommand.APP_CHARGE)
 
     async def clean_rooms(self, segment_ids: list[int]) -> None:
-        # This firmware rejected the list form ([{...}]) with -10005 "param is not an object",
-        # so send the params AS the object. Confirm on the next supervised live room clean.
-        await self._send(
-            RoborockCommand.APP_SEGMENT_CLEAN, {"segments": segment_ids, "repeat": 1}
-        )
+        # Canonical V1 format (python-roborock / HA / miio all agree): a list holding one object.
+        params = [{"segments": segment_ids, "repeat": 1}]
+        _LOGGER.info("APP_SEGMENT_CLEAN payload params=%r", params)
+        await self._send(RoborockCommand.APP_SEGMENT_CLEAN, params)
 
     async def set_fan_power(self, power: FanPower) -> None:
         await self._send(RoborockCommand.SET_CUSTOM_MODE, [FAN_LEVELS[power]])

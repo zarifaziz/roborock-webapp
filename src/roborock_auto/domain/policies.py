@@ -9,9 +9,13 @@ from __future__ import annotations
 from roborock_auto.domain.models import DeviceStatus
 
 
-def job_is_active(status: DeviceStatus) -> bool:
-    """A mid-job recharge keeps the job active: docked+charging does not mean done."""
-    return status.in_cleaning
+def has_departed(status: DeviceStatus) -> bool:
+    """True once the robot has actually left the dock to run the job. Reads the adapter's
+    semantic `cleaning` flag, so dock-servicing that lingers from the previous stage
+    (emptying the bin, washing the mop) does not count — that let the mop stage 'depart' on
+    leftover servicing and complete without mopping. An unmapped firmware state is not
+    cleaning, so departure fails safe rather than falsely confirming."""
+    return status.cleaning
 
 
 def home_and_idle(status: DeviceStatus) -> bool:

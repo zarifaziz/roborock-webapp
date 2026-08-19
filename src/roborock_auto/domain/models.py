@@ -44,6 +44,12 @@ class DeviceStatus:
     in_cleaning: bool          # true while a job is active, even if temporarily docked to charge
     docked: bool
     error: str | None = None
+    # True only while the robot is physically out running the clean (heading to a room,
+    # vacuuming, mopping) — NOT while docked-recharging or servicing the dock (emptying the
+    # bin, washing the mop). Classified in the adapter from the firmware state; an unknown
+    # state is False so departure fails safe. Distinct from in_cleaning, which stays true
+    # through recharge and servicing.
+    cleaning: bool = False
 
 
 @dataclass(frozen=True)

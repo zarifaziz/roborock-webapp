@@ -14,14 +14,14 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
-from typing import Protocol
+from typing import Any, Protocol
 
-from roborock_auto.application.retry import AutomationError, Sleep, with_retry
+from roborock_auto.application.retry import AutomationError, DepartRejected, Sleep, with_retry
 from roborock_auto.config import Config
 from roborock_auto.domain.models import CarpetMode, CleaningMode
 from roborock_auto.domain.policies import (
+    has_departed,
     home_and_idle,
-    job_is_active,
     job_stalled,
     ready_to_start,
 )
@@ -29,9 +29,14 @@ from roborock_auto.ports.robot import CleaningControlPort, CleaningSettingsPort,
 
 Clock = Callable[[], float]
 
-DEPART_TIMEOUT = 180.0     # 3 min: if the job never starts, the trigger failed
+DEPART_TIMEOUT = 1800.0    # 30 min backstop: pre-mop dock servicing (mop wash) can be minutes
+DEPART_IDLE_GRACE = 60.0   # settled idle on the dock this long = the trigger did not take
 RETURN_TIMEOUT = 7200.0    # 2 h: a stuck robot fails loudly instead of hanging forever
 STALL_TIMEOUT = 300.0      # 5 min paused/cancelled: fail fast instead of burning the 2 h
+# A positive signal (departed, done, error) must hold across this many consecutive polls
+# before we act on it, so one stale cached read or a one-poll firmware flag flicker can't
+# truncate a stage or abort a healthy run.
+CONFIRM_SAMPLES = 2
 
 
 class TwoStagePorts(RobotStatusPort, CleaningControlPort, CleaningSettingsPort, Protocol):
@@ -40,18 +45,38 @@ class TwoStagePorts(RobotStatusPort, CleaningControlPort, CleaningSettingsPort, 
 
 async def wait_for_departure(
     gw: RobotStatusPort, *, clock: Clock, sleep: Sleep, interval: float,
-    timeout: float = DEPART_TIMEOUT,
+    timeout: float = DEPART_TIMEOUT, idle_grace: float = DEPART_IDLE_GRACE,
 ) -> None:
-    """Return once a job is confirmed active. Raise if it never starts."""
+    """Return once the robot has actually left the dock to clean. Raise if it never does.
+
+    Departure means a genuine cleaning state (confirmed across CONFIRM_SAMPLES polls, so a
+    stale read can't fool it), not dock-servicing that lingers from the previous stage —
+    otherwise the mop stage 'departs' on leftover bin-emptying. Two failure paths: the robot
+    settling idle on the dock for idle_grace raises DepartRejected (the trigger didn't take;
+    the caller re-issues), and an absolute `timeout` backstop bounds total pre-departure time
+    — generous because the pre-mop wash can run minutes, but it still counts, so a rare
+    charge-before-depart longer than `timeout` would abort a job that is actually pending.
+    """
     deadline = clock() + timeout
+    idle_since: float | None = None
+    error_seen = departed_seen = 0
     while True:
         status = await gw.get_status()
-        if status.error:
+        error_seen = error_seen + 1 if status.error else 0
+        if error_seen >= CONFIRM_SAMPLES:
             raise AutomationError(f"device error while waiting to depart: {status.error}")
-        if job_is_active(status):
+        departed_seen = departed_seen + 1 if has_departed(status) else 0
+        if departed_seen >= CONFIRM_SAMPLES:
             return
+        if home_and_idle(status):
+            if idle_since is None:
+                idle_since = clock()
+            elif clock() - idle_since >= idle_grace:
+                raise DepartRejected("job never started (trigger did not take)")
+        else:
+            idle_since = None
         if clock() >= deadline:
-            raise AutomationError("job never started (trigger did not take)")
+            raise AutomationError("job never started (departure timed out)")
         await sleep(interval)
 
 
@@ -67,11 +92,14 @@ async def wait_for_return(
     """
     deadline = clock() + timeout
     stalled_since: float | None = None
+    error_seen = done_seen = 0
     while True:
         status = await gw.get_status()
-        if status.error:
+        error_seen = error_seen + 1 if status.error else 0
+        if error_seen >= CONFIRM_SAMPLES:
             raise AutomationError(f"device error during clean: {status.error}")
-        if home_and_idle(status):
+        done_seen = done_seen + 1 if home_and_idle(status) else 0
+        if done_seen >= CONFIRM_SAMPLES:
             return
         if job_stalled(status):
             if stalled_since is None:
@@ -99,6 +127,13 @@ async def run_two_stage(
     on_stage: Callable[[str], None] = lambda _stage: None,
 ) -> None:
     poll = interval if interval is not None else config.poll_interval_sec
+    # The idle grace must span several polls, or a taken trigger reads as dropped after a
+    # sample or two and gets re-issued into an already-departing robot.
+    if poll <= 0 or poll * 3 > DEPART_IDLE_GRACE:
+        raise AutomationError(
+            f"poll interval {poll}s is too coarse for the {DEPART_IDLE_GRACE:.0f}s departure "
+            f"grace; set poll_interval_sec below {DEPART_IDLE_GRACE / 3:.0f}s"
+        )
     # Whole-house departs with start(); a room-scoped run departs with clean_rooms(segments).
     depart = (lambda: gw.clean_rooms(segment_ids)) if segment_ids else gw.start
     scope = "selected rooms" if segment_ids else "whole-house"
@@ -113,8 +148,7 @@ async def run_two_stage(
     on_stage("vacuuming")
     await _set_carpet_verified(gw, CarpetMode.RISE, sleep=sleep)
     await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.VACUUM), sleep=sleep)
-    await with_retry(depart, sleep=sleep)
-    await wait_for_departure(gw, clock=clock, sleep=sleep, interval=poll)
+    await _depart_and_confirm(gw, depart, clock=clock, sleep=sleep, interval=poll, log=log)
     log("vacuum stage: robot left the dock, waiting for it to finish")
     on_stage("vacuum_waiting")
     await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
@@ -125,13 +159,36 @@ async def run_two_stage(
     # Read-back before mopping: if carpet Avoid did not stick, wet pads would cross carpet.
     await _set_carpet_verified(gw, CarpetMode.AVOID, sleep=sleep)
     await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.MOP), sleep=sleep)
-    await with_retry(depart, sleep=sleep)
-    await wait_for_departure(gw, clock=clock, sleep=sleep, interval=poll)
+    await _depart_and_confirm(gw, depart, clock=clock, sleep=sleep, interval=poll, log=log)
     log("mop stage: robot left the dock, waiting for it to finish")
     on_stage("mop_waiting")
     await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
     log("mop stage: complete")
     on_stage("done")
+
+
+async def _depart_and_confirm(
+    gw: TwoStagePorts, depart: Callable[[], Any], *,
+    clock: Clock, sleep: Sleep, interval: float, log: Callable[[str], None],
+    attempts: int = 3,
+) -> None:
+    """Trigger the clean and confirm the robot actually left the dock, re-issuing the trigger
+    if it was dropped. A clean sent while the robot is still servicing the dock is silently
+    ignored by the firmware (the live mop that 'didn't happen'); wait_for_departure raises
+    DepartRejected when the robot settles idle instead of leaving, and we send it again."""
+    for attempt in range(attempts):
+        await with_retry(depart, sleep=sleep)
+        try:
+            await wait_for_departure(gw, clock=clock, sleep=sleep, interval=interval)
+            return
+        except DepartRejected:
+            if attempt == attempts - 1:
+                raise
+            # Guard the re-issue against a TOCTOU: the robot may have left in the gap between
+            # the last poll and now. Only re-send if it is still not out cleaning.
+            if has_departed(await gw.get_status()):
+                return
+            log(f"clean trigger was dropped (robot idle); re-issuing (attempt {attempt + 2})")
 
 
 async def _set_carpet_verified(gw: CleaningSettingsPort, mode: CarpetMode, *, sleep: Sleep) -> None:

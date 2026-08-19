@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from roborock_auto.domain.models import DeviceStatus
-from roborock_auto.domain.policies import home_and_idle, job_is_active, ready_to_start
+from roborock_auto.domain.policies import home_and_idle, ready_to_start
 
 
 def _status(**over) -> DeviceStatus:
@@ -12,9 +12,9 @@ def _status(**over) -> DeviceStatus:
     return DeviceStatus(**base)
 
 
-def test_midjob_recharge_keeps_job_active():
+def test_midjob_recharge_is_not_home_and_idle():
+    # docked + charging but in_cleaning: the job is not done, so the mop stage must not start.
     recharging = _status(in_cleaning=True, docked=True, battery=20)
-    assert job_is_active(recharging) is True
     assert home_and_idle(recharging) is False
 
 

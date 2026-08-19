@@ -17,6 +17,7 @@ from roborock_auto.adapters.roborock_cloud.adapter import RoborockCloudAdapter, 
 from roborock_auto.adapters.roborock_cloud.codes import (
     derive_in_cleaning,
     extract_carpet_value,
+    is_cleaning,
     is_docked,
     life_pct,
     state_name,
@@ -44,6 +45,23 @@ def test_state_name_and_docked():
     assert is_docked(RoborockStateCode.charging)
     assert is_docked(RoborockStateCode.charging_complete)
     assert not is_docked(RoborockStateCode.cleaning)
+
+
+def test_is_cleaning_allowlist_fails_safe():
+    # Genuine out-cleaning states classify as cleaning...
+    assert is_cleaning(RoborockStateCode.cleaning)
+    assert is_cleaning(RoborockStateCode.segment_cleaning)
+    assert is_cleaning(RoborockStateCode.segment_mopping)
+    assert is_cleaning(RoborockStateCode.going_to_target)
+    # ...dock servicing and transit do NOT (they lingered from the previous stage and used
+    # to be mistaken for departure)...
+    assert not is_cleaning(RoborockStateCode.emptying_the_bin)
+    assert not is_cleaning(RoborockStateCode.washing_the_mop)
+    assert not is_cleaning(RoborockStateCode.returning_home)
+    assert not is_cleaning(RoborockStateCode.charging)
+    # ...and an unmapped/unknown state fails safe: not cleaning, so departure won't falsely
+    # confirm on a firmware state this library version doesn't know.
+    assert not is_cleaning(None)
 
 
 def test_in_cleaning_survives_midjob_recharge():
@@ -200,5 +218,6 @@ async def test_get_status_maps_trait(gw):
     gw._device.v1_properties.status = status_trait
     result = await gw.get_status()
     assert result == DeviceStatus(
-        state_name="segment_cleaning", battery=77, in_cleaning=True, docked=False, error=None
+        state_name="segment_cleaning", battery=77, in_cleaning=True, docked=False, error=None,
+        cleaning=True,  # segment_cleaning is a genuine out-cleaning state
     )

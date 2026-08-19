@@ -36,12 +36,15 @@ def _config(**over) -> Config:
     return Config(**base)
 
 
-CLEANING = DeviceStatus("cleaning", 90, in_cleaning=True, docked=False)
+CLEANING = DeviceStatus("cleaning", 90, in_cleaning=True, docked=False, cleaning=True)
 DOCKED_IDLE = DeviceStatus("charging", 100, in_cleaning=False, docked=True)
 RECHARGING_MIDJOB = DeviceStatus("charging", 20, in_cleaning=True, docked=True)
 ERRORED = DeviceStatus("error", 50, in_cleaning=False, docked=False, error="brush stuck")
 PAUSED = DeviceStatus("paused", 80, in_cleaning=True, docked=False)
 CANCELLED_OFF_DOCK = DeviceStatus("idle", 80, in_cleaning=False, docked=False)
+# Post-clean dock servicing (empty the bin / wash the mop). in_cleaning is still true and the
+# robot is off the charger, yet it has NOT left to clean — it is finishing the previous stage.
+SERVICING_AT_DOCK = DeviceStatus("emptying_the_bin", 95, in_cleaning=True, docked=False)
 
 
 async def test_departure_returns_when_job_active():
@@ -49,7 +52,30 @@ async def test_departure_returns_when_job_active():
     gw = FakeRobot(clock=clock)
     gw.set_timeline([(0, DOCKED_IDLE), (5, CLEANING)])
     await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=180)
-    assert clock.now == 5.0
+    assert clock.now == 10.0
+
+
+async def test_departure_ignores_dock_servicing_from_prior_stage():
+    """Regression: the mop stage fired while the robot was still emptying the bin from the
+    vacuum stage. That servicing is in_cleaning=True but is NOT the robot leaving to mop, so
+    treating it as departure let the stage 'complete' with no mopping. A robot that only
+    services then settles idle never departed — that must raise, not silently succeed."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([(0, SERVICING_AT_DOCK), (5, DOCKED_IDLE)])  # services, docks, never leaves
+    with pytest.raises(AutomationError, match="never started"):
+        await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=30)
+
+
+async def test_departure_ignores_a_single_stale_cleaning_sample():
+    """A stale cached 'cleaning' read from the just-finished vacuum must not confirm the mop
+    departure; a real departure shows cleaning across consecutive polls. Physically a robot
+    cannot be out cleaning one poll and idle-docked the next."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([(0, CLEANING), (5, DOCKED_IDLE)])  # one cleaning sample, then idle
+    with pytest.raises(AutomationError, match="did not take"):
+        await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5)
 
 
 async def test_departure_times_out_if_never_starts():
@@ -58,6 +84,29 @@ async def test_departure_times_out_if_never_starts():
     gw.set_timeline([(0, DOCKED_IDLE)])  # never leaves
     with pytest.raises(AutomationError, match="never started"):
         await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=30)
+
+
+async def test_departure_waits_through_long_dock_servicing():
+    """Before a mop, the robot washes the mop for minutes. That dock-servicing must not trip
+    the departure wait — only leaving to clean (or settling idle) ends it. On live the wash
+    ran ~168s, just under the old fixed 180s timeout; a longer wash would falsely fail."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    washing = DeviceStatus("washing_the_mop", 95, in_cleaning=True, docked=False)
+    gw.set_timeline([(0, washing), (300, CLEANING)])  # 5 min washing, then departs to clean
+    await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5)
+    assert clock.now >= 300.0
+
+
+async def test_departure_fails_fast_when_robot_settles_idle():
+    """A dropped trigger leaves the robot idle on the dock. Fail within the idle grace, not
+    after the long servicing backstop, so the caller can re-issue the command."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([(0, DOCKED_IDLE)])  # settled idle, never departs, never services
+    with pytest.raises(AutomationError, match="did not take"):
+        await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5)
+    assert clock.now < 120.0
 
 
 async def test_return_ignores_midjob_recharge():
@@ -71,7 +120,38 @@ async def test_return_ignores_midjob_recharge():
         (30, DOCKED_IDLE),         # genuinely done
     ])
     await wait_for_return(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
-    assert clock.now == 30.0  # only stopped at the real completion, not the recharge blip
+    assert clock.now == 35.0  # confirmed at the real completion, not the recharge blip
+
+
+async def test_return_ignores_a_single_idle_flicker():
+    """One home_and_idle poll during a mid-job recharge (an in_cleaning flag glitch) must not
+    be read as done, or the mop stage launches into a still-running vacuum."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([
+        (0, CLEANING),
+        (10, RECHARGING_MIDJOB),
+        (15, DOCKED_IDLE),        # single-poll flag glitch reads as done
+        (20, RECHARGING_MIDJOB),  # corrects itself
+        (40, DOCKED_IDLE),        # genuinely done
+    ])
+    await wait_for_return(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
+    assert clock.now == 45.0  # confirmed one poll after the sustained idle, not at the glitch
+
+
+async def test_return_ignores_a_single_error_blip():
+    """A one-poll self-clearing error (robot nudges a rug edge, recovers) must not abort a
+    healthy unattended run; a real error persists across polls."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([
+        (0, CLEANING),
+        (5, ERRORED),      # one-poll blip
+        (10, CLEANING),    # recovered
+        (30, DOCKED_IDLE),
+    ])
+    await wait_for_return(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
+    assert clock.now == 35.0
 
 
 async def test_return_raises_on_error():
@@ -106,7 +186,7 @@ async def test_return_survives_brief_pause():
     await wait_for_return(
         gw, clock=clock, sleep=clock.sleep, interval=5, timeout=7200, stall_timeout=60
     )
-    assert clock.now == 40.0
+    assert clock.now == 45.0  # completion confirmed one poll after the sustained idle
 
 
 async def test_return_aborts_when_cancelled_off_dock():
@@ -174,6 +254,37 @@ async def test_two_stage_scoped_departs_with_clean_rooms():
     assert departs == [("clean_rooms", (16, 17)), ("clean_rooms", (16, 17))]
 
 
+class _DropFirstDepartRobot(FakeRobot):
+    """Machine-mode robot that silently ignores its first N depart commands, mimicking the
+    firmware dropping a clean sent while the robot is still servicing the dock."""
+
+    def __init__(self, clock, drops: int) -> None:
+        super().__init__(clock=clock)
+        self._drops_left = drops
+
+    async def clean_rooms(self, segment_ids):
+        self.commands.append(("clean_rooms", tuple(segment_ids)))
+        if self._drops_left > 0:
+            self._drops_left -= 1
+            return  # dropped: no job starts, robot stays idle on the dock
+        self._job_start = self._clock()
+
+
+async def test_two_stage_retries_a_dropped_depart():
+    """The mop that 'didn't happen' live: the depart was dropped because the robot was still
+    servicing. A dropped depart leaves the robot idle, so it must be re-issued, not treated
+    as a failure or a completed stage."""
+    clock = FakeClock()
+    gw = _DropFirstDepartRobot(clock=clock, drops=1)  # drop only the vacuum stage's first try
+    await run_two_stage(
+        gw, _config(), clock=clock, sleep=clock.sleep, interval=5, segment_ids=[7],
+        log=lambda m: None,
+    )
+    departs = [c for c in gw.commands if c[0] == "clean_rooms"]
+    # vacuum: dropped once then re-issued (2), mop: once (1).
+    assert departs == [("clean_rooms", (7,)), ("clean_rooms", (7,)), ("clean_rooms", (7,))]
+
+
 async def test_two_stage_aborts_if_carpet_mode_does_not_take():
     """Safety: if the carpet write silently fails, abort before starting the clean."""
     clock = FakeClock()
@@ -186,6 +297,18 @@ async def test_two_stage_aborts_if_carpet_mode_does_not_take():
     with pytest.raises(AutomationError, match="did not take"):
         await run_two_stage(
             gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+        )
+
+
+async def test_two_stage_rejects_a_coarse_poll_interval():
+    """A poll interval near the idle grace would fail-fast on 'trigger did not take' after
+    just a sample or two and re-issue a clean the robot actually accepted. Reject it early."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    with pytest.raises(AutomationError, match="poll interval"):
+        await run_two_stage(
+            gw, _config(poll_interval_sec=30.0), clock=clock, sleep=clock.sleep,
+            log=lambda m: None,
         )
 
 

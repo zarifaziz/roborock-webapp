@@ -18,23 +18,31 @@ DOCKED_STATES = {
     RoborockStateCode.charging_complete,
     RoborockStateCode.charging_problem,
 }
-# A job is not finished until the robot is fully idle on the dock. Every "moving,
-# cleaning, mopping, or servicing at the dock" state counts as busy, so the mop stage
-# never starts while the robot is still working. Built by name so a missing code on some
-# firmware is skipped rather than crashing.
-_ACTIVE_STATE_NAMES = [
-    "cleaning", "spot_cleaning", "zoned_cleaning", "segment_cleaning",
-    "returning_home", "going_to_target", "docking",
-    "emptying_the_bin", "washing_the_mop", "washing_the_mop_2",
-    "going_to_wash_the_mop", "attaching_the_mop", "detaching_the_mop",
-    # Qrevo mopping / dock-servicing states (6301-6310).
+# States where the robot is physically out running the clean: heading to a room, vacuuming,
+# or mopping. This is an allowlist on purpose — a state we do not recognize is NOT treated as
+# cleaning, so departure detection fails safe (a loud timeout) instead of falsely "departing"
+# on an unmapped firmware state. Built by name so a code missing on some firmware is skipped.
+_CLEANING_STATE_NAMES = [
+    "cleaning", "spot_cleaning", "zoned_cleaning", "segment_cleaning", "going_to_target",
+    # Qrevo mopping states (6301-6310).
     "robot_status_mopping", "clean_mop_cleaning", "clean_mop_mopping",
     "segment_mopping", "segment_clean_mop_cleaning", "segment_clean_mop_mopping",
     "zoned_mopping", "zoned_clean_mop_cleaning", "zoned_clean_mop_mopping",
+]
+# Busy, but at or near the dock, not out cleaning: returning, docking, emptying the bin,
+# washing/attaching the mop. A job is not finished while any of these hold.
+_SERVICING_STATE_NAMES = [
+    "returning_home", "docking",
+    "emptying_the_bin", "washing_the_mop", "washing_the_mop_2",
+    "going_to_wash_the_mop", "attaching_the_mop", "detaching_the_mop",
     "back_to_dock_washing_duster",
 ]
-ACTIVE_STATES = {
-    getattr(RoborockStateCode, n) for n in _ACTIVE_STATE_NAMES if hasattr(RoborockStateCode, n)
+CLEANING_STATES = {
+    getattr(RoborockStateCode, n) for n in _CLEANING_STATE_NAMES if hasattr(RoborockStateCode, n)
+}
+# ACTIVE = out cleaning OR servicing the dock; drives derive_in_cleaning's state fallback.
+ACTIVE_STATES = CLEANING_STATES | {
+    getattr(RoborockStateCode, n) for n in _SERVICING_STATE_NAMES if hasattr(RoborockStateCode, n)
 }
 
 # Param shapes to confirm on live bring-up. Non-destructive settings; wrong values only
@@ -58,6 +66,11 @@ def state_name(code: RoborockStateCode | None) -> str:
 
 def is_docked(code: RoborockStateCode | None) -> bool:
     return code in DOCKED_STATES
+
+
+def is_cleaning(code: RoborockStateCode | None) -> bool:
+    """The robot is physically out running the clean (not docked, not servicing)."""
+    return code in CLEANING_STATES
 
 
 def derive_in_cleaning(code: RoborockStateCode | None, flag: RoborockInCleaning | None) -> bool:

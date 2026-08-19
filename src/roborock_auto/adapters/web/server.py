@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -25,6 +26,7 @@ from roborock_auto.ports import RobotGateway
 from roborock_auto.ports.auth import AuthPort
 
 STATIC_DIR = Path(__file__).parent / "static"
+_LOGGER = logging.getLogger("roborock_auto.two_stage")
 
 # Human-readable message per two-stage stage token, surfaced on the status endpoint.
 _STAGE_MESSAGES = {
@@ -257,7 +259,7 @@ async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, 
     async def runner() -> None:
         try:
             await run_two_stage(
-                gw, config, segment_ids=segment_ids or None, on_stage=on_stage, log=lambda _m: None
+                gw, config, segment_ids=segment_ids or None, on_stage=on_stage, log=_LOGGER.info
             )
         except Exception as exc:  # noqa: BLE001 - surface any failure to the status endpoint
             progress.update(stage="error", message=str(exc), error=str(exc))

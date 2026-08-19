@@ -16,6 +16,11 @@ class AutomationError(Exception):
     pass
 
 
+class DepartRejected(AutomationError):
+    """The robot settled idle on the dock without leaving — the clean trigger did not take.
+    A typed signal so the caller can re-issue the trigger without matching on message text."""
+
+
 async def with_retry(
     fn: Callable[[], Awaitable[None]],
     *,

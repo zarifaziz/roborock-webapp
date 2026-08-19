@@ -98,9 +98,11 @@ class FakeRobot:
         if elapsed < DEPART_DELAY:
             # Job accepted but robot still on the dock: the "looks docked right after
             # trigger" case. in_cleaning is already true, which is what keeps the
-            # completion predicate from firing early.
+            # completion predicate from firing early. Not yet out cleaning (cleaning=False).
             return DeviceStatus("charging", self._battery, in_cleaning=True, docked=True)
-        return DeviceStatus("cleaning", self._battery, in_cleaning=True, docked=False)
+        return DeviceStatus(
+            "cleaning", self._battery, in_cleaning=True, docked=False, cleaning=True
+        )
 
     def map_ok(self) -> bool:
         return True

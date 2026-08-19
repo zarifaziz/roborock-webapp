@@ -18,7 +18,9 @@ def client(monkeypatch):
 
 def test_status_shape(client):
     body = client.get("/status").json()
-    assert set(body) == {"state_name", "battery", "in_cleaning", "docked", "error", "map_ok"}
+    assert set(body) == {
+        "state_name", "battery", "in_cleaning", "docked", "error", "cleaning", "map_ok"
+    }
     assert body["map_ok"] is True
 
 

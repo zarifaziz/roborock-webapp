@@ -27,6 +27,7 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     derive_in_cleaning,
     error_str,
     extract_carpet_value,
+    is_cleaning,
     is_docked,
     life_pct,
     state_name,
@@ -146,6 +147,7 @@ class RoborockCloudAdapter:
                 in_cleaning=derive_in_cleaning(st.state, st.in_cleaning),
                 docked=is_docked(st.state),
                 error=error_str(st.error_code),
+                cleaning=is_cleaning(st.state),
             )
 
         return await self._locked_retry(read)

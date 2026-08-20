@@ -1,9 +1,19 @@
-"""Domain policies: the status-interpretation rules, stated as documentation."""
+"""Domain policies: the status-interpretation rules and the Overdue scoring rules,
+stated as documentation."""
 
 from __future__ import annotations
 
-from roborock_auto.domain.models import DeviceStatus
-from roborock_auto.domain.policies import home_and_idle, ready_to_start
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from roborock_auto.domain.models import DeviceStatus, RoomInterval, SegmentOverdue
+from roborock_auto.domain.policies import (
+    clean_priority,
+    home_and_idle,
+    overdue_report,
+    ready_to_start,
+)
 
 
 def _status(**over) -> DeviceStatus:
@@ -62,3 +72,84 @@ def test_ready_to_start_requires_docked_idle_and_no_error():
     assert ready_to_start(_status(in_cleaning=True)) is False
     assert ready_to_start(_status(docked=False, state_name="idle")) is False
     assert ready_to_start(_status(error="brush stuck")) is False
+
+
+NOW = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+
+
+def _entry(segment_id: int, days: float, cleaned_days_ago: float | None) -> SegmentOverdue:
+    """The Overdue entry a Segment on a `days`-long Interval, last cleaned
+    `cleaned_days_ago` ago, has at NOW."""
+    return SegmentOverdue(
+        segment_id=segment_id,
+        interval=timedelta(days=days),
+        last_cleaned_at=None if cleaned_days_ago is None else NOW - timedelta(days=cleaned_days_ago),
+        priority=None if cleaned_days_ago is None else cleaned_days_ago / days,
+    )
+
+
+def test_room_interval_must_be_a_positive_duration():
+    with pytest.raises(ValueError, match="positive duration"):
+        RoomInterval(segment_id=16, interval=timedelta(0))
+    with pytest.raises(ValueError, match="positive duration"):
+        RoomInterval(segment_id=16, interval=timedelta(days=-1))
+
+
+def test_sub_day_intervals_are_expressible():
+    twice_daily = RoomInterval(segment_id=16, interval=timedelta(hours=12))
+    assert clean_priority(twice_daily.interval, NOW - timedelta(hours=18), NOW) == 1.5
+
+
+def test_priority_is_elapsed_over_the_segments_own_interval():
+    # A bedroom on 7 days and a kitchen on 2 days compare directly: both cleaned 3 days
+    # ago, the kitchen scores higher because 3 days is more of its own interval.
+    assert clean_priority(timedelta(days=7), NOW - timedelta(days=3), NOW) == 3 / 7
+    assert clean_priority(timedelta(days=2), NOW - timedelta(days=3), NOW) == 1.5
+
+
+def test_a_never_cleaned_segment_has_no_finite_priority():
+    assert clean_priority(timedelta(days=2), None, NOW) is None
+
+
+def test_overdue_report_is_sorted_worst_first_with_never_cleaned_on_top():
+    intervals = [
+        RoomInterval(16, timedelta(days=7)),   # 3/7 of its interval elapsed
+        RoomInterval(17, timedelta(days=2)),   # 1.5 intervals elapsed: overdue
+        RoomInterval(18, timedelta(days=1)),   # never cleaned
+        RoomInterval(19, timedelta(days=4)),   # 1 interval elapsed exactly: overdue
+    ]
+    last_cleaned = {
+        16: NOW - timedelta(days=3),
+        17: NOW - timedelta(days=3),
+        19: NOW - timedelta(days=4),
+    }
+    assert overdue_report(intervals, last_cleaned, NOW) == [
+        _entry(18, days=1, cleaned_days_ago=None),
+        _entry(17, days=2, cleaned_days_ago=3),
+        _entry(19, days=4, cleaned_days_ago=4),
+        _entry(16, days=7, cleaned_days_ago=3),
+    ]
+
+
+def test_never_cleaned_segments_sort_above_everything_and_tie_on_segment_number():
+    intervals = [RoomInterval(18, timedelta(days=1)), RoomInterval(17, timedelta(days=2))]
+    assert overdue_report(intervals, {}, NOW) == [
+        _entry(17, days=2, cleaned_days_ago=None),
+        _entry(18, days=1, cleaned_days_ago=None),
+    ]
+
+
+def test_overdue_entries_flag_never_cleaned_and_whether_they_are_due():
+    never, due, fresh = overdue_report(
+        [RoomInterval(16, timedelta(days=2)), RoomInterval(17, timedelta(days=2)),
+         RoomInterval(18, timedelta(days=2))],
+        {17: NOW - timedelta(days=2), 18: NOW - timedelta(days=1)},
+        NOW,
+    )
+    assert (never.never_cleaned, never.overdue) == (True, True)
+    assert (due.never_cleaned, due.overdue) == (False, True)      # exactly one interval
+    assert (fresh.never_cleaned, fresh.overdue) == (False, False)
+
+
+def test_a_segment_with_no_interval_is_not_in_the_report():
+    assert overdue_report([], {16: NOW}, NOW) == []

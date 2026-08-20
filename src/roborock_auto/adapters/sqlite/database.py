@@ -22,6 +22,14 @@ MIGRATIONS: tuple[str, ...] = (
         started_at TEXT NOT NULL
     );
     """,
+    """
+    CREATE TABLE room_intervals (
+        device_id TEXT NOT NULL,
+        segment_id INTEGER NOT NULL,
+        interval_seconds REAL NOT NULL,
+        PRIMARY KEY (device_id, segment_id)
+    );
+    """,
 )
 
 

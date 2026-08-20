@@ -10,7 +10,7 @@ from typing import Any
 
 from roborock.data.v1 import RoborockInCleaning, RoborockStateCode
 
-from roborock_auto.domain.models import CleaningMode, FanPower, MopMode
+from roborock_auto.domain.models import CleaningMode, FanPower, MopMode, WaterMode
 
 # Docked = charger connected. Codes from roborock.data.v1.RoborockStateCode.
 DOCKED_STATES = {
@@ -49,6 +49,7 @@ ACTIVE_STATES = CLEANING_STATES | {
 # misconfigure cleaning intensity, they cannot damage anything.
 FAN_LEVELS = {FanPower.QUIET: 101, FanPower.BALANCED: 102, FanPower.TURBO: 103, FanPower.MAX: 104}
 MOP_MODES = {MopMode.STANDARD: 300, MopMode.DEEP: 301}
+WATER_MODES = {WaterMode.MILD: 201, WaterMode.STANDARD: 202, WaterMode.INTENSE: 203}
 
 # Our semantic mode -> the library's device-aware CleaningMode name.
 CLEANING_MODE_NAMES = {

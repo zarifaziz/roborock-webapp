@@ -721,6 +721,11 @@
           <div class="seg" id="seg-mop">
             <button data-v="standard">Standard</button><button data-v="deep">Deep</button>
           </div>
+          <div class="seg-label">Water flow</div>
+          <div class="seg" id="seg-water">
+            <button data-v="mild">Mild</button><button data-v="standard">Standard</button>
+            <button data-v="intense">Intense</button>
+          </div>
           <div class="seg-label">Carpet</div>
           <div class="seg" id="seg-carpet">
             <button data-v="rise">Rise (vacuum over)</button><button data-v="avoid">Avoid</button>
@@ -804,6 +809,7 @@ const cmd = (path) => {
 const SEGMENTS = [
   ["seg-fan", "/fan", "power"],
   ["seg-mop", "/mop", "mode"],
+  ["seg-water", "/water", "mode"],
   ["seg-carpet", "/carpet", "mode"],
 ];
 for (const [segId, path, key] of SEGMENTS) {
@@ -960,6 +966,7 @@ async function refreshStatus() {
   // changes too). Carpet is synced from its boot-time read + local clicks, not per poll.
   syncSeg("seg-fan", s.fan_power);
   syncSeg("seg-mop", s.mop_route);
+  syncSeg("seg-water", s.water_mode);
   // Explicit false only: a server that predates map_ok omits the field, which is not a failure.
   $("map-badge").style.display = s.map_ok === false ? "inline-block" : "none";
 

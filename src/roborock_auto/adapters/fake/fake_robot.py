@@ -23,6 +23,7 @@ from roborock_auto.domain.models import (
     Point,
     Room,
     Routine,
+    WaterMode,
 )
 
 _ROOMS = [
@@ -54,6 +55,7 @@ class FakeRobot:
         self._carpet = CarpetMode.AVOID
         self._fan = FanPower.BALANCED
         self._mop = MopMode.STANDARD
+        self._water = WaterMode.STANDARD
         self._cleaning = CleaningMode.VAC_AND_MOP
         self._battery = 100
         # Scripted mode for tests: (elapsed_since_t0, DeviceStatus), evaluated against _t0.
@@ -90,7 +92,9 @@ class FakeRobot:
 
     def _machine_status(self) -> DeviceStatus:
         # Settings readback mirrors the last set_* call, like the real status poll does.
-        settings = dict(fan_power=self._fan.value, mop_route=self._mop.value)
+        settings = dict(
+            fan_power=self._fan.value, mop_route=self._mop.value, water_mode=self._water.value
+        )
         if self._job_start is None:
             return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True,
                                 **settings)
@@ -168,6 +172,10 @@ class FakeRobot:
     async def set_mop_mode(self, mode: MopMode) -> None:
         self.commands.append(("set_mop_mode", mode))
         self._mop = mode
+
+    async def set_water_mode(self, mode: WaterMode) -> None:
+        self.commands.append(("set_water_mode", mode))
+        self._water = mode
 
     async def set_cleaning_mode(self, mode: CleaningMode) -> None:
         self.commands.append(("set_cleaning_mode", mode))

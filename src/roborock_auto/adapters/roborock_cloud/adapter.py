@@ -24,6 +24,7 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     CLEANING_MODE_NAMES,
     FAN_LEVELS,
     MOP_MODES,
+    WATER_MODES,
     derive_in_cleaning,
     dock_error_str,
     error_str,
@@ -47,6 +48,7 @@ from roborock_auto.domain.models import (
     Point,
     Room,
     Routine,
+    WaterMode,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -158,6 +160,7 @@ class RoborockCloudAdapter:
                 # helper property raising on odd data) degrades to None, never a crash.
                 fan_power=_opt(st, "fan_speed_name"),
                 mop_route=_opt(st, "mop_route_name"),
+                water_mode=_opt(st, "water_mode_name"),
                 clean_area_m2=_opt(st, "square_meter_clean_area"),
                 clean_time_s=_opt(st, "clean_time"),
                 dock_error=dock_error_str(_opt(st, "dock_error_status")),
@@ -304,6 +307,9 @@ class RoborockCloudAdapter:
 
     async def set_mop_mode(self, mode: MopMode) -> None:
         await self._send(RoborockCommand.SET_MOP_MODE, [MOP_MODES[mode]])
+
+    async def set_water_mode(self, mode: WaterMode) -> None:
+        await self._send(RoborockCommand.SET_WATER_BOX_CUSTOM_MODE, [WATER_MODES[mode]])
 
     async def set_cleaning_mode(self, mode: CleaningMode) -> None:
         # The library computes the correct SET_CLEAN_MOTOR_MODE params for this device.

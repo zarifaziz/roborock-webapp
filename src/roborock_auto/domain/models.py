@@ -28,6 +28,14 @@ class MopMode(Enum):
     DEEP = "deep"
 
 
+class WaterMode(Enum):
+    """Mop water-flow intensity: how wet the mop runs."""
+
+    MILD = "mild"
+    STANDARD = "standard"
+    INTENSE = "intense"
+
+
 class CleaningMode(Enum):
     """High-level clean type. Lets the two-stage clean vacuum then mop the whole house
     without needing separate saved routines."""
@@ -48,6 +56,7 @@ class DeviceStatus:
     # All optional: a firmware/library that lacks a field reports None, never crashes.
     fan_power: str | None = None      # friendly current fan speed, e.g. "balanced"
     mop_route: str | None = None      # friendly current mop route, e.g. "standard"
+    water_mode: str | None = None     # friendly current mop water flow, e.g. "standard"
     clean_area_m2: float | None = None
     clean_time_s: int | None = None
     dock_error: str | None = None     # human-ish dock error, e.g. "clean water tank empty", else None

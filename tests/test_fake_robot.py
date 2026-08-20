@@ -81,6 +81,26 @@ async def test_commands_recorded_and_carpet_roundtrip():
     assert ("run_routine", 1001) in gw.commands
 
 
+async def test_stop_ends_job():
+    clock = Clock()
+    gw = FakeRobot(clock=clock)
+    await gw.start()
+    clock.now = 10.0
+    assert (await gw.get_status()).in_cleaning
+    await gw.stop()
+    done = await gw.get_status()
+    assert done.docked and not done.in_cleaning
+    assert ("stop",) in gw.commands
+
+
+async def test_find_robot_records_without_state_change():
+    gw = FakeRobot()
+    before = await gw.get_status()
+    await gw.find_robot()
+    assert await gw.get_status() == before
+    assert gw.commands == [("find_robot",)]
+
+
 async def test_timeline_is_clock_relative():
     clock = Clock()
     gw = FakeRobot(clock=clock)

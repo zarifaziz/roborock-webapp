@@ -126,6 +126,13 @@ async def test_start_pause_dock(gw):
     assert _last_send(gw).args[0] == RoborockCommand.APP_CHARGE
 
 
+async def test_stop_and_find_robot(gw):
+    await gw.stop()
+    assert _last_send(gw).args[0] == RoborockCommand.APP_STOP
+    await gw.find_robot()
+    assert _last_send(gw).args[0] == RoborockCommand.FIND_ME
+
+
 async def test_carpet_sends_configured_value(gw):
     await gw.set_carpet_mode(CarpetMode.RISE)
     call = _last_send(gw)

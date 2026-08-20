@@ -308,6 +308,11 @@
   .btn svg { width: 15px; height: 15px; fill: currentColor; }
   .btn-row { display: flex; gap: 10px; }
   .btn-row .btn { width: auto; flex: 1; }
+  /* four control buttons don't fit one row on phones; wrap into a 2x2 grid */
+  @media (max-width: 480px) {
+    .btn-row { flex-wrap: wrap; }
+    .btn-row .btn { flex: 1 1 40%; }
+  }
 
   /* ---------- segmented ---------- */
   .seg-label { font-size: 0.78rem; font-weight: 600; color: var(--ink-2); margin: 16px 0 7px; }
@@ -499,6 +504,9 @@
       </button>
       <span id="offline">● connection lost — is the app still running?</span>
       <div class="hdr-icons">
+        <button class="frost-btn" onclick="post('/find', {}, 'Robot is announcing its location')" title="Find my robot">
+          <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>
+        </button>
         <button class="frost-btn" onclick="showTab('setup')" title="Settings">
           <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 4a7 7 0 0 0-.13-1.28l2.03-1.58-2-3.46-2.39.96a7 7 0 0 0-2.22-1.28L15.8 2h-4l-.43 2.62a7 7 0 0 0-2.22 1.28l-2.39-.96-2 3.46 2.03 1.58a7 7 0 0 0 0 2.56L2.77 14.1l2 3.46 2.39-.96a7 7 0 0 0 2.22 1.28L11.8 20h4l.43-2.62a7 7 0 0 0 2.22-1.28l2.39.96 2-3.46-2.03-1.58c.09-.42.13-.85.13-1.28z"/></svg>
         </button>
@@ -611,6 +619,9 @@
             </button>
             <button class="btn" onclick="cmd('/pause')">
               <svg viewBox="0 0 16 16"><path d="M4 2h3v12H4zM9 2h3v12H9z"/></svg>Pause
+            </button>
+            <button class="btn" onclick="cmd('/stop')" title="Stop the current job">
+              <svg viewBox="0 0 16 16"><path d="M3 3h10v10H3z"/></svg>Stop
             </button>
             <button class="btn" onclick="cmd('/dock')">
               <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock

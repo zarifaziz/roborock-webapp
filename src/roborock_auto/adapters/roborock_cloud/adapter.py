@@ -70,6 +70,12 @@ class RoborockCloudAdapter:
         from roborock.map.map_parser import MapParserConfig
         from roborock.web_api import RoborockApiClient
 
+        from roborock_auto.adapters.roborock_cloud.palette import install_calm_palette
+
+        # MapParserConfig has no palette field, so the calm map colours are installed
+        # by patching the vendor's palette factory before any parser is created.
+        install_calm_palette()
+
         self._user_data = load_user_data(self._config.session_path)
         self._web = RoborockApiClient(username=self._config.email)
         params = UserParams(username=self._config.email, user_data=self._user_data)

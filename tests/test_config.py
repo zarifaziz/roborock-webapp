@@ -7,6 +7,12 @@ import pytest
 from roborock_auto.config import Config, ConfigError
 
 
+@pytest.fixture(autouse=True)
+def timezone_set(monkeypatch):
+    """TIMEZONE is required in every mode; tests about other settings just provide it."""
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
+
+
 def test_empty_env_vars_fall_back_to_defaults_in_fake_mode(monkeypatch):
     monkeypatch.setenv("GATEWAY", "fake")
     for name in ("CARPET_RISE_VALUE", "CARPET_AVOID_VALUE", "APP_PORT"):
@@ -46,3 +52,27 @@ def test_database_path_is_configurable(monkeypatch):
     monkeypatch.setenv("GATEWAY", "fake")
     monkeypatch.setenv("DATABASE_PATH", "/data/cleans.db")
     assert Config.from_env().database_path == "/data/cleans.db"
+
+
+def test_timezone_is_required_in_every_mode_and_the_error_names_the_setting(monkeypatch):
+    # "System local" is no default: it resolves to UTC inside a container and shifts
+    # every schedule silently.
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.delenv("TIMEZONE", raising=False)
+    with pytest.raises(ConfigError, match="TIMEZONE"):
+        Config.from_env()
+    monkeypatch.setenv("TIMEZONE", "  ")
+    with pytest.raises(ConfigError, match="TIMEZONE"):
+        Config.from_env()
+
+
+def test_timezone_must_be_a_known_iana_zone(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("TIMEZONE", "Sydney")
+    with pytest.raises(ConfigError, match="'Sydney' is not a known IANA zone name"):
+        Config.from_env()
+
+
+def test_timezone_parses(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "fake")
+    assert Config.from_env().timezone == "Australia/Sydney"

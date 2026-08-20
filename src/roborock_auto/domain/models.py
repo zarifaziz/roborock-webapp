@@ -7,8 +7,9 @@ ports depends only on this module, so a library change stays quarantined in the 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from enum import Enum
+from typing import Protocol, runtime_checkable
 
 
 class CarpetMode(Enum):
@@ -130,6 +131,87 @@ class SegmentOverdue:
     def overdue(self) -> bool:
         """Never cleaned is maximally overdue; otherwise a full Interval has elapsed."""
         return self.priority is None or self.priority >= 1.0
+
+
+class Weekday(Enum):
+    MONDAY = "monday"
+    TUESDAY = "tuesday"
+    WEDNESDAY = "wednesday"
+    THURSDAY = "thursday"
+    FRIDAY = "friday"
+    SATURDAY = "saturday"
+    SUNDAY = "sunday"
+
+    @classmethod
+    def of(cls, day: date) -> Weekday:
+        return list(cls)[day.weekday()]
+
+
+@runtime_checkable
+class RecurrenceSchedule(Protocol):
+    """The "when" half of a Schedule Rule: a rule for generating instants."""
+
+    def occurrences_between(self, start: datetime, end: datetime, tz: tzinfo) -> list[datetime]:
+        """The UTC instants this Recurrence implies within [start, end), in order."""
+        ...
+
+
+@dataclass(frozen=True)
+class WeeklyGrid:
+    """A Recurrence as a weekly grid: a set of Weekdays plus one wall-clock time of day.
+    A grid with no days can never fire, which is a typo, not a paused Rule — the enabled
+    flag already expresses "paused"."""
+
+    days: frozenset[Weekday]
+    at: time
+
+    def __post_init__(self) -> None:
+        if not self.days:
+            raise ValueError("a Schedule Rule needs at least one day; disable it to pause it")
+
+    def occurrences_between(self, start: datetime, end: datetime, tz: tzinfo) -> list[datetime]:
+        # The conversion order is fixed: convert the window to local, walk local calendar
+        # days, combine each date with the wall-clock time, attach the zone, convert back
+        # to UTC, and compare only in UTC. Local wall time never leaves this method.
+        day = start.astimezone(tz).date()
+        last_day = end.astimezone(tz).date()
+        instants = []
+        while day <= last_day:
+            if Weekday.of(day) in self.days:
+                instant = datetime.combine(day, self.at, tzinfo=tz).astimezone(UTC)
+                if start <= instant < end:
+                    instants.append(instant)
+            day += timedelta(days=1)
+        return instants
+
+
+@dataclass(frozen=True)
+class CleanAction:
+    """The "what" half of a Schedule Rule, and the only Action understood today: clean
+    `segment_ids` (None = whole house) in `mode`."""
+
+    mode: CleaningMode
+    segment_ids: tuple[int, ...] | None
+
+    def __post_init__(self) -> None:
+        if self.segment_ids is not None and not self.segment_ids:
+            raise ValueError("an empty Segment list is ambiguous; use null for the whole house")
+
+
+# The discriminated union of Actions, with exactly one member today.
+Action = CleanAction
+
+
+@dataclass(frozen=True)
+class ScheduleRule:
+    """A user's standing intent: a Recurrence paired with an Action. It describes what
+    should happen repeatedly; it never records what did."""
+
+    id: int
+    name: str
+    recurrence: WeeklyGrid
+    action: Action
+    enabled: bool
 
 
 @dataclass(frozen=True)

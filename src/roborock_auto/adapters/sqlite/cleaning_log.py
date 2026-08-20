@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from roborock_auto.domain.models import CleaningMode, CleaningRun, CleanSource
@@ -53,13 +54,15 @@ class SqliteCleaningLog:
             for source, mode, segments, started_at in rows
         ]
 
-    async def last_cleaned(self) -> dict[int, datetime]:
-        # MAX(started_at) per segment (docs/adr/0003), folded in Python because segment
-        # lists live as JSON on the run row. Whole-house runs name no segments here; how
-        # they count towards a Segment is the overdue view's derivation, not the log's.
+    async def last_cleaned(self, segment_ids: Iterable[int]) -> dict[int, datetime]:
+        # MAX(started_at) per requested segment (docs/adr/0003), folded in Python because
+        # segment lists live as JSON on the run row. A whole-house run stores NULL, so it
+        # counts towards every requested segment.
+        wanted = frozenset(segment_ids)
         latest: dict[int, datetime] = {}
         for run in await self.list_runs():
-            for segment_id in run.segment_ids or ():
+            covered = wanted if run.segment_ids is None else wanted.intersection(run.segment_ids)
+            for segment_id in covered:
                 if segment_id not in latest or run.started_at > latest[segment_id]:
                     latest[segment_id] = run.started_at
         return latest

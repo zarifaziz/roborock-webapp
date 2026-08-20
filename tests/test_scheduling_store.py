@@ -2,7 +2,8 @@
 
 Runs against the real SQLite adapter — no fake store (docs/adr/0006). Pins what no other
 seam structurally can: exact round-tripping of datetimes (timezone-aware, stored as UTC),
-enums, and Segment lists; last-cleaned derived as the max started_at per Segment; device
+enums, and Segment lists; last-cleaned derived as the max started_at per requested
+Segment, with a whole-house run counting towards every one of them; device
 scoping of every row; and migrations that are idempotent across a re-open and atomic
 under a mid-script failure.
 """
@@ -76,16 +77,26 @@ async def test_naive_started_at_is_rejected(open_log):
     assert await log.list_runs() == []
 
 
-async def test_last_cleaned_is_max_started_at_per_segment(open_log):
+async def test_last_cleaned_is_max_started_at_per_requested_segment(open_log):
     log = open_log()
     await log.record_run(_run(segment_ids=(16, 17), started_at=RUN_AT))
     await log.record_run(_run(segment_ids=(17,), started_at=RUN_AT + timedelta(days=1)))
-    await log.record_run(_run(segment_ids=None, started_at=RUN_AT + timedelta(days=2)))
-    # The whole-house run names no segments; how it counts towards a Segment is derived
-    # by the overdue view, not stored by the log.
-    assert await log.last_cleaned() == {
+    await log.record_run(_run(segment_ids=(99,), started_at=RUN_AT + timedelta(days=2)))
+    assert await log.last_cleaned([16, 17, 18]) == {
         16: RUN_AT,
         17: RUN_AT + timedelta(days=1),
+    }
+
+
+async def test_whole_house_run_counts_towards_every_requested_segment(open_log):
+    log = open_log()
+    await log.record_run(_run(segment_ids=(16,), started_at=RUN_AT))
+    await log.record_run(_run(segment_ids=None, started_at=RUN_AT + timedelta(days=1)))
+    await log.record_run(_run(segment_ids=(17,), started_at=RUN_AT + timedelta(days=2)))
+    assert await log.last_cleaned([16, 17, 18]) == {
+        16: RUN_AT + timedelta(days=1),
+        17: RUN_AT + timedelta(days=2),
+        18: RUN_AT + timedelta(days=1),
     }
 
 
@@ -93,7 +104,7 @@ async def test_runs_are_device_scoped(open_log):
     ours, theirs = open_log("robot-1"), open_log("robot-2")
     await ours.record_run(_run())
     assert await theirs.list_runs() == []
-    assert await theirs.last_cleaned() == {}
+    assert await theirs.last_cleaned([16, 17]) == {}
     assert await ours.list_runs() == [_run()]
 
 

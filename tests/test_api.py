@@ -821,3 +821,47 @@ def test_a_due_rule_fires_through_the_scheduler_with_no_user_action(client, cloc
             started_at=datetime.fromisoformat(_WEEKDAY_INSTANTS[0]),
         )
     ]
+
+
+def test_scheduling_end_to_end_interval_to_scheduler_fire_in_fake_mode(client, clock):
+    """P17: the whole feature working together — a Room Interval goes Overdue, a
+    Schedule Rule due shortly Materialises an Occurrence, the scheduler fires it with no
+    user action, and the Overdue Priority drops — visible in the timeline and the
+    scheduler status too."""
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    assert client.get("/overdue").json() == [_overdue(16, days=2.0)]
+
+    client.post("/schedules", json=_rule_request())
+    due_at = _WEEKDAY_INSTANTS[0]
+    assert client.get("/occurrences").json() == [
+        _occ_doc(id, 1, at) for id, at in enumerate(_WEEKDAY_INSTANTS, start=1)
+    ]
+
+    clock["now"] = datetime.fromisoformat(due_at)
+    asyncio.run(client.app.state.scheduler.tick_safely())
+
+    fired = _occ_doc(1, 1, due_at)
+    fired.update(state="fired", fired_at=due_at)
+    assert client.get("/occurrences").json() == [
+        fired,
+        *(_occ_doc(id, 1, at) for id, at in enumerate(_WEEKDAY_INSTANTS[1:], start=2)),
+    ]
+    assert _runs(client) == [
+        CleaningRun(
+            source=CleanSource.SCHEDULER,
+            mode=CleaningMode.VACUUM,
+            segment_ids=(16, 17),
+            started_at=datetime.fromisoformat(due_at),
+        )
+    ]
+    assert client.get("/overdue").json() == [
+        _overdue(16, days=2.0, cleaned_at=datetime.fromisoformat(due_at), priority=0.0)
+    ]
+    assert client.get("/scheduler/status").json() == {
+        "last_tick_at": due_at,
+        "consecutive_errors": 0,
+        "current_backoff_seconds": 30.0,
+        "pending_count": 5,
+        "next_scheduled_at": _WEEKDAY_INSTANTS[1],
+        "timezone": "Australia/Sydney",
+    }

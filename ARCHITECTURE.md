@@ -6,19 +6,22 @@ the rule for deciding where new code goes.
 
 ## 1. Honest scoping of DDD
 
-This system has almost no persisted state of its own. The robot's firmware is the source
-of truth for status, settings, maps, and schedules; our app reads it, decides, and
-commands it. That rules out most tactical DDD machinery:
+For robot state — status, settings, maps — the robot's firmware stays the source of truth;
+our app reads it, decides, and commands it, so most tactical DDD machinery around *that*
+state is still ruled out:
 
-- **No repositories / aggregates with identity** — there is nothing to persist and rehydrate.
-  The one "aggregate" is the robot itself, and its state lives in firmware.
+- **No repositories / aggregates with identity for robot state** — there is nothing to
+  persist and rehydrate. The one "aggregate" for that slice is the robot itself, and its
+  state lives in firmware.
 - **No domain events / event sourcing** — one user, one device, no downstream consumers.
 - **What we DO take from DDD:** ubiquitous language, value objects, domain policies
   (pure functions encoding rules), one long-running domain process (the two-stage clean),
   bounded contexts as *module boundaries*, and an anti-corruption layer at the vendor edge.
 
-If a future feature creates real owned state (e.g. our own schedule store, cleaning
-history), it earns a repository port then — not before.
+SCHEDULING is the exception this section used to predict: Room Intervals, Schedule Rules,
+Occurrences, and the Cleaning Run log are real owned state, the firmware has no memory of
+any of it, so that context does earn repository-shaped ports (`OccurrencePort`,
+`ScheduleRulePort`, `RoomIntervalPort`, `CleaningLogPort`) backed by SQLite (§4, §7).
 
 ## 2. The dependency rule
 
@@ -56,21 +59,31 @@ one package: `adapters/roborock_cloud/`.** Everything else speaks our own types.
 the anti-corruption layer, and it already exists today (`models.py` + `LiveGateway`); we
 are keeping it and formalizing it.
 
+The same rule shape confines persistence: **`sqlite3` is imported in exactly one package:
+`adapters/sqlite/`.** The four SCHEDULING/CONTROL store ports (`OccurrencePort`,
+`ScheduleRulePort`, `RoomIntervalPort`, `CleaningLogPort`) speak our own domain types;
+nothing above this adapter knows it is SQLite.
+
 ## 3. Bounded contexts (as modules, not services)
 
 Four contexts, each a vertical slice through domain/application/ports. They share the
 value-object vocabulary but grow independently:
 
 ```
- CONTROL            MAPPING              MAINTENANCE          SCHEDULING (later)
+ CONTROL            MAPPING              MAINTENANCE          SCHEDULING
  ────────           ────────             ────────────         ──────────
- status, start/     map snapshot,        consumables,         timers, DND,
- pause/dock,        rooms, zones,        dock actions         our cron plan
- room/zone clean,   robot position,      (dust collect,
- fan/mop/carpet,    (later: no-go        mop wash, dry)
- routines,          zones, virtual
+ status, start/     map snapshot,        consumables,         Room Intervals,
+ pause/dock,        rooms, zones,        dock actions         Overdue view,
+ room/zone clean,   robot position,      (dust collect,       Schedule Rules,
+ fan/mop/carpet,    (later: no-go        mop wash, dry)       Occurrences, the
+ routines,          zones, virtual                            in-process scheduler
  two-stage clean    walls, split/merge)
 ```
+
+The Cleaning Run log stays in CONTROL, not SCHEDULING, even though the Overdue view
+reads it: a Clean is a CONTROL concept that exists whether or not scheduling does, and
+folding the log into a scheduling port would make the whole-house button depend on the
+scheduler's storage, crossing the boundary the other way.
 
 They stay in one process and one repo. "Context" here means: a new feature must name its
 context, and code in one context never reaches into another's internals — it goes through
@@ -78,10 +91,10 @@ that context's application layer.
 
 ## 4. Ports: split by role, one adapter implements all
 
-Today's `Gateway` protocol (13 methods) is one interface. With dock actions, schedules,
-map editing, DND, volume, and child lock coming, it becomes a god interface where every
-consumer sees every method and every fake must stub everything. We split it by consumer
-role (interface segregation), keeping **semantic values in, plain dataclasses out**:
+Today's `Gateway` protocol (13 methods) is one interface. With dock actions, map editing,
+DND, volume, and child lock coming, it becomes a god interface where every consumer sees
+every method and every fake must stub everything. We split it by consumer role (interface
+segregation), keeping **semantic values in, plain dataclasses out**:
 
 ```python
 # ports/robot.py
@@ -131,7 +144,8 @@ gymnastics for this. The win is on the consumer side:
 - `TwoStageClean` depends on `RobotStatusPort + CleaningSettingsPort + RoutinePort` and
   nothing else. Its test fake implements 3 small protocols, not 20 methods.
 - The webapp's map endpoints depend only on `MapPort`.
-- Adding `SchedulePort` later touches zero existing consumers.
+- SCHEDULING proved the pattern: `ScheduleRulePort`, `OccurrencePort`, and
+  `RoomIntervalPort` (§2) were added later and touch zero of the ports above.
 
 Rule for growing a port: a new method goes in the port whose *consumer role* needs it,
 not wherever is convenient. If no existing port fits, add a new small one.
@@ -229,6 +243,12 @@ adapters/
     session.py          # user_data.json load/save (today's core.py)
   fake/                 # DRIVEN. In-memory robot honoring the same ports; drives tests
     fake_robot.py       #   and `FAKE=1` demo mode for frontend work with no account
+  sqlite/                # DRIVEN. The only package importing sqlite3
+    database.py          # open_database(), append-only MIGRATIONS list
+    cleaning_log.py      # SqliteCleaningLog: CleaningLogPort
+    occurrences.py       # SqliteOccurrences: OccurrencePort
+    room_intervals.py    # SqliteRoomIntervals: RoomIntervalPort
+    schedule_rules.py    # SqliteScheduleRules: ScheduleRulePort
   web/                  # DRIVING. FastAPI app; translates HTTP <-> use cases; serves SPA
   cron/                 # DRIVING. run.py entrypoint for the GitHub Actions clean
   cli/                  # DRIVING. login.py, discover.py
@@ -247,24 +267,33 @@ to the live adapter — that discipline is what keeps the ports honest.
 
 ```
 src/roborock_auto/
-  config.py             # env-driven settings, shared by wiring and adapters
+  config.py             # env-driven settings, shared by wiring and adapters; TIMEZONE required
   domain/
-    models.py           # value objects + enums
+    models.py           # value objects + enums, incl. Occurrence, ScheduleRule, RoomInterval
     policies.py         # job_is_active, home_and_idle, ready_to_start
     capabilities.py     # DeviceCapabilities + QREVO_L_PRO
   ports/
-    __init__.py         # re-exports + RobotGateway (union of all ports, for wiring)
+    __init__.py         # re-exports + RobotGateway (union of the robot ports, for wiring)
     robot.py            # RobotStatusPort, CleaningControlPort, CleaningSettingsPort, RoutinePort
     mapping.py          # MapPort
     maintenance.py      # MaintenancePort
     lifecycle.py        # ConnectionPort
+    cleaning_log.py     # CleaningLogPort (CONTROL: records every Clean, any entry point)
+    occurrences.py      # OccurrencePort (SCHEDULING: the scheduler's store)
+    room_intervals.py   # RoomIntervalPort (SCHEDULING: the Overdue view's store)
+    schedule_rules.py   # ScheduleRulePort (SCHEDULING: the schedules CRUD's store)
   application/
     two_stage_clean.py  retry.py
+    start_clean.py       # the shared clean use case, every entry point routes through it
+    materialise.py       # Schedule Rule -> forward Occurrence rows over the 14-day horizon
+    overdue.py           # Priority scoring + the Overdue report
+    scheduler.py         # the tick: materialise, select, gate, claim, fire, record
   adapters/
     __init__.py         # get_gateway(config): picks live or fake
     sample_map.py       # placeholder PNG shared by fake and the live map fallback
     roborock_cloud/     # adapter.py  codes.py  session.py
     fake/               # fake_robot.py (FakeRobot)
+    sqlite/             # database.py  cleaning_log.py  occurrences.py  room_intervals.py  schedule_rules.py
     web/                # server.py  static/
     cron/               # run.py
     cli/                # login.py  discover.py
@@ -281,6 +310,10 @@ Entrypoints: `uvicorn roborock_auto.adapters.web.server:app`,
 - `test_fake_robot.py` — FakeRobot honors the full RobotGateway contract
 - `test_cloud_adapter_mapping.py` — pins each command/param the live adapter sends
 - `test_api.py` — HTTP endpoints over the fake, via TestClient
+- `test_scheduler.py` — the scheduler tick over `FakeRobot` and a real in-memory database,
+  with an injected wall clock
+- `test_scheduling_store.py` — the store-port contract, parameterised over adapters
+  (ADR 0006: no fake store, since a dict cannot honour the claim's atomicity)
 
 ## 10. Rules of thumb going forward
 
@@ -288,6 +321,7 @@ Entrypoints: `uvicorn roborock_auto.adapters.web.server:app`,
   needs (§4), express robot-behavior knowledge as a **policy** (§5), sequence it in a
   **use case** (§6), implement it in **both adapters** (§7) in the same change.
 - A vendor type or firmware integer outside `adapters/roborock_cloud/` is a bug.
+- A `sqlite3` import outside `adapters/sqlite/` is the same bug, one layer over.
 - Map-*write* features (no-go zones, split/merge) get their own port
   (`MapEditPort`) and a confirmation step in the driving adapter — they are the one
   category that can destroy user data.

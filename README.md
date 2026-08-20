@@ -12,6 +12,7 @@ laptop right now. Going live is filling in `.env` and setting `GATEWAY=live`; no
 
 ```
 uv sync --extra dev
+cp .env.example .env   # fake mode needs only TIMEZONE; set it to your IANA zone
 uv run uvicorn roborock_auto.adapters.web.server:app --host 127.0.0.1 --port 8000
 # open http://127.0.0.1:8000
 ```
@@ -21,6 +22,10 @@ start/pause/dock, room selection, fan/mop/carpet controls, saved routines, and t
 one-click **"Vacuum, then mop avoiding carpet"** two-stage clean with live stage progress. The
 fake robot advances on a clock (docked -> cleaning -> docked) so the UI actually moves; the
 two-stage run takes about a minute in fake mode.
+
+The app also schedules itself in-process: set Room Intervals to see an Overdue view, or
+create a weekly Schedule Rule, and a background scheduler tick fires due Occurrences with
+no cron needed. See "Scheduling" below.
 
 Run the tests:
 
@@ -52,11 +57,34 @@ The `RoborockCloudAdapter` command names are verified against python-roborock, b
 param shapes (segment clean, fan, mop) are marked "confirm on live bring-up" in
 `adapters/roborock_cloud/` and should be checked on your first real run.
 
+## Scheduling
+
+Recurring cleans no longer need the GitHub Actions cron below; the app can schedule itself.
+
+- **Room Intervals**: `POST /intervals` says how often a segment should be cleaned. The
+  app derives last-cleaned from every Clean it has ever started (any entry point) and
+  scores each interval segment's Priority; `GET /overdue` lists them worst-first, and
+  `POST /clean/overdue` cleans everything currently Overdue in one call.
+- **Schedule Rules**: `POST /schedules` names a weekly grid of days plus a time of day, and
+  an Action (clean the whole house or chosen segments, in a chosen mode). A background
+  scheduler task, running in the same FastAPI process, Materialises each Rule into
+  Occurrences and fires them through the identical code path the UI button uses. No
+  external trigger, no workflow file to edit.
+- `GET /scheduler/status` reports the last tick, the resolved timezone, and whether the
+  scheduler is erroring; `GET /occurrences` is the firing timeline.
+
+Requires the `TIMEZONE` setting (an IANA zone name, e.g. `Australia/Sydney`) in every mode,
+including fake — see `.env.example`. There is no default: an implicit "system local"
+resolves to UTC inside a container and silently shifts every schedule.
+
 ## Unattended two-stage clean
 
 `uv run python -m roborock_auto.adapters.cron.run` runs the sequence once: carpet Rise, vacuum routine,
 wait for the robot to leave and return (a mid-job recharge does not count as done), then
 carpet Avoid, mop routine. It exits non-zero on failure.
 
-`.github/workflows/clean.yml` runs this on a schedule. It is disabled by default; enable the
-cron and add the `ROBOROCK_USER_DATA` secret plus the repo variables once you are ready.
+`.github/workflows/clean.yml` runs this on a schedule. It is now one option among several
+for triggering a Two-Stage Clean, not the only way to schedule anything — a Schedule Rule
+above covers most recurring cleans without a workflow file. It is disabled by default;
+enable the cron and add the `ROBOROCK_USER_DATA` secret plus the repo variables if you
+still want it.

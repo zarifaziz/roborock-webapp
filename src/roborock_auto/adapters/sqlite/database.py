@@ -43,6 +43,29 @@ MIGRATIONS: tuple[str, ...] = (
         deleted INTEGER NOT NULL DEFAULT 0
     );
     """,
+    # The unique key excludes CANCELLED rows: a cancelled Occurrence is a superseded
+    # intent kept for history, and an edited Rule that restates the same instant must be
+    # able to materialise it afresh. Every live or fired state keeps the key unique, so
+    # materialisation stays idempotent and a fired instant can never fire twice.
+    """
+    CREATE TABLE occurrences (
+        id INTEGER PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        rule_id INTEGER NOT NULL,
+        scheduled_for TEXT NOT NULL,
+        deadline TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (
+            state IN ('pending', 'claimed', 'fired', 'failed', 'expired', 'cancelled')
+        ),
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at TEXT,
+        blocked_reason TEXT,
+        fired_at TEXT
+    );
+    CREATE UNIQUE INDEX occurrences_rule_instant
+        ON occurrences (device_id, rule_id, scheduled_for)
+        WHERE state <> 'cancelled';
+    """,
 )
 
 

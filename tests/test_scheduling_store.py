@@ -1,5 +1,5 @@
-"""P7: the store contracts — the cleaning log, Room Intervals, and Schedule Rules —
-parameterised over persistence adapters.
+"""P7: the store contracts — the cleaning log, Room Intervals, Schedule Rules, and
+Occurrences — parameterised over persistence adapters.
 
 Runs against the real SQLite adapter — no fake store (docs/adr/0006). Pins what no other
 seam structurally can: exact round-tripping of datetimes (timezone-aware, stored as UTC),
@@ -8,13 +8,17 @@ last-cleaned derived as the max started_at per requested Segment, with a whole-h
 counting towards every one of them; device scoping of every row; soft deletion of Rules;
 the Recurrence and the Action parsed at the persistence boundary so a malformed row
 fails loudly on read;
+the Occurrence claim as a conditional update whose atomicity holds under two concurrent
+claimers;
 and migrations that are idempotent across a re-open and atomic under a mid-script
 failure.
 """
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
+import threading
 from datetime import UTC, datetime, time, timedelta, timezone
 
 import pytest
@@ -22,6 +26,7 @@ import pytest
 from roborock_auto.adapters.sqlite import (
     MIGRATIONS,
     SqliteCleaningLog,
+    SqliteOccurrences,
     SqliteRoomIntervals,
     SqliteScheduleRules,
     apply_migrations,
@@ -32,6 +37,8 @@ from roborock_auto.domain.models import (
     CleaningMode,
     CleaningRun,
     CleanSource,
+    Occurrence,
+    OccurrenceState,
     RoomInterval,
     ScheduleRule,
     Weekday,
@@ -351,3 +358,246 @@ def test_an_unknown_recurrence_type_is_blocked_by_the_schema(tmp_path):
             " VALUES ('robot-1', 'r', 'rrule', '{}', 'clean', '{}', 1)"
         )
     conn.close()
+
+
+@pytest.fixture(params=["sqlite"])
+def open_occurrences(request, tmp_path):
+    """Opens an Occurrence store over one shared database file; call again to re-open."""
+    connections = []
+
+    def _open(device_id: str = "robot-1") -> SqliteOccurrences:
+        conn = open_database(str(tmp_path / "roborock.db"))
+        connections.append(conn)
+        return SqliteOccurrences(conn, device_id=device_id)
+
+    yield _open
+    for conn in connections:
+        conn.close()
+
+
+SCHEDULED = datetime(2026, 8, 21, 23, 30, tzinfo=UTC)
+
+
+def _occurrence(id: int, **over) -> Occurrence:
+    base = dict(
+        rule_id=1,
+        rule_name="Weekday mornings",
+        scheduled_for=SCHEDULED,
+        deadline=SCHEDULED + timedelta(hours=6),
+        state=OccurrenceState.PENDING,
+        attempts=0,
+        last_attempt_at=None,
+        blocked_reason=None,
+        fired_at=None,
+    )
+    base.update(over)
+    return Occurrence(id=id, **base)
+
+
+async def test_occurrences_round_trip_exactly_in_scheduled_order(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    later = SCHEDULED + timedelta(days=3)
+    # Each record carries its own Deadline, so two Occurrences can disagree about theirs.
+    await store.add_pending(1, scheduled_for=later, deadline=later + timedelta(hours=1))
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await store.list_occurrences() == [
+        _occurrence(2),
+        _occurrence(1, scheduled_for=later, deadline=later + timedelta(hours=1)),
+    ]
+
+
+async def test_materialising_the_same_instant_twice_is_a_no_op(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await store.list_occurrences() == [_occurrence(1)]
+
+
+async def test_after_cancellation_the_same_instant_materialises_afresh(
+    open_rules, open_occurrences
+):
+    """A cancelled Occurrence keeps its row for history, and an edited Rule that restates
+    the same instant gets a fresh PENDING one beside it."""
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await store.cancel_pending(1)
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await store.list_occurrences() == [
+        _occurrence(1, state=OccurrenceState.CANCELLED),
+        _occurrence(2),
+    ]
+
+
+async def test_claim_flips_pending_to_claimed_exactly_once(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await store.claim(1) is True
+    assert await store.claim(1) is False
+    assert await store.list_occurrences() == [_occurrence(1, state=OccurrenceState.CLAIMED)]
+
+
+async def test_claiming_a_missing_or_cancelled_occurrence_is_refused(
+    open_rules, open_occurrences
+):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await store.cancel_pending(1)
+    assert await store.claim(1) is False
+    assert await store.claim(99) is False
+    assert await store.list_occurrences() == [_occurrence(1, state=OccurrenceState.CANCELLED)]
+
+
+async def test_cancel_pending_spares_a_claimed_occurrence_and_other_rules(
+    open_rules, open_occurrences
+):
+    rules = open_rules()
+    await rules.create_rule(**_weekday_mornings())
+    await rules.create_rule(**_weekday_mornings(name="Weekend mop"))
+    store = open_occurrences()
+    later = SCHEDULED + timedelta(days=3)
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await store.add_pending(1, scheduled_for=later, deadline=later + timedelta(hours=6))
+    await store.add_pending(2, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await store.claim(1) is True
+    await store.cancel_pending(1)
+    assert await store.list_occurrences() == [
+        _occurrence(1, state=OccurrenceState.CLAIMED),
+        _occurrence(3, rule_id=2, rule_name="Weekend mop"),
+        _occurrence(2, scheduled_for=later, deadline=later + timedelta(hours=6),
+                    state=OccurrenceState.CANCELLED),
+    ]
+
+
+async def test_a_fired_instant_is_never_rematerialised(open_rules, open_occurrences, tmp_path):
+    """Only cancellation frees the (rule, instant) key: a FIRED row keeps holding it, so
+    an unconditional materialisation pass can never queue a second firing of the same
+    instant."""
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    conn = open_database(str(tmp_path / "roborock.db"))
+    conn.execute("UPDATE occurrences SET state = 'fired'")
+    conn.commit()
+    conn.close()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await store.list_occurrences() == [_occurrence(1, state=OccurrenceState.FIRED)]
+
+
+async def test_lifecycle_bookkeeping_round_trips_exactly(open_rules, open_occurrences, tmp_path):
+    """The port has no writer for the attempt count, last-attempt time, blocked reason,
+    or fired time yet, so they are set with raw SQL; each carries a distinct value so a
+    column-to-field mix-up in the read mapping cannot pass."""
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    conn = open_database(str(tmp_path / "roborock.db"))
+    conn.execute(
+        "UPDATE occurrences SET state = 'fired', attempts = 2,"
+        " last_attempt_at = '2026-08-21T23:45:00+00:00',"
+        " blocked_reason = 'robot busy',"
+        " fired_at = '2026-08-22T00:15:00+00:00'"
+    )
+    conn.commit()
+    conn.close()
+    assert await store.list_occurrences() == [
+        _occurrence(
+            1,
+            state=OccurrenceState.FIRED,
+            attempts=2,
+            last_attempt_at=SCHEDULED + timedelta(minutes=15),
+            blocked_reason="robot busy",
+            fired_at=SCHEDULED + timedelta(minutes=45),
+        )
+    ]
+
+
+async def test_a_naive_instant_is_rejected(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await store.add_pending(
+            1,
+            scheduled_for=SCHEDULED.replace(tzinfo=None),
+            deadline=SCHEDULED + timedelta(hours=6),
+        )
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await store.add_pending(
+            1,
+            scheduled_for=SCHEDULED,
+            deadline=(SCHEDULED + timedelta(hours=6)).replace(tzinfo=None),
+        )
+    assert await store.list_occurrences() == []
+
+
+async def test_local_instants_are_stored_and_read_back_as_utc(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    sydney = timezone(timedelta(hours=10))
+    local = SCHEDULED.astimezone(sydney)
+    await store.add_pending(1, scheduled_for=local, deadline=local + timedelta(hours=6))
+    (occurrence,) = await store.list_occurrences()
+    assert occurrence == _occurrence(1)
+    assert occurrence.scheduled_for.utcoffset() == timedelta(0)
+    assert occurrence.deadline.utcoffset() == timedelta(0)
+
+
+async def test_occurrences_are_device_scoped(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    ours, theirs = open_occurrences("robot-1"), open_occurrences("robot-2")
+    await ours.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await theirs.list_occurrences() == []
+    assert await theirs.claim(1) is False
+    assert await ours.list_occurrences() == [_occurrence(1)]
+
+
+async def test_reopening_keeps_the_occurrences(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    first = open_occurrences()
+    await first.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await open_occurrences().list_occurrences() == [_occurrence(1)]
+
+
+def test_an_unknown_occurrence_state_is_blocked_by_the_schema(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    with pytest.raises(sqlite3.IntegrityError, match="state"):
+        conn.execute(
+            "INSERT INTO occurrences (device_id, rule_id, scheduled_for, deadline, state)"
+            " VALUES ('robot-1', 1, '2026-08-21T23:30:00+00:00',"
+            " '2026-08-22T05:30:00+00:00', 'skipped')"
+        )
+    conn.close()
+
+
+async def test_the_claim_is_atomic_under_two_concurrent_claimers(open_rules, tmp_path):
+    """Two claimers race on the same PENDING Occurrence from two connections; the
+    conditional update lets exactly one of them see the row count of one that is the
+    right to fire (docs/adr/0002)."""
+    await open_rules().create_rule(**_weekday_mornings())
+    path = str(tmp_path / "roborock.db")
+    setup = SqliteOccurrences(open_database(path), device_id="robot-1")
+    await setup.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+
+    claimers = [
+        SqliteOccurrences(open_database(path), device_id="robot-1"),
+        SqliteOccurrences(open_database(path), device_id="robot-1"),
+    ]
+    barrier = threading.Barrier(2)
+    results: list[bool] = []
+
+    def race(store: SqliteOccurrences) -> None:
+        barrier.wait()
+        results.append(asyncio.run(store.claim(1)))
+
+    threads = [threading.Thread(target=race, args=(store,)) for store in claimers]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(results) == [False, True]
+    assert await setup.list_occurrences() == [_occurrence(1, state=OccurrenceState.CLAIMED)]

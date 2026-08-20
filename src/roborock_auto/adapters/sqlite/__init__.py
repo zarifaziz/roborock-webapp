@@ -2,12 +2,14 @@
 
 from roborock_auto.adapters.sqlite.cleaning_log import SqliteCleaningLog
 from roborock_auto.adapters.sqlite.database import MIGRATIONS, apply_migrations, open_database
+from roborock_auto.adapters.sqlite.occurrences import SqliteOccurrences
 from roborock_auto.adapters.sqlite.room_intervals import SqliteRoomIntervals
 from roborock_auto.adapters.sqlite.schedule_rules import SqliteScheduleRules
 
 __all__ = [
     "MIGRATIONS",
     "SqliteCleaningLog",
+    "SqliteOccurrences",
     "SqliteRoomIntervals",
     "SqliteScheduleRules",
     "apply_migrations",

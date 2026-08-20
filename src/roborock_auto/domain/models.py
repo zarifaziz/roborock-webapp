@@ -218,6 +218,39 @@ class ScheduleRule:
     enabled: bool
 
 
+class OccurrenceState(Enum):
+    """The lifecycle of an Occurrence. "Skipped" is deliberately not a state: a blocked
+    firing stays PENDING with a reason attached, because the intent is still live. The
+    claimed state is CLAIMED, not RUNNING — it is the scheduler's lock on the record, and
+    "running" already means the robot cleaning."""
+
+    PENDING = "pending"
+    CLAIMED = "claimed"
+    FIRED = "fired"
+    FAILED = "failed"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class Occurrence:
+    """One specific firing of one Schedule Rule at one instant, as a durable record with
+    its own lifecycle. Carries its own Deadline — how stale the intent may become before
+    it is abandoned — so a per-Rule override is later additive. The Rule's current name
+    rides along for the timeline; the store fills it on read."""
+
+    id: int
+    rule_id: int
+    rule_name: str
+    scheduled_for: datetime
+    deadline: datetime
+    state: OccurrenceState
+    attempts: int
+    last_attempt_at: datetime | None
+    blocked_reason: str | None
+    fired_at: datetime | None
+
+
 @dataclass(frozen=True)
 class Room:
     segment_id: int

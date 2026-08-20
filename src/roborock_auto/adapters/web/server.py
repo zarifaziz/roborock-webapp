@@ -23,10 +23,12 @@ from fastapi.staticfiles import StaticFiles
 from roborock_auto.adapters import get_auth, get_gateway
 from roborock_auto.adapters.sqlite import (
     SqliteCleaningLog,
+    SqliteOccurrences,
     SqliteRoomIntervals,
     SqliteScheduleRules,
     open_database,
 )
+from roborock_auto.application.materialise import MATERIALISATION_HORIZON, materialise
 from roborock_auto.application.overdue import clean_overdue, overdue_view
 from roborock_auto.application.start_clean import start_clean, utc_now
 from roborock_auto.application.two_stage_clean import RunCancelled, run_two_stage
@@ -40,6 +42,7 @@ from roborock_auto.domain.models import (
     ConsumablePart,
     FanPower,
     MopMode,
+    Occurrence,
     RoomInterval,
     ScheduleRule,
     SegmentOverdue,
@@ -80,6 +83,7 @@ async def lifespan(app: FastAPI):
     app.state.cleaning_log = SqliteCleaningLog(db, device_id=config.duid or "fake")
     app.state.room_intervals = SqliteRoomIntervals(db, device_id=config.duid or "fake")
     app.state.schedule_rules = SqliteScheduleRules(db, device_id=config.duid or "fake")
+    app.state.occurrences = SqliteOccurrences(db, device_id=config.duid or "fake")
     app.state.timezone = ZoneInfo(config.timezone)
     # One injected clock for everything that reads or writes a time, so a test can freeze it.
     app.state.now = utc_now
@@ -415,11 +419,6 @@ async def clean_overdue_now(request: Request, mode: str = Body(..., embed=True))
     return {"ok": True, "segment_ids": cleaned}
 
 
-# How far ahead to look for a Rule's next firing; matches the Materialisation horizon the
-# scheduler will use, so "next" here can never disagree with what gets materialised.
-_NEXT_FIRING_HORIZON = timedelta(days=14)
-
-
 def _parse_recurrence(body: dict) -> WeeklyGrid:
     days = body.get("days")
     if not isinstance(days, list):
@@ -458,8 +457,10 @@ def _parse_clean_action(body: dict) -> CleanAction:
 
 
 def _rule_body(rule: ScheduleRule, tz: ZoneInfo, now) -> dict:
+    # "Next" looks exactly one Materialisation horizon ahead, so it can never disagree
+    # with what gets materialised.
     upcoming = (
-        rule.recurrence.occurrences_between(now, now + _NEXT_FIRING_HORIZON, tz)
+        rule.recurrence.occurrences_between(now, now + MATERIALISATION_HORIZON, tz)
         if rule.enabled
         else []
     )
@@ -479,6 +480,15 @@ def _rule_body(rule: ScheduleRule, tz: ZoneInfo, now) -> dict:
         },
         "next_fires_at": upcoming[0].isoformat() if upcoming else None,
     }
+
+
+async def _materialise(request: Request) -> None:
+    await materialise(
+        request.app.state.schedule_rules,
+        request.app.state.occurrences,
+        now=request.app.state.now(),
+        tz=request.app.state.timezone,
+    )
 
 
 @app.get("/schedules")
@@ -502,6 +512,7 @@ async def schedules_create(
         action=_parse_clean_action(action),
         enabled=enabled,
     )
+    await _materialise(request)
     return _rule_body(rule, request.app.state.timezone, request.app.state.now())
 
 
@@ -523,6 +534,10 @@ async def schedules_replace(
     )
     if not await request.app.state.schedule_rules.replace_rule(rule):
         raise HTTPException(404, f"no Schedule Rule {rule_id}")
+    # A restated intent supersedes the old one: cancel every outstanding PENDING
+    # Occurrence — a CLAIMED one rides it out — then re-materialise.
+    await request.app.state.occurrences.cancel_pending(rule_id)
+    await _materialise(request)
     return _rule_body(rule, request.app.state.timezone, request.app.state.now())
 
 
@@ -530,7 +545,29 @@ async def schedules_replace(
 async def schedules_delete(request: Request, rule_id: int):
     if not await request.app.state.schedule_rules.delete_rule(rule_id):
         raise HTTPException(404, f"no Schedule Rule {rule_id}")
+    await request.app.state.occurrences.cancel_pending(rule_id)
     return {"ok": True}
+
+
+def _occurrence_body(occurrence: Occurrence) -> dict:
+    return {
+        "id": occurrence.id,
+        "rule_id": occurrence.rule_id,
+        "rule_name": occurrence.rule_name,
+        "scheduled_for": occurrence.scheduled_for.isoformat(),
+        "deadline": occurrence.deadline.isoformat(),
+        "state": occurrence.state.value,
+        "attempts": occurrence.attempts,
+        "blocked_reason": occurrence.blocked_reason,
+        "fired_at": None if occurrence.fired_at is None else occurrence.fired_at.isoformat(),
+    }
+
+
+@app.get("/occurrences")
+async def occurrences_timeline(request: Request):
+    """The timeline: every past and upcoming Occurrence, earliest scheduled first."""
+    timeline = await request.app.state.occurrences.list_occurrences()
+    return [_occurrence_body(occurrence) for occurrence in timeline]
 
 
 @app.post("/clean/two-stage")

@@ -4,6 +4,10 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>roborock-webapp</title>
+<script>
+  // Apply the persisted theme before first paint to avoid a flash of the wrong theme.
+  document.documentElement.dataset.theme = localStorage.getItem("theme") || "auto";
+</script>
 <style>
   :root {
     color-scheme: light;
@@ -23,9 +27,8 @@
     --accent-ink: #FFFFFF;
     --accent-soft:rgba(0,113,227,0.10);
     --track:      rgba(20,22,26,0.06);
-    /* One graphite plate in both themes: the room tints and frosted labels are
-       designed against a dark ground, like a camera tile in Apple Home. */
-    --map-bg:     radial-gradient(120% 120% at 30% 20%, #232428, #17181B);
+    --map-bg:     radial-gradient(120% 120% at 30% 20%, #ECEEF1, #DFE2E6);
+    --map-ring:   inset 0 0 0 1px rgb(20 22 26 / 0.06);
     --good:       #248A3D;
     --warning:    #B45309;
     --critical:   #D70015;
@@ -33,8 +36,10 @@
     --shadow-sm:  0 1px 2px rgb(16 18 22 / 0.05), 0 4px 12px rgb(16 18 22 / 0.05);
     --glow:       0 6px 18px rgb(0 113 227 / 0.25), 0 1px 4px rgb(0 113 227 / 0.18);
   }
+  /* Dark theme vars, copy 1 of 2 (system dark, unless the user forced light).
+     The two copies MUST stay textually identical — edit both. */
   @media (prefers-color-scheme: dark) {
-    :root {
+    :root:not([data-theme="light"]) {
       color-scheme: dark;
       --bg1:        #1B1C1F;
       --bg2:        #121316;
@@ -53,6 +58,7 @@
       --accent-soft:rgba(10,132,255,0.16);
       --track:      rgba(255,255,255,0.08);
       --map-bg:     radial-gradient(120% 120% at 30% 20%, #232428, #17181B);
+      --map-ring:   inset 0 0 0 1px rgb(255 255 255 / 0.05);
       --good:       #32D74B;
       --warning:    #FFB340;
       --critical:   #FF6961;
@@ -60,6 +66,34 @@
       --shadow-sm:  0 1px 2px rgb(0 0 0 / 0.30), 0 4px 14px rgb(0 0 0 / 0.30);
       --glow:       0 6px 18px rgb(10 132 255 / 0.35), 0 1px 4px rgb(0 0 0 / 0.30);
     }
+  }
+  /* Dark theme vars, copy 2 of 2 (user forced dark). Keep identical to the block above. */
+  :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg1:        #1B1C1F;
+      --bg2:        #121316;
+      --bg-blob:    rgba(255,255,255,0.04);
+      --card:       rgba(255,255,255,0.055);
+      --card-solid: #232429;
+      --frost:      rgba(255,255,255,0.07);
+      --border:     rgba(255,255,255,0.08);
+      --hairline:   rgba(255,255,255,0.08);
+      --ink:        #F5F5F7;
+      --ink-2:      #AEAFB6;
+      --ink-3:      #84858C;
+      --accent:     #0A84FF;
+      --accent-2:   #3395FF;
+      --accent-ink: #FFFFFF;
+      --accent-soft:rgba(10,132,255,0.16);
+      --track:      rgba(255,255,255,0.08);
+      --map-bg:     radial-gradient(120% 120% at 30% 20%, #232428, #17181B);
+      --map-ring:   inset 0 0 0 1px rgb(255 255 255 / 0.05);
+      --good:       #32D74B;
+      --warning:    #FFB340;
+      --critical:   #FF6961;
+      --shadow:     0 1px 2px rgb(0 0 0 / 0.30), 0 12px 32px rgb(0 0 0 / 0.35);
+      --shadow-sm:  0 1px 2px rgb(0 0 0 / 0.30), 0 4px 14px rgb(0 0 0 / 0.30);
+      --glow:       0 6px 18px rgb(10 132 255 / 0.35), 0 1px 4px rgb(0 0 0 / 0.30);
   }
 
   * { box-sizing: border-box; }
@@ -209,7 +243,7 @@
     width: 100%; aspect-ratio: var(--map-ar, 1);
     border-radius: 16px; overflow: hidden;
     background: var(--map-bg);
-    box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
+    box-shadow: var(--map-ring);
   }
   .map-zoom {
     position: absolute; inset: 0;
@@ -238,7 +272,7 @@
     overflow: hidden; text-overflow: ellipsis; pointer-events: none;
     color: #2B3340; background: rgb(255 255 255 / 0.55);
     -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-    box-shadow: 0 0 0 0.5px rgb(20 22 26 / 0.10);
+    box-shadow: 0 0 0 0.5px rgb(20 22 26 / 0.16);
   }
   .map-region.sel {
     background: color-mix(in srgb, var(--rc, var(--accent)) 26%, transparent);
@@ -341,13 +375,6 @@
   }
   .btn.primary:hover { filter: brightness(1.04); background: var(--accent); }
   .btn svg { width: 15px; height: 15px; fill: currentColor; }
-  .btn-row { display: flex; gap: 10px; }
-  .btn-row .btn { width: auto; flex: 1; }
-  /* four control buttons don't fit one row on phones; wrap into a 2x2 grid */
-  @media (max-width: 480px) {
-    .btn-row { flex-wrap: wrap; }
-    .btn-row .btn { flex: 1 1 40%; }
-  }
 
   /* ---------- segmented ---------- */
   .seg-label { font-size: 0.78rem; font-weight: 600; color: var(--ink-2); margin: 16px 0 7px; }
@@ -443,9 +470,9 @@
   /* ---------- bottom action bar (floating on mobile, inline on desktop) ---------- */
   .actionbar {
     position: fixed; left: 50%; transform: translateX(-50%);
-    bottom: 18px; width: calc(100% - 32px); max-width: 468px;
-    display: flex; align-items: center; justify-content: center; gap: 48px;
-    padding: 12px 22px; border-radius: 30px;
+    bottom: 18px; width: auto; max-width: calc(100% - 32px);
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 14px; border-radius: 999px;
     background: var(--frost); border: 1px solid var(--border);
     box-shadow: var(--shadow);
     -webkit-backdrop-filter: blur(22px) saturate(1.1); backdrop-filter: blur(22px) saturate(1.1);
@@ -453,14 +480,13 @@
   }
   @media (min-width: 1100px) {
     .actionbar {
-      position: sticky; left: auto; bottom: auto; transform: none;
-      width: 100%; max-width: none; margin-top: 2px;
-      padding: 14px 30px;
-      justify-content: center; gap: 44px;
+      position: static; transform: none;
+      width: fit-content; margin: 2px auto 0;
+      padding: 10px 14px; gap: 14px;
     }
   }
   .round-action {
-    width: 58px; height: 58px; border-radius: 50%;
+    width: 52px; height: 52px; border-radius: 50%;
     display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
     background: var(--card-solid); border: 1px solid var(--border);
     color: var(--ink-2); cursor: pointer; box-shadow: var(--shadow-sm);
@@ -470,19 +496,22 @@
   .round-action:hover { color: var(--ink); }
   .round-action:active { transform: scale(0.93); }
   .round-action svg { width: 20px; height: 20px; fill: currentColor; }
+  .round-action[hidden] { display: none; }
+  .round-action:disabled { opacity: 0.45; cursor: default; transform: none; }
   .primary-action {
-    width: 84px; height: 84px; margin-top: -30px; border-radius: 50%;
-    display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
+    width: 68px; height: 68px; margin-top: 0; border-radius: 50%;
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
     border: 0; cursor: pointer; color: var(--accent-ink);
     background: var(--accent);
     box-shadow: var(--glow);
-    font: inherit; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+    font: inherit; font-size: 0.56rem; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase;
     transition: transform 0.12s ease, filter 0.2s ease;
   }
-  .primary-action svg { width: 28px; height: 28px; fill: currentColor; }
+  .primary-action svg { width: 16px; height: 16px; fill: currentColor; }
+  .orb-icon { display: inline-flex; }
   .primary-action .orb-sub {
-    font-size: 0.5rem; font-weight: 700; letter-spacing: 0.02em; text-transform: none;
-    opacity: 0.9; line-height: 1; max-width: 74px; overflow: hidden;
+    font-size: 0.46rem; font-weight: 700; letter-spacing: 0.02em; text-transform: none;
+    opacity: 0.9; line-height: 1; max-width: 56px; overflow: hidden;
     text-overflow: ellipsis; white-space: nowrap;
   }
   .primary-action:hover { filter: brightness(1.05); }
@@ -603,13 +632,17 @@
         </div>
       </div>
 
-      <!-- floating bottom action bar (inline sticky on desktop) -->
+      <!-- floating bottom action bar (inline on desktop) — the only control surface;
+           renderActionBar() swaps the orb between Clean / Pause / Resume from the status poll -->
       <div class="actionbar">
-        <button class="primary-action" id="two-stage-btn" onclick="runPrimary()" title="Clean — selected rooms, or the whole floor">
-          <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Clean
+        <button class="primary-action" id="two-stage-btn" onclick="orbAction()" title="Clean — selected rooms, or the whole floor">
+          <span class="orb-icon" id="orb-icon"><svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg></span><span id="orb-label">Clean</span>
           <span class="orb-sub" id="two-stage-scope">whole floor</span>
         </button>
-        <button class="round-action" onclick="cmd('/dock')" title="Dock">
+        <button class="round-action" id="stop-action" hidden onclick="cmd('/stop')" title="Stop the current job">
+          <svg viewBox="0 0 16 16"><path d="M3 3h10v10H3z"/></svg>Stop
+        </button>
+        <button class="round-action" id="dock-action" onclick="cmd('/dock')" title="Dock">
           <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
         </button>
       </div>
@@ -658,23 +691,6 @@
           </div>
         </div>
 
-        <div class="card">
-          <h2>Controls</h2>
-          <div class="btn-row">
-            <button class="btn primary" onclick="cmd('/start')">
-              <svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>Start
-            </button>
-            <button class="btn" onclick="cmd('/pause')">
-              <svg viewBox="0 0 16 16"><path d="M4 2h3v12H4zM9 2h3v12H9z"/></svg>Pause
-            </button>
-            <button class="btn" onclick="cmd('/stop')" title="Stop the current job">
-              <svg viewBox="0 0 16 16"><path d="M3 3h10v10H3z"/></svg>Stop
-            </button>
-            <button class="btn" onclick="cmd('/dock')">
-              <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
-            </button>
-          </div>
-        </div>
       </section>
 
       <!-- ROOMS -->
@@ -762,6 +778,16 @@
           <div class="seg-label">Carpet</div>
           <div class="seg" id="seg-carpet">
             <button data-v="rise">Rise (vacuum over)</button><button data-v="avoid">Avoid</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Appearance</h2>
+          <div class="seg-label">Theme</div>
+          <div class="seg" id="seg-theme">
+            <button data-v="auto">Auto</button>
+            <button data-v="light">Light</button>
+            <button data-v="dark">Dark</button>
           </div>
         </div>
 
@@ -854,6 +880,21 @@ for (const [segId, path, key] of SEGMENTS) {
     }
   });
 }
+
+/* ---------- theme ---------- */
+// "auto"|"light"|"dark"; the head script applied the stored value before first paint.
+// The CSS treats data-theme="auto" the same as absent (system preference wins).
+function applyTheme(v) {
+  localStorage.setItem("theme", v);
+  document.documentElement.dataset.theme = v;
+  [...$("seg-theme").children].forEach((b) => b.classList.toggle("active", b.dataset.v === v));
+}
+$("seg-theme").addEventListener("click", (e) => {
+  const btn = e.target.closest("button");
+  if (btn) applyTheme(btn.dataset.v);
+});
+[...$("seg-theme").children].forEach((b) =>
+  b.classList.toggle("active", b.dataset.v === (document.documentElement.dataset.theme || "auto")));
 
 // Mark the segmented button matching the device-reported value. null/undefined = unknown:
 // keep whatever is shown rather than blanking a toggle the user can see.
@@ -1052,7 +1093,7 @@ function syncCleanBtn() {
   b.disabled = n === 0;
   b.textContent = n ? `Clean ${n} room${n > 1 ? "s" : ""}` : "Clean selected rooms";
   // Keep the floating orb's sub-label in sync with what it will do when tapped.
-  $("two-stage-scope").textContent = n ? `${n} room${n > 1 ? "s" : ""}` : "whole floor";
+  renderActionBar(lastStatus);
 }
 
 // The floating orb is the one contextual clean action: selected rooms run the chosen
@@ -1060,6 +1101,51 @@ function syncCleanBtn() {
 function runPrimary() {
   if (selectedRoomIds().length) { cleanRooms(); return; }
   if (liveConfirm("Start a whole-floor two-stage clean (vacuum, then mop avoiding carpet)?")) startTwoStage();
+}
+
+/* ---------- bottom action bar ---------- */
+// The action bar is the only control surface. The orb is Clean when idle/docked,
+// Pause while a job runs (incl. returning/servicing), Resume while paused; Stop shows
+// only while a job exists; Dock is permanent but disabled when already docked.
+const ORB_ICONS = {
+  play: '<svg viewBox="0 0 16 16"><path d="M4 2.5v11l9-5.5z"/></svg>',
+  pause: '<svg viewBox="0 0 16 16"><path d="M4 2h3v12H4zM9 2h3v12H9z"/></svg>',
+};
+let lastStatus = null;       // latest /status payload, so any event can re-render the bar
+let twoStageRunning = false;
+let orbHandler = runPrimary;
+function orbAction() { orbHandler(); }
+
+function scopeLabel() {
+  const n = selectedRoomIds().length;
+  return n ? `${n} room${n > 1 ? "s" : ""}` : "whole floor";
+}
+
+function setOrb(icon, label, sub, handler, title) {
+  $("orb-icon").innerHTML = ORB_ICONS[icon];
+  $("orb-label").textContent = label;
+  $("two-stage-scope").textContent = sub;
+  $("two-stage-btn").title = title;
+  orbHandler = handler;
+}
+
+function renderActionBar(s) {
+  const orb = $("two-stage-btn");
+  const paused = !!s && s.state_name === "paused";
+  // A job exists while out cleaning OR active-but-near-the-dock (returning, servicing).
+  const active = !!s && !paused && (s.cleaning || s.in_cleaning);
+  $("stop-action").hidden = !active && !paused;
+  $("dock-action").disabled = !!s && s.docked && !active && !paused;
+  if (active) {
+    setOrb("pause", "Pause", "cleaning…", () => post("/pause", {}, "pause sent"), "Pause the current job");
+    orb.disabled = false;
+  } else if (paused) {
+    setOrb("play", "Resume", "paused", () => post("/start", {}, "resuming"), "Resume the paused job");
+    orb.disabled = false;
+  } else {
+    setOrb("play", "Clean", scopeLabel(), runPrimary, "Clean — selected rooms, or the whole floor");
+    orb.disabled = twoStageRunning;
+  }
 }
 
 /* ---------- polling ---------- */
@@ -1098,6 +1184,9 @@ async function refreshStatus() {
   const eb = $("error-banner");
   eb.style.display = s.error ? "block" : "none";
   eb.textContent = s.error ? "⚠ " + s.error : "";
+
+  lastStatus = s;
+  renderActionBar(s);
 
   // Dock/tank problems (empty clean-water tank, full waste-water tank, ...).
   const db = $("dock-banner");
@@ -1261,7 +1350,8 @@ let twoStageTimer = null;
 let lastTwoStageError = null;
 
 function renderTwoStage(st) {
-  $("two-stage-btn").disabled = !!st.running;
+  twoStageRunning = !!st.running;
+  renderActionBar(lastStatus);
   const idx = st.stage in TWO_STAGE_ORDER ? TWO_STAGE_ORDER[st.stage] : -1;
   const steps = document.querySelectorAll("#two-stage-track .stage-step");
   steps.forEach((el, i) => {
@@ -1298,8 +1388,8 @@ function stopTwoStagePoll() {
 }
 
 async function startTwoStage(segmentIds) {
-  const btn = $("two-stage-btn");
-  btn.disabled = true;
+  twoStageRunning = true;
+  renderActionBar(lastStatus);
   lastTwoStageError = null;
   showTab("clean");
   // segmentIds present -> scoped two-stage; absent (whole-house orb) -> empty body = whole house.
@@ -1309,11 +1399,17 @@ async function startTwoStage(segmentIds) {
       method: "POST", headers: { "content-type": "application/json" }, body,
     });
     if (r.status === 409) { toast("A two-stage clean is already running", true); }
-    else if (!r.ok) { toast(`Two-stage start failed (${r.status})`, true); btn.disabled = false; return; }
+    else if (!r.ok) {
+      toast(`Two-stage start failed (${r.status})`, true);
+      twoStageRunning = false;
+      renderActionBar(lastStatus);
+      return;
+    }
     else { toast("Two-stage clean started"); }
   } catch {
     toast("Two-stage start failed — no connection", true);
-    btn.disabled = false;
+    twoStageRunning = false;
+    renderActionBar(lastStatus);
     return;
   }
   startTwoStagePoll();

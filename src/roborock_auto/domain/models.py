@@ -44,6 +44,13 @@ class DeviceStatus:
     in_cleaning: bool          # true while a job is active, even if temporarily docked to charge
     docked: bool
     error: str | None = None
+    # Settings readback + clean telemetry + dock health, straight from the status poll.
+    # All optional: a firmware/library that lacks a field reports None, never crashes.
+    fan_power: str | None = None      # friendly current fan speed, e.g. "balanced"
+    mop_route: str | None = None      # friendly current mop route, e.g. "standard"
+    clean_area_m2: float | None = None
+    clean_time_s: int | None = None
+    dock_error: str | None = None     # human-ish dock error, e.g. "clean water tank empty", else None
     # True only while the robot is physically out running the clean (heading to a room,
     # vacuuming, mopping) — NOT while docked-recharging or servicing the dock (emptying the
     # bin, washing the mop). Classified in the adapter from the firmware state; an unknown

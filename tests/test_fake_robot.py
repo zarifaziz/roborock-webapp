@@ -41,7 +41,31 @@ async def test_reads_return_expected_types():
 
 async def test_idle_when_no_job():
     status = await FakeRobot().get_status()
-    assert status.docked and not status.in_cleaning
+    assert status == DeviceStatus(
+        "charging", 100, in_cleaning=False, docked=True,
+        fan_power="balanced", mop_route="standard",  # defaults, readable before any set_*
+    )
+
+
+async def test_status_reflects_setting_changes():
+    """Settings readback: the status mirrors the last set_fan_power/set_mop_mode."""
+    gw = FakeRobot(clock=Clock())
+    await gw.set_fan_power(FanPower.TURBO)
+    await gw.set_mop_mode(MopMode.DEEP)
+    status = await gw.get_status()
+    assert (status.fan_power, status.mop_route) == ("turbo", "deep")
+
+
+async def test_cleaning_status_carries_telemetry():
+    clock = Clock()
+    gw = FakeRobot(clock=clock)
+    await gw.start()
+    clock.now = 13.0  # 3s depart delay + 10s of actual cleaning
+    assert await gw.get_status() == DeviceStatus(
+        "cleaning", 100, in_cleaning=True, docked=False, cleaning=True,
+        fan_power="balanced", mop_route="standard",
+        clean_area_m2=6.0, clean_time_s=10,
+    )
 
 
 async def test_polling_does_not_advance_progress():

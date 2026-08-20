@@ -25,6 +25,7 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     FAN_LEVELS,
     MOP_MODES,
     derive_in_cleaning,
+    dock_error_str,
     error_str,
     extract_carpet_value,
     is_cleaning,
@@ -153,6 +154,13 @@ class RoborockCloudAdapter:
                 in_cleaning=derive_in_cleaning(st.state, st.in_cleaning),
                 docked=is_docked(st.state),
                 error=error_str(st.error_code),
+                # Enrichment reads are guarded: a library/firmware missing a field (or a
+                # helper property raising on odd data) degrades to None, never a crash.
+                fan_power=_opt(st, "fan_speed_name"),
+                mop_route=_opt(st, "mop_route_name"),
+                clean_area_m2=_opt(st, "square_meter_clean_area"),
+                clean_time_s=_opt(st, "clean_time"),
+                dock_error=dock_error_str(_opt(st, "dock_error_status")),
                 cleaning=is_cleaning(st.state),
             )
 
@@ -306,6 +314,14 @@ class RoborockCloudAdapter:
             await self._web.execute_scene(self._user_data, routine_id)
 
         await self._retry_no_lock(do)
+
+
+def _opt(obj: Any, name: str) -> Any:
+    """Read an optional trait attribute; missing attrs and raising properties become None."""
+    try:
+        return getattr(obj, name, None)
+    except Exception:  # noqa: BLE001 - enrichment must never break the status poll
+        return None
 
 
 def _room_bbox(

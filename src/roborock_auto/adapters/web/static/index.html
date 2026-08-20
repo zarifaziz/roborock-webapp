@@ -273,6 +273,9 @@
     color: #2B3340; background: rgb(255 255 255 / 0.55);
     -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
     box-shadow: 0 0 0 0.5px rgb(20 22 26 / 0.16);
+    /* Counter-rotate so labels stay upright while the floor plan rotates. */
+    transform: rotate(calc(var(--rot, 0deg) * -1));
+    transition: transform 0.18s ease;
   }
   .map-region.sel {
     background: color-mix(in srgb, var(--rc, var(--accent)) 26%, transparent);
@@ -906,7 +909,12 @@ function syncSeg(segId, value) {
 
 /* ---------- map rotation ---------- */
 let rot = Number(localStorage.getItem("mapRot") || 0);
-function applyRot() { $("map-rotor").style.transform = `rotate(${rot}deg)`; }
+function applyRot() {
+  const rotor = $("map-rotor");
+  rotor.style.transform = `rotate(${rot}deg)`;
+  // Labels read this to counter-rotate and stay upright (see .map-label).
+  rotor.style.setProperty("--rot", `${rot}deg`);
+}
 function rotateMap() { rot = (rot + 90) % 360; localStorage.setItem("mapRot", rot); applyRot(); }
 
 /* ---------- map zoom & pan ---------- */

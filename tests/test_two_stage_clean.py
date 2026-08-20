@@ -7,6 +7,7 @@ import pytest
 from roborock_auto.adapters.fake import FakeRobot
 from roborock_auto.application.retry import AutomationError
 from roborock_auto.application.two_stage_clean import (
+    STATUS_FAULT_BUDGET,
     run_two_stage,
     wait_for_departure,
     wait_for_return,
@@ -208,6 +209,103 @@ async def test_return_times_out_when_stuck():
         await wait_for_return(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=30)
 
 
+class _FlakyStatusRobot(FakeRobot):
+    """Machine/timeline robot whose get_status raises N times before recovering, mimicking a
+    cloud/MQTT blip. One raised poll must not abort an hours-long unattended run."""
+
+    def __init__(self, clock, failures: int) -> None:
+        super().__init__(clock=clock)
+        self._failures_left = failures
+
+    async def get_status(self) -> DeviceStatus:
+        if self._failures_left > 0:
+            self._failures_left -= 1
+            raise ConnectionError("mqtt blip")
+        return await super().get_status()
+
+
+async def test_departure_tolerates_status_faults_within_budget():
+    clock = FakeClock()
+    gw = _FlakyStatusRobot(clock=clock, failures=STATUS_FAULT_BUDGET)
+    gw.set_timeline([(0, DOCKED_IDLE), (5, CLEANING)])
+    await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
+
+
+async def test_departure_raises_lost_contact_past_fault_budget():
+    clock = FakeClock()
+    gw = _FlakyStatusRobot(clock=clock, failures=STATUS_FAULT_BUDGET + 1)
+    gw.set_timeline([(0, DOCKED_IDLE), (5, CLEANING)])
+    with pytest.raises(AutomationError, match="lost contact"):
+        await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
+
+
+async def test_return_tolerates_status_faults_within_budget():
+    clock = FakeClock()
+    gw = _FlakyStatusRobot(clock=clock, failures=STATUS_FAULT_BUDGET)
+    gw.set_timeline([(0, CLEANING), (40, DOCKED_IDLE)])
+    await wait_for_return(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
+
+
+async def test_return_raises_lost_contact_past_fault_budget():
+    clock = FakeClock()
+    gw = _FlakyStatusRobot(clock=clock, failures=STATUS_FAULT_BUDGET + 1)
+    gw.set_timeline([(0, CLEANING), (40, DOCKED_IDLE)])
+    with pytest.raises(AutomationError, match="lost contact"):
+        await wait_for_return(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
+
+
+async def test_return_fault_counter_resets_on_success():
+    """Failures are budgeted per consecutive streak, not per run: two separate blips shorter
+    than the budget must not add up to an abort."""
+    clock = FakeClock()
+
+    class _TwoBlipsRobot(FakeRobot):
+        def __init__(self, clock) -> None:
+            super().__init__(clock=clock)
+            self.calls = 0
+
+        async def get_status(self) -> DeviceStatus:
+            self.calls += 1
+            # Two separate blips of `budget` failures each, split by one good poll.
+            budget = STATUS_FAULT_BUDGET
+            if self.calls <= budget or budget + 1 < self.calls <= 2 * budget + 1:
+                raise ConnectionError("mqtt blip")
+            return await super().get_status()
+
+    gw = _TwoBlipsRobot(clock=clock)
+    gw.set_timeline([(0, CLEANING), (80, DOCKED_IDLE)])
+    await wait_for_return(gw, clock=clock, sleep=clock.sleep, interval=5, timeout=600)
+
+
+async def test_return_survives_long_offline_blip():
+    """A >stall_timeout stretch of unknown/device_offline is 'no information', not a stall.
+    The run continues and completes once the robot reports in again."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    offline = DeviceStatus("device_offline", 80, in_cleaning=False, docked=False)
+    gw.set_timeline([
+        (0, CLEANING),
+        (10, offline),         # 7 min of no information — longer than the stall window
+        (430, CLEANING),
+        (450, DOCKED_IDLE),
+    ])
+    await wait_for_return(
+        gw, clock=clock, sleep=clock.sleep, interval=5, timeout=7200, stall_timeout=300
+    )
+    assert clock.now == 455.0
+
+
+async def test_departure_waits_through_charge_before_depart():
+    """A deep-discharged robot accepts the clean but charges before leaving (docked AND
+    in_cleaning). That is progress, so it must extend the departure deadline — a >30 min
+    charge must not abort a job that is actually pending."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    gw.set_timeline([(0, RECHARGING_MIDJOB), (2400, CLEANING)])  # 40 min charge > DEPART_TIMEOUT
+    await wait_for_departure(gw, clock=clock, sleep=clock.sleep, interval=5)
+    assert clock.now >= 2400.0
+
+
 async def test_two_stage_happy_path_ordering():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)  # machine mode: docked -> cleaning -> docked
@@ -320,3 +418,52 @@ async def test_two_stage_aborts_if_not_docked_at_start():
         await run_two_stage(
             gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
+
+
+class _ErrorsMidCleanRobot(FakeRobot):
+    """Machine-mode robot that reports a persistent device error once it is out cleaning."""
+
+    async def get_status(self) -> DeviceStatus:
+        status = await super().get_status()
+        return ERRORED if status.cleaning else status
+
+
+async def test_two_stage_docks_and_restores_carpet_on_abort():
+    """An abort mid-run must not leave the robot mid-floor with wet pads down and carpet mode
+    latched at Rise: best-effort dock + carpet Avoid, then re-raise the original error."""
+    clock = FakeClock()
+    gw = _ErrorsMidCleanRobot(clock=clock)
+    with pytest.raises(AutomationError, match="brush stuck"):
+        await run_two_stage(
+            gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+        )
+    assert ("dock",) in gw.commands
+    # The recovery Avoid comes after the vacuum stage's Rise, and is the final carpet write.
+    carpet_writes = [c for c in gw.commands if c[0] == "set_carpet_mode"]
+    assert carpet_writes == [
+        ("set_carpet_mode", CarpetMode.RISE),
+        ("set_carpet_mode", CarpetMode.AVOID),
+    ]
+
+
+async def test_two_stage_cleanup_failure_does_not_mask_the_original_error():
+    clock = FakeClock()
+    gw = _ErrorsMidCleanRobot(clock=clock)
+
+    async def broken_dock():
+        raise ConnectionError("cloud down")
+
+    gw.dock = broken_dock
+    with pytest.raises(AutomationError, match="brush stuck"):
+        await run_two_stage(
+            gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+        )
+
+
+async def test_two_stage_happy_path_does_not_dock_or_reset():
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    await run_two_stage(
+        gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+    )
+    assert ("dock",) not in gw.commands

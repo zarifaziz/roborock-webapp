@@ -686,7 +686,7 @@
             <button data-v="quiet">Quiet</button><button data-v="balanced">Balanced</button>
             <button data-v="turbo">Turbo</button><button data-v="max">Max</button>
           </div>
-          <div class="seg-label">Mop intensity</div>
+          <div class="seg-label">Mop route</div>
           <div class="seg" id="seg-mop">
             <button data-v="standard">Standard</button><button data-v="deep">Deep</button>
           </div>
@@ -869,8 +869,14 @@ function runPrimary() {
 }
 
 /* ---------- polling ---------- */
-const STATE_DOTS = { cleaning: "active", segment_cleaning: "active", zoned_cleaning: "active",
-                     returning_home: "active", charging: "good", charging_complete: "good", error: "bad" };
+// Drive the status dot from the semantic fields, not a state-name list (which missed every
+// mop/servicing state, leaving the dot grey while the robot was mopping).
+function stateDot(s) {
+  if (s.error) return "bad";
+  if (s.cleaning || s.in_cleaning) return "active";  // out cleaning/mopping, or servicing the dock
+  if (s.docked) return "good";                        // docked and idle (charging)
+  return "";
+}
 const RING_CIRC = 2 * Math.PI * 16;
 
 async function refreshStatus() {
@@ -882,7 +888,7 @@ async function refreshStatus() {
 
   const stateLabel = s.state_name.replaceAll("_", " ");
   $("s-state").textContent = stateLabel;
-  $("s-dot").className = "dot " + (STATE_DOTS[s.state_name] || "");
+  $("s-dot").className = "dot " + stateDot(s);
   $("p-cleaning").classList.toggle("on", s.in_cleaning);
   $("p-docked").classList.toggle("on", s.docked);
   $("s-battery").textContent = s.battery + "%";

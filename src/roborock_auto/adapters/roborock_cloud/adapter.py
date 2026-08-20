@@ -78,6 +78,9 @@ class RoborockCloudAdapter:
 
         map_config = MapParserConfig(
             map_scale=8,
+            # Make the area outside the floor plan transparent instead of the parser's default
+            # dark blue, so the app's own map background shows through (no empty blue frame).
+            show_background=False,
             drawables=[
                 Drawable.CHARGER,
                 Drawable.VACUUM_POSITION,

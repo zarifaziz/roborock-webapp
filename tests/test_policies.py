@@ -12,14 +12,18 @@ from roborock_auto.domain.models import (
     CleanAction,
     CleaningMode,
     DeviceStatus,
+    Occurrence,
+    OccurrenceState,
     RoomInterval,
     SegmentOverdue,
     Weekday,
     WeeklyGrid,
 )
 from roborock_auto.domain.policies import (
+    claimable_occurrences,
     clean_priority,
     home_and_idle,
+    occurrence_expired,
     overdue_report,
     ready_to_start,
 )
@@ -254,3 +258,70 @@ def test_a_clean_action_with_an_empty_segment_list_is_ambiguous():
     CleanAction(mode=CleaningMode.VACUUM, segment_ids=None)
     with pytest.raises(ValueError, match="ambiguous"):
         CleanAction(mode=CleaningMode.VACUUM, segment_ids=())
+
+
+SCHEDULED = datetime(2026, 8, 20, 23, 30, tzinfo=UTC)
+
+
+def _occurrence(id: int = 1, **over) -> Occurrence:
+    base = dict(
+        rule_id=1,
+        rule_name="Weekday mornings",
+        scheduled_for=SCHEDULED,
+        deadline=SCHEDULED + timedelta(hours=6),
+        state=OccurrenceState.PENDING,
+        attempts=0,
+        last_attempt_at=None,
+        blocked_reason=None,
+        fired_at=None,
+    )
+    base.update(over)
+    return Occurrence(id=id, **base)
+
+
+def test_an_occurrence_is_claimable_from_its_instant_until_its_deadline():
+    occurrence = _occurrence()
+    assert claimable_occurrences([occurrence], SCHEDULED - timedelta(seconds=1)) == []
+    assert claimable_occurrences([occurrence], SCHEDULED) == [occurrence]
+    assert claimable_occurrences([occurrence], SCHEDULED + timedelta(hours=6)) == []
+
+
+def test_only_pending_occurrences_are_claimable():
+    resolved = [
+        _occurrence(id, state=state)
+        for id, state in enumerate(
+            (s for s in OccurrenceState if s is not OccurrenceState.PENDING), start=2
+        )
+    ]
+    assert claimable_occurrences([_occurrence(1), *resolved], SCHEDULED) == [_occurrence(1)]
+
+
+def test_a_blocked_reason_alone_never_holds_an_occurrence_back():
+    # A busy robot leaves the reason attached but consumes no attempt: the intent is
+    # still live, so the Occurrence stays claimable the moment the robot is free.
+    blocked = _occurrence(blocked_reason="the robot is mid-job")
+    assert claimable_occurrences([blocked], SCHEDULED) == [blocked]
+
+
+def test_a_failed_attempt_holds_the_occurrence_back_for_the_retry_spacing():
+    tried = _occurrence(attempts=1, last_attempt_at=SCHEDULED, blocked_reason="refused")
+    assert claimable_occurrences([tried], SCHEDULED + timedelta(minutes=4, seconds=59)) == []
+    assert claimable_occurrences([tried], SCHEDULED + timedelta(minutes=5)) == [tried]
+
+
+def test_simultaneous_occurrences_come_back_in_a_total_order():
+    earlier = SCHEDULED - timedelta(hours=1)
+    latecomer = _occurrence(3, scheduled_for=earlier, deadline=earlier + timedelta(hours=6))
+    together = [_occurrence(2), _occurrence(1, rule_id=2), latecomer]
+    assert claimable_occurrences(together, SCHEDULED) == [
+        latecomer,
+        _occurrence(1, rule_id=2),
+        _occurrence(2),
+    ]
+
+
+def test_a_pending_occurrence_past_its_deadline_is_expired():
+    assert occurrence_expired(_occurrence(), SCHEDULED + timedelta(hours=6)) is True
+    assert occurrence_expired(_occurrence(), SCHEDULED) is False
+    fired = _occurrence(state=OccurrenceState.FIRED, fired_at=SCHEDULED)
+    assert occurrence_expired(fired, SCHEDULED + timedelta(hours=7)) is False

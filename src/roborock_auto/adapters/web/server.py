@@ -30,6 +30,7 @@ from roborock_auto.adapters.sqlite import (
 )
 from roborock_auto.application.materialise import MATERIALISATION_HORIZON, materialise
 from roborock_auto.application.overdue import clean_overdue, overdue_view
+from roborock_auto.application.scheduler import Scheduler
 from roborock_auto.application.start_clean import start_clean, utc_now
 from roborock_auto.application.two_stage_clean import RunCancelled, run_two_stage
 from roborock_auto.config import Config
@@ -43,6 +44,7 @@ from roborock_auto.domain.models import (
     FanPower,
     MopMode,
     Occurrence,
+    OccurrenceState,
     RoomInterval,
     ScheduleRule,
     SegmentOverdue,
@@ -91,9 +93,21 @@ async def lifespan(app: FastAPI):
     app.state.two_stage = _idle_progress()
     app.state.two_stage_task = None
     app.state.two_stage_cancel = None
+    app.state.scheduler = Scheduler(
+        gw,
+        rules=app.state.schedule_rules,
+        occurrences=app.state.occurrences,
+        cleaning_log=app.state.cleaning_log,
+        tz=app.state.timezone,
+        # Read through app.state on every call, so the test clock reaches the scheduler.
+        now=lambda: app.state.now(),
+        two_stage_running=lambda: app.state.two_stage["running"],
+    )
+    app.state.scheduler_task = asyncio.create_task(app.state.scheduler.run())
     try:
         yield
     finally:
+        app.state.scheduler_task.cancel()
         task = app.state.two_stage_task
         if task is not None:
             task.cancel()
@@ -568,6 +582,28 @@ async def occurrences_timeline(request: Request):
     """The timeline: every past and upcoming Occurrence, earliest scheduled first."""
     timeline = await request.app.state.occurrences.list_occurrences()
     return [_occurrence_body(occurrence) for occurrence in timeline]
+
+
+@app.get("/scheduler/status")
+async def scheduler_status(request: Request):
+    """The scheduler health summary, including the resolved timezone — the setting most
+    likely to be silently wrong."""
+    scheduler = request.app.state.scheduler
+    pending = sorted(
+        occurrence.scheduled_for
+        for occurrence in await request.app.state.occurrences.list_occurrences()
+        if occurrence.state is OccurrenceState.PENDING
+    )
+    return {
+        "last_tick_at": (
+            None if scheduler.last_tick_at is None else scheduler.last_tick_at.isoformat()
+        ),
+        "consecutive_errors": scheduler.consecutive_errors,
+        "current_backoff_seconds": scheduler.backoff_sec(),
+        "pending_count": len(pending),
+        "next_scheduled_at": pending[0].isoformat() if pending else None,
+        "timezone": request.app.state.config.timezone,
+    }
 
 
 @app.post("/clean/two-stage")

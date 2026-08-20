@@ -53,6 +53,7 @@ class CleanSource(Enum):
 
     APP = "app"
     CRON = "cron"
+    SCHEDULER = "scheduler"
 
 
 class ConsumablePart(Enum):

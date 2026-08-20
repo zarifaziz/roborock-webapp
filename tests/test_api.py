@@ -771,3 +771,53 @@ def test_deleting_a_rule_cancels_pending_occurrences_and_keeps_the_history(clien
         _occ_doc(id, 1, at, state="cancelled")
         for id, at in enumerate(_WEEKDAY_INSTANTS, start=1)
     ]
+
+
+def test_scheduler_status_before_the_first_tick(client):
+    # The loop sleeps one interval before its first tick, so at startup nothing has run.
+    assert client.get("/scheduler/status").json() == {
+        "last_tick_at": None,
+        "consecutive_errors": 0,
+        "current_backoff_seconds": 30.0,
+        "pending_count": 0,
+        "next_scheduled_at": None,
+        "timezone": "Australia/Sydney",
+    }
+
+
+def test_scheduler_status_reports_the_tick_and_the_next_firing(client, clock):
+    client.post("/schedules", json=_rule_request())
+    asyncio.run(client.app.state.scheduler.tick_safely())
+    assert client.get("/scheduler/status").json() == {
+        "last_tick_at": "2026-08-20T09:00:00+00:00",
+        "consecutive_errors": 0,
+        "current_backoff_seconds": 30.0,
+        "pending_count": 6,
+        "next_scheduled_at": "2026-08-20T23:30:00+00:00",
+        "timezone": "Australia/Sydney",
+    }
+
+
+def test_a_due_rule_fires_through_the_scheduler_with_no_user_action(client, clock):
+    client.post("/schedules", json=_rule_request())
+    clock["now"] = datetime.fromisoformat(_WEEKDAY_INSTANTS[0])
+    asyncio.run(client.app.state.scheduler.tick_safely())
+    assert client.app.state.gateway.commands == [
+        ("connect",),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("clean_rooms", (16, 17)),
+    ]
+    fired = _occ_doc(1, 1, _WEEKDAY_INSTANTS[0])
+    fired.update(state="fired", fired_at=_WEEKDAY_INSTANTS[0])
+    assert client.get("/occurrences").json() == [
+        fired,
+        *(_occ_doc(id, 1, at) for id, at in enumerate(_WEEKDAY_INSTANTS[1:], start=2)),
+    ]
+    assert _runs(client) == [
+        CleaningRun(
+            source=CleanSource.SCHEDULER,
+            mode=CleaningMode.VACUUM,
+            segment_ids=(16, 17),
+            started_at=datetime.fromisoformat(_WEEKDAY_INSTANTS[0]),
+        )
+    ]

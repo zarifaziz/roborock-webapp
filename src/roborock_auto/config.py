@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from dotenv import load_dotenv
 
@@ -35,6 +36,23 @@ def _require(name: str) -> str:
     return value
 
 
+def _require_timezone() -> str:
+    """The household's IANA timezone, required with no default in every mode: "system
+    local" resolves to UTC inside a container and shifts every schedule silently."""
+    name = os.getenv("TIMEZONE", "").strip()
+    if not name:
+        raise ConfigError(
+            "TIMEZONE must be set to the household's IANA zone name "
+            "(e.g. TIMEZONE=Australia/Sydney in .env). Refusing to guess: schedules "
+            "would silently run hours off."
+        )
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError):
+        raise ConfigError(f"TIMEZONE {name!r} is not a known IANA zone name")
+    return name
+
+
 @dataclass(frozen=True)
 class Config:
     gateway: str            # "fake" | "live"
@@ -46,6 +64,7 @@ class Config:
     app_port: int
     session_path: str       # where login.py writes / live mode reads user_data.json
     database_path: str      # SQLite file recording what this app did (cleaning runs)
+    timezone: str           # IANA zone name Schedule Rules are interpreted in; no default
 
     @classmethod
     def from_env(cls) -> Config:
@@ -65,4 +84,5 @@ class Config:
             app_port=int(_get("APP_PORT", "8000")),
             session_path=_get("SESSION_PATH", "user_data.json"),
             database_path=_get("DATABASE_PATH", "roborock.db"),
+            timezone=_require_timezone(),
         )

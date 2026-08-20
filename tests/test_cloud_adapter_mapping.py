@@ -31,7 +31,7 @@ def _config(**over) -> Config:
     base = dict(
         gateway="live", email="e@x.com", duid="DUID1",
         carpet_rise_value=2, carpet_avoid_value=0, poll_interval_sec=5.0, app_port=8000,
-        session_path="user_data.json", database_path=":memory:",
+        session_path="user_data.json", database_path=":memory:", timezone="Australia/Sydney",
     )
     base.update(over)
     return Config(**base)

@@ -23,6 +23,7 @@ from roborock_auto.domain.models import (
 def client(monkeypatch):
     monkeypatch.setenv("GATEWAY", "fake")
     monkeypatch.setenv("DATABASE_PATH", ":memory:")
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
     with TestClient(app) as c:
         yield c
 
@@ -478,6 +479,150 @@ def test_overdue_clean_conflicts_when_the_robot_is_not_ready(client):
     assert r.status_code == 409
     assert r.json() == {"detail": "the robot is not ready: it must be docked, idle and error-free"}
     assert _runs(client) == []
+
+
+def _rule_request(**over) -> dict:
+    base = {
+        "name": "Weekday mornings",
+        "recurrence": {"days": ["friday", "monday", "wednesday"], "at": "09:30"},
+        "action": {"type": "clean", "mode": "vacuum", "segment_ids": [16, 17]},
+        "enabled": True,
+    }
+    base.update(over)
+    return base
+
+
+def _rule_doc(
+    id, *, name="Weekday mornings", days=("monday", "wednesday", "friday"), at="09:30",
+    mode="vacuum", segment_ids=(16, 17), enabled=True, next_fires_at=None,
+) -> dict:
+    return {
+        "id": id,
+        "name": name,
+        "enabled": enabled,
+        "recurrence": {"days": list(days), "at": at},
+        "action": {
+            "type": "clean",
+            "mode": mode,
+            "segment_ids": None if segment_ids is None else list(segment_ids),
+        },
+        "next_fires_at": next_fires_at,
+    }
+
+
+def test_schedule_crud_snapshot(client, clock):
+    """The full Rule lifecycle at Thu 2026-08-20 19:00 Sydney: create two Rules, list
+    them, replace one, delete it. Days echo in canonical Monday-first order and
+    next_fires_at is the next UTC instant the Rule's Recurrence implies."""
+    weekday = _rule_doc(1, next_fires_at="2026-08-20T23:30:00+00:00")  # Fri 09:30 AEST
+    assert client.post("/schedules", json=_rule_request()).json() == weekday
+
+    weekend = _rule_doc(
+        2, name="Weekend mop", days=("sunday",), at="11:00", mode="mop",
+        segment_ids=None,  # whole house
+        next_fires_at="2026-08-23T01:00:00+00:00",  # Sun 11:00 AEST
+    )
+    assert client.post(
+        "/schedules",
+        json=_rule_request(
+            name="Weekend mop",
+            recurrence={"days": ["sunday"], "at": "11:00"},
+            action={"type": "clean", "mode": "mop", "segment_ids": None},
+        ),
+    ).json() == weekend
+    assert client.get("/schedules").json() == [weekday, weekend]
+
+    paused = _rule_doc(1, name="Paused mornings", enabled=False)  # disabled: no next firing
+    assert client.put(
+        "/schedules/1", json=_rule_request(name="Paused mornings", enabled=False)
+    ).json() == paused
+    assert client.get("/schedules").json() == [paused, weekend]
+
+    assert client.delete("/schedules/1").json() == {"ok": True}
+    assert client.get("/schedules").json() == [weekend]
+
+
+def test_schedule_names_are_labels_so_duplicates_are_allowed(client, clock):
+    client.post("/schedules", json=_rule_request())
+    client.post("/schedules", json=_rule_request())
+    docs = client.get("/schedules").json()
+    assert [(doc["id"], doc["name"]) for doc in docs] == [
+        (1, "Weekday mornings"),
+        (2, "Weekday mornings"),
+    ]
+
+
+def test_schedule_with_no_days_is_422(client):
+    r = client.post("/schedules", json=_rule_request(recurrence={"days": [], "at": "09:30"}))
+    assert r.status_code == 422
+    assert r.json() == {"detail": "a Schedule Rule needs at least one day; disable it to pause it"}
+    assert client.get("/schedules").json() == []
+
+
+def test_schedule_with_an_empty_segment_list_is_422(client):
+    r = client.post(
+        "/schedules",
+        json=_rule_request(action={"type": "clean", "mode": "vacuum", "segment_ids": []}),
+    )
+    assert r.status_code == 422
+    assert r.json() == {"detail": "an empty Segment list is ambiguous; use null for the whole house"}
+
+
+def test_schedule_with_an_invalid_weekday_is_422(client):
+    r = client.post(
+        "/schedules", json=_rule_request(recurrence={"days": ["funday"], "at": "09:30"})
+    )
+    assert r.status_code == 422
+    assert r.json() == {"detail": "invalid value 'funday' for Weekday"}
+
+
+def test_schedule_with_an_invalid_time_is_422(client):
+    r = client.post(
+        "/schedules", json=_rule_request(recurrence={"days": ["monday"], "at": "25:99"})
+    )
+    assert r.status_code == 422
+    assert r.json() == {"detail": "invalid time '25:99' for recurrence.at: expected HH:MM"}
+
+
+@pytest.mark.parametrize("at", ["09:30:45+05:00", "09:30+00:00", "09:30:00", "0930"])
+def test_schedule_with_a_time_outside_the_hh_mm_contract_is_422(client, at):
+    # A UTC offset would be discarded during generation while the response echoed it
+    # back — the Rule would silently run hours off. Seconds and compact forms fail the
+    # same canonical HH:MM check.
+    r = client.post("/schedules", json=_rule_request(recurrence={"days": ["monday"], "at": at}))
+    assert r.status_code == 422
+    assert r.json() == {"detail": f"invalid time {at!r} for recurrence.at: expected HH:MM"}
+    assert client.get("/schedules").json() == []
+
+
+def test_schedule_with_an_invalid_mode_is_422(client):
+    r = client.post(
+        "/schedules",
+        json=_rule_request(action={"type": "clean", "mode": "polish", "segment_ids": None}),
+    )
+    assert r.status_code == 422
+    assert r.json() == {"detail": "invalid value 'polish' for CleaningMode"}
+
+
+def test_schedule_with_an_unknown_action_type_is_422(client):
+    r = client.post(
+        "/schedules",
+        json=_rule_request(action={"type": "mop_wash", "mode": "vacuum", "segment_ids": None}),
+    )
+    assert r.status_code == 422
+    assert r.json() == {"detail": "invalid action type 'mop_wash': expected 'clean'"}
+
+
+def test_replacing_or_deleting_a_missing_schedule_is_404(client):
+    assert client.put("/schedules/99", json=_rule_request()).status_code == 404
+    assert client.delete("/schedules/99").status_code == 404
+
+
+def test_a_deleted_schedule_stays_deleted(client):
+    client.post("/schedules", json=_rule_request())
+    assert client.delete("/schedules/1").json() == {"ok": True}
+    assert client.delete("/schedules/1").status_code == 404
+    assert client.put("/schedules/1", json=_rule_request()).status_code == 404
 
 
 def test_overdue_loop_end_to_end(client, clock):

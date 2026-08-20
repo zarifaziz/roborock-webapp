@@ -14,6 +14,7 @@ jobs:
     env:
       GATEWAY: live
       DATABASE_PATH: roborock.db
+      TIMEZONE: ${{ vars.TIMEZONE }}
       ROBOROCK_EMAIL: ${{ vars.ROBOROCK_EMAIL }}
       ROBOROCK_DUID: ${{ vars.ROBOROCK_DUID }}
       CARPET_RISE_VALUE: ${{ vars.CARPET_RISE_VALUE }}

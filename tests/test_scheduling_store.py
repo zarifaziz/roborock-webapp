@@ -1,17 +1,21 @@
-"""P7: the store contracts — the cleaning log and Room Intervals — parameterised over
-persistence adapters.
+"""P7: the store contracts — the cleaning log, Room Intervals, and Schedule Rules —
+parameterised over persistence adapters.
 
 Runs against the real SQLite adapter — no fake store (docs/adr/0006). Pins what no other
 seam structurally can: exact round-tripping of datetimes (timezone-aware, stored as UTC),
-enums, durations, and Segment lists; last-cleaned derived as the max started_at per
-requested Segment, with a whole-house run counting towards every one of them; device
-scoping of every row; and migrations that are idempotent across a re-open and atomic
-under a mid-script failure.
+enums, durations, Segment lists, and the Rule's Recurrence and Action value objects;
+last-cleaned derived as the max started_at per requested Segment, with a whole-house run
+counting towards every one of them; device scoping of every row; soft deletion of Rules;
+the Recurrence and the Action parsed at the persistence boundary so a malformed row
+fails loudly on read;
+and migrations that are idempotent across a re-open and atomic under a mid-script
+failure.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta, timezone
+import sqlite3
+from datetime import UTC, datetime, time, timedelta, timezone
 
 import pytest
 
@@ -19,10 +23,20 @@ from roborock_auto.adapters.sqlite import (
     MIGRATIONS,
     SqliteCleaningLog,
     SqliteRoomIntervals,
+    SqliteScheduleRules,
     apply_migrations,
     open_database,
 )
-from roborock_auto.domain.models import CleaningMode, CleaningRun, CleanSource, RoomInterval
+from roborock_auto.domain.models import (
+    CleanAction,
+    CleaningMode,
+    CleaningRun,
+    CleanSource,
+    RoomInterval,
+    ScheduleRule,
+    Weekday,
+    WeeklyGrid,
+)
 
 RUN_AT = datetime(2026, 8, 18, 9, 30, tzinfo=UTC)
 
@@ -196,3 +210,144 @@ async def test_reopening_keeps_the_intervals(open_intervals):
     first = open_intervals()
     await first.set_interval(RoomInterval(16, timedelta(hours=36)))
     assert await open_intervals().list_intervals() == [RoomInterval(16, timedelta(hours=36))]
+
+
+@pytest.fixture(params=["sqlite"])
+def open_rules(request, tmp_path):
+    """Opens a Schedule Rule store over one shared database file; call again to re-open."""
+    connections = []
+
+    def _open(device_id: str = "robot-1") -> SqliteScheduleRules:
+        conn = open_database(str(tmp_path / "roborock.db"))
+        connections.append(conn)
+        return SqliteScheduleRules(conn, device_id=device_id)
+
+    yield _open
+    for conn in connections:
+        conn.close()
+
+
+def _weekday_mornings(**over) -> dict:
+    base = dict(
+        name="Weekday mornings",
+        recurrence=WeeklyGrid(
+            days=frozenset({Weekday.MONDAY, Weekday.WEDNESDAY, Weekday.FRIDAY}),
+            at=time(9, 30),
+        ),
+        action=CleanAction(mode=CleaningMode.VACUUM, segment_ids=(16, 17)),
+        enabled=True,
+    )
+    base.update(over)
+    return base
+
+
+async def test_rules_round_trip_exactly_with_assigned_identities(open_rules):
+    store = open_rules()
+    weekday = await store.create_rule(**_weekday_mornings())
+    weekend = await store.create_rule(
+        **_weekday_mornings(
+            name="Weekend deep clean",
+            recurrence=WeeklyGrid(days=frozenset({Weekday.SATURDAY}), at=time(11, 0)),
+            action=CleanAction(mode=CleaningMode.VAC_AND_MOP, segment_ids=None),
+            enabled=False,
+        )
+    )
+    assert (weekday, weekend) == (
+        ScheduleRule(id=1, **_weekday_mornings()),
+        ScheduleRule(
+            id=2,
+            name="Weekend deep clean",
+            recurrence=WeeklyGrid(days=frozenset({Weekday.SATURDAY}), at=time(11, 0)),
+            action=CleanAction(mode=CleaningMode.VAC_AND_MOP, segment_ids=None),
+            enabled=False,
+        ),
+    )
+    assert await store.list_rules() == [weekday, weekend]
+
+
+async def test_replacing_a_rule_reports_whether_it_was_there(open_rules):
+    store = open_rules()
+    created = await store.create_rule(**_weekday_mornings())
+    replacement = ScheduleRule(id=created.id, **_weekday_mornings(name="Renamed", enabled=False))
+    assert await store.replace_rule(replacement) is True
+    assert await store.list_rules() == [replacement]
+    assert await store.replace_rule(ScheduleRule(id=99, **_weekday_mornings())) is False
+
+
+async def test_deleting_a_rule_soft_deletes_it(open_rules):
+    store = open_rules()
+    created = await store.create_rule(**_weekday_mornings())
+    assert await store.delete_rule(created.id) is True
+    assert await store.list_rules() == []
+    assert await store.delete_rule(created.id) is False
+    assert await store.replace_rule(created) is False
+
+
+async def test_rules_are_device_scoped(open_rules):
+    ours, theirs = open_rules("robot-1"), open_rules("robot-2")
+    created = await ours.create_rule(**_weekday_mornings())
+    assert await theirs.list_rules() == []
+    assert await theirs.delete_rule(created.id) is False
+    assert await ours.list_rules() == [created]
+
+
+async def test_reopening_keeps_the_rules(open_rules):
+    created = await open_rules().create_rule(**_weekday_mornings())
+    assert await open_rules().list_rules() == [created]
+
+
+async def test_a_deleted_rules_row_survives_for_its_history(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteScheduleRules(conn, device_id="robot-1")
+    created = await store.create_rule(**_weekday_mornings())
+    await store.delete_rule(created.id)
+    assert conn.execute(
+        "SELECT id, name, deleted FROM schedule_rules"
+    ).fetchall() == [(1, "Weekday mornings", 1)]
+    conn.close()
+
+
+async def test_a_malformed_action_payload_fails_loudly_on_read(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteScheduleRules(conn, device_id="robot-1")
+    await store.create_rule(**_weekday_mornings())
+    conn.execute("UPDATE schedule_rules SET action_json = '{\"mode\": \"vacuum\"}'")
+    conn.commit()
+    with pytest.raises(KeyError, match="segment_ids"):
+        await store.list_rules()
+    conn.close()
+
+
+async def test_a_malformed_recurrence_payload_fails_loudly_on_read(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteScheduleRules(conn, device_id="robot-1")
+    await store.create_rule(**_weekday_mornings())
+    conn.execute("UPDATE schedule_rules SET recurrence_json = '{\"days\": [\"monday\"]}'")
+    conn.commit()
+    with pytest.raises(KeyError, match="at"):
+        await store.list_rules()
+    conn.close()
+
+
+def test_an_unknown_action_type_is_blocked_by_the_schema(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    with pytest.raises(sqlite3.IntegrityError, match="action_type"):
+        conn.execute(
+            "INSERT INTO schedule_rules"
+            " (device_id, name, recurrence_type, recurrence_json,"
+            " action_type, action_json, enabled)"
+            " VALUES ('robot-1', 'r', 'weekly_grid', '{}', 'mop_wash', '{}', 1)"
+        )
+    conn.close()
+
+
+def test_an_unknown_recurrence_type_is_blocked_by_the_schema(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    with pytest.raises(sqlite3.IntegrityError, match="recurrence_type"):
+        conn.execute(
+            "INSERT INTO schedule_rules"
+            " (device_id, name, recurrence_type, recurrence_json,"
+            " action_type, action_json, enabled)"
+            " VALUES ('robot-1', 'r', 'rrule', '{}', 'clean', '{}', 1)"
+        )
+    conn.close()

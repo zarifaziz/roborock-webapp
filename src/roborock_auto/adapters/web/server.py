@@ -11,15 +11,22 @@ import dataclasses
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import time as time_of_day
 from datetime import timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from roborock_auto.adapters import get_auth, get_gateway
-from roborock_auto.adapters.sqlite import SqliteCleaningLog, SqliteRoomIntervals, open_database
+from roborock_auto.adapters.sqlite import (
+    SqliteCleaningLog,
+    SqliteRoomIntervals,
+    SqliteScheduleRules,
+    open_database,
+)
 from roborock_auto.application.overdue import clean_overdue, overdue_view
 from roborock_auto.application.start_clean import start_clean, utc_now
 from roborock_auto.application.two_stage_clean import RunCancelled, run_two_stage
@@ -27,14 +34,18 @@ from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
 from roborock_auto.domain.models import (
     CarpetMode,
+    CleanAction,
     CleaningMode,
     CleanSource,
     ConsumablePart,
     FanPower,
     MopMode,
     RoomInterval,
+    ScheduleRule,
     SegmentOverdue,
     WaterMode,
+    Weekday,
+    WeeklyGrid,
 )
 from roborock_auto.domain.policies import ready_to_start
 from roborock_auto.ports import RobotGateway
@@ -68,6 +79,8 @@ async def lifespan(app: FastAPI):
     app.state.config = config
     app.state.cleaning_log = SqliteCleaningLog(db, device_id=config.duid or "fake")
     app.state.room_intervals = SqliteRoomIntervals(db, device_id=config.duid or "fake")
+    app.state.schedule_rules = SqliteScheduleRules(db, device_id=config.duid or "fake")
+    app.state.timezone = ZoneInfo(config.timezone)
     # One injected clock for everything that reads or writes a time, so a test can freeze it.
     app.state.now = utc_now
     app.state.map_cache = {"at": 0.0, "png": b""}
@@ -400,6 +413,124 @@ async def clean_overdue_now(request: Request, mode: str = Body(..., embed=True))
         now=request.app.state.now,
     )
     return {"ok": True, "segment_ids": cleaned}
+
+
+# How far ahead to look for a Rule's next firing; matches the Materialisation horizon the
+# scheduler will use, so "next" here can never disagree with what gets materialised.
+_NEXT_FIRING_HORIZON = timedelta(days=14)
+
+
+def _parse_recurrence(body: dict) -> WeeklyGrid:
+    days = body.get("days")
+    if not isinstance(days, list):
+        raise HTTPException(422, "recurrence.days must be a list of weekday names")
+    raw_at = body.get("at")
+    try:
+        at = time_of_day.fromisoformat(raw_at)
+    except (TypeError, ValueError):
+        raise HTTPException(422, f"invalid time {raw_at!r} for recurrence.at: expected HH:MM")
+    # fromisoformat is laxer than the HH:MM contract: it accepts seconds, compact "0930",
+    # and — worst — a UTC offset that generation would discard while the response echoed
+    # it back. An offset survives the canonical round-trip, so it needs its own check.
+    if at.tzinfo is not None or raw_at != at.isoformat(timespec="minutes"):
+        raise HTTPException(422, f"invalid time {raw_at!r} for recurrence.at: expected HH:MM")
+    try:
+        return WeeklyGrid(days=frozenset(_parse(Weekday, day) for day in days), at=at)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+def _parse_clean_action(body: dict) -> CleanAction:
+    if body.get("type") != "clean":
+        raise HTTPException(422, f"invalid action type {body.get('type')!r}: expected 'clean'")
+    segment_ids = body.get("segment_ids")
+    if segment_ids is not None and (
+        not isinstance(segment_ids, list) or not all(isinstance(s, int) for s in segment_ids)
+    ):
+        raise HTTPException(422, "action.segment_ids must be a list of Segment numbers or null")
+    try:
+        return CleanAction(
+            mode=_parse(CleaningMode, body.get("mode")),
+            segment_ids=None if segment_ids is None else tuple(segment_ids),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+def _rule_body(rule: ScheduleRule, tz: ZoneInfo, now) -> dict:
+    upcoming = (
+        rule.recurrence.occurrences_between(now, now + _NEXT_FIRING_HORIZON, tz)
+        if rule.enabled
+        else []
+    )
+    segment_ids = rule.action.segment_ids
+    return {
+        "id": rule.id,
+        "name": rule.name,
+        "enabled": rule.enabled,
+        "recurrence": {
+            "days": [day.value for day in Weekday if day in rule.recurrence.days],
+            "at": rule.recurrence.at.isoformat(timespec="minutes"),
+        },
+        "action": {
+            "type": "clean",
+            "mode": rule.action.mode.value,
+            "segment_ids": None if segment_ids is None else list(segment_ids),
+        },
+        "next_fires_at": upcoming[0].isoformat() if upcoming else None,
+    }
+
+
+@app.get("/schedules")
+async def schedules_list(request: Request):
+    tz, now = request.app.state.timezone, request.app.state.now()
+    rules = await request.app.state.schedule_rules.list_rules()
+    return [_rule_body(rule, tz, now) for rule in rules]
+
+
+@app.post("/schedules")
+async def schedules_create(
+    request: Request,
+    name: str = Body(..., embed=True),
+    recurrence: dict = Body(..., embed=True),
+    action: dict = Body(..., embed=True),
+    enabled: bool = Body(True, embed=True),
+):
+    rule = await request.app.state.schedule_rules.create_rule(
+        name=name,
+        recurrence=_parse_recurrence(recurrence),
+        action=_parse_clean_action(action),
+        enabled=enabled,
+    )
+    return _rule_body(rule, request.app.state.timezone, request.app.state.now())
+
+
+@app.put("/schedules/{rule_id}")
+async def schedules_replace(
+    request: Request,
+    rule_id: int,
+    name: str = Body(..., embed=True),
+    recurrence: dict = Body(..., embed=True),
+    action: dict = Body(..., embed=True),
+    enabled: bool = Body(True, embed=True),
+):
+    rule = ScheduleRule(
+        id=rule_id,
+        name=name,
+        recurrence=_parse_recurrence(recurrence),
+        action=_parse_clean_action(action),
+        enabled=enabled,
+    )
+    if not await request.app.state.schedule_rules.replace_rule(rule):
+        raise HTTPException(404, f"no Schedule Rule {rule_id}")
+    return _rule_body(rule, request.app.state.timezone, request.app.state.now())
+
+
+@app.delete("/schedules/{rule_id}")
+async def schedules_delete(request: Request, rule_id: int):
+    if not await request.app.state.schedule_rules.delete_rule(rule_id):
+        raise HTTPException(404, f"no Schedule Rule {rule_id}")
+    return {"ok": True}
 
 
 @app.post("/clean/two-stage")

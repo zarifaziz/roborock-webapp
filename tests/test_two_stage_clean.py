@@ -42,7 +42,7 @@ def _config(**over) -> Config:
     base = dict(
         gateway="fake", email="", duid="",
         carpet_rise_value=0, carpet_avoid_value=1, poll_interval_sec=5.0, app_port=8000,
-        session_path="user_data.json", database_path=":memory:",
+        session_path="user_data.json", database_path=":memory:", timezone="Australia/Sydney",
     )
     base.update(over)
     return Config(**base)

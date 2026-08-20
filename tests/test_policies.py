@@ -1,13 +1,22 @@
-"""Domain policies: the status-interpretation rules and the Overdue scoring rules,
-stated as documentation."""
+"""Domain policies: the status-interpretation rules, the Overdue scoring rules, and
+weekly Recurrence generation, stated as documentation."""
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from roborock_auto.domain.models import DeviceStatus, RoomInterval, SegmentOverdue
+from roborock_auto.domain.models import (
+    CleanAction,
+    CleaningMode,
+    DeviceStatus,
+    RoomInterval,
+    SegmentOverdue,
+    Weekday,
+    WeeklyGrid,
+)
 from roborock_auto.domain.policies import (
     clean_priority,
     home_and_idle,
@@ -153,3 +162,95 @@ def test_overdue_entries_flag_never_cleaned_and_whether_they_are_due():
 
 def test_a_segment_with_no_interval_is_not_in_the_report():
     assert overdue_report([], {16: NOW}, NOW) == []
+
+
+SYDNEY = ZoneInfo("Australia/Sydney")
+EVERY_DAY = frozenset(Weekday)
+
+
+def _grid(*days: Weekday, at: time = time(9, 30)) -> WeeklyGrid:
+    return WeeklyGrid(days=frozenset(days) or EVERY_DAY, at=at)
+
+
+def _utc(*args: int) -> datetime:
+    return datetime(*args, tzinfo=UTC)
+
+
+def test_weekly_grid_generates_across_a_week_wraparound():
+    # Friday and Monday at 09:30 Sydney (UTC+10 in August): the window spans the
+    # weekend, so generation must carry from one week's end into the next's start.
+    grid = _grid(Weekday.FRIDAY, Weekday.MONDAY)
+    window = grid.occurrences_between(_utc(2026, 8, 20), _utc(2026, 8, 26), SYDNEY)
+    assert window == [
+        _utc(2026, 8, 20, 23, 30),  # Fri 21 Aug 09:30 AEST
+        _utc(2026, 8, 23, 23, 30),  # Mon 24 Aug 09:30 AEST
+    ]
+
+
+def test_weekly_grid_keeps_the_wall_clock_time_across_the_spring_forward():
+    # Sydney springs forward Sun 2026-10-04 02:00 AEST -> 03:00 AEDT. A 09:30 rule stays
+    # a 09:30 rule: the UTC instants are 23 hours apart, not 24.
+    grid = _grid()
+    window = grid.occurrences_between(
+        _utc(2026, 10, 2, 20, 0), _utc(2026, 10, 4, 20, 0), SYDNEY
+    )
+    assert window == [
+        _utc(2026, 10, 2, 23, 30),  # Sat 3 Oct 09:30 AEST (+10:00)
+        _utc(2026, 10, 3, 22, 30),  # Sun 4 Oct 09:30 AEDT (+11:00)
+    ]
+
+
+def test_weekly_grid_keeps_the_wall_clock_time_across_the_fall_back():
+    # Sydney falls back Sun 2026-04-05 03:00 AEDT -> 02:00 AEST. The UTC instants are
+    # 25 hours apart, not 24.
+    grid = _grid()
+    window = grid.occurrences_between(_utc(2026, 4, 3, 20, 0), _utc(2026, 4, 5, 20, 0), SYDNEY)
+    assert window == [
+        _utc(2026, 4, 3, 22, 30),  # Sat 4 Apr 09:30 AEDT (+11:00)
+        _utc(2026, 4, 4, 23, 30),  # Sun 5 Apr 09:30 AEST (+10:00)
+    ]
+
+
+def test_a_wall_time_inside_the_spring_forward_gap_resolves_on_the_pre_gap_offset():
+    # 02:30 does not exist on Sun 2026-10-04 in Sydney. Attaching the zone resolves it on
+    # the pre-gap offset (+10:00), so the firing lands at 03:30 AEDT — an hour late on
+    # the wall, never skipped and never doubled.
+    grid = _grid(Weekday.SUNDAY, at=time(2, 30))
+    window = grid.occurrences_between(_utc(2026, 10, 3), _utc(2026, 10, 5), SYDNEY)
+    assert window == [_utc(2026, 10, 3, 16, 30)]
+
+
+def test_a_wall_time_repeated_by_the_fall_back_fires_once_on_the_first_pass():
+    # 02:30 happens twice on Sun 2026-04-05 in Sydney. One local day yields one instant:
+    # the first pass (+11:00), never both.
+    grid = _grid(Weekday.SUNDAY, at=time(2, 30))
+    window = grid.occurrences_between(_utc(2026, 4, 4), _utc(2026, 4, 6), SYDNEY)
+    assert window == [_utc(2026, 4, 4, 15, 30)]
+
+
+def test_weekly_grid_window_includes_its_start_and_excludes_its_end():
+    grid = _grid(Weekday.MONDAY)
+    monday_0930 = _utc(2026, 8, 23, 23, 30)  # Mon 24 Aug 09:30 AEST
+    assert grid.occurrences_between(monday_0930, monday_0930 + timedelta(days=1), SYDNEY) == [
+        monday_0930
+    ]
+    assert grid.occurrences_between(monday_0930 - timedelta(days=1), monday_0930, SYDNEY) == []
+
+
+def test_a_weekly_grid_with_no_days_is_a_typo_not_a_paused_rule():
+    with pytest.raises(ValueError, match="at least one day"):
+        WeeklyGrid(days=frozenset(), at=time(9, 30))
+
+
+def test_a_weekly_grid_time_of_day_is_wall_clock_so_it_cannot_carry_a_timezone():
+    # Generation attaches the household zone itself; an offset on `at` would be silently
+    # overridden and the Rule would fire hours away from what it claims.
+    with pytest.raises(ValueError, match="wall-clock"):
+        WeeklyGrid(days=EVERY_DAY, at=time(9, 30, tzinfo=UTC))
+
+
+def test_a_clean_action_with_an_empty_segment_list_is_ambiguous():
+    # None means the whole house; an empty list is rejected rather than guessed at.
+    CleanAction(mode=CleaningMode.VACUUM, segment_ids=None)
+    with pytest.raises(ValueError, match="ambiguous"):
+        CleanAction(mode=CleaningMode.VACUUM, segment_ids=())

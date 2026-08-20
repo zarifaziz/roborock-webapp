@@ -30,6 +30,19 @@ MIGRATIONS: tuple[str, ...] = (
         PRIMARY KEY (device_id, segment_id)
     );
     """,
+    """
+    CREATE TABLE schedule_rules (
+        id INTEGER PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        recurrence_type TEXT NOT NULL CHECK (recurrence_type IN ('weekly_grid')),
+        recurrence_json TEXT NOT NULL,
+        action_type TEXT NOT NULL CHECK (action_type IN ('clean')),
+        action_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0
+    );
+    """,
 )
 
 

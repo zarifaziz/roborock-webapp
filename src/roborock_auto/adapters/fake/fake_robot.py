@@ -53,6 +53,9 @@ class FakeRobot:
     def __init__(self, clock: Callable[[], float] = time.monotonic):
         self._clock = clock
         self._job_start: float | None = None
+        # Elapsed job time frozen by pause(); start() resumes from it. Mirrors the real
+        # robot, where a paused job stays active (in_cleaning) until resumed or stopped.
+        self._paused_elapsed: float | None = None
         self._carpet = CarpetMode.AVOID
         self._fan = FanPower.BALANCED
         self._mop = MopMode.STANDARD
@@ -96,6 +99,9 @@ class FakeRobot:
         settings = dict(
             fan_power=self._fan.value, mop_route=self._mop.value, water_mode=self._water.value
         )
+        if self._paused_elapsed is not None:
+            return DeviceStatus("paused", self._battery, in_cleaning=True, docked=False,
+                                **settings)
         if self._job_start is None:
             return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True,
                                 **settings)
@@ -145,19 +151,27 @@ class FakeRobot:
     # --- commands ---------------------------------------------------------
     async def start(self) -> None:
         self.commands.append(("start",))
-        self._job_start = self._clock()
+        if self._paused_elapsed is not None:
+            self._job_start = self._clock() - self._paused_elapsed
+            self._paused_elapsed = None
+        else:
+            self._job_start = self._clock()
 
     async def pause(self) -> None:
         self.commands.append(("pause",))
-        self._job_start = None
+        if self._job_start is not None:
+            self._paused_elapsed = self._clock() - self._job_start
+            self._job_start = None
 
     async def stop(self) -> None:
         self.commands.append(("stop",))
         self._job_start = None
+        self._paused_elapsed = None
 
     async def dock(self) -> None:
         self.commands.append(("dock",))
         self._job_start = None
+        self._paused_elapsed = None
 
     async def find_robot(self) -> None:
         self.commands.append(("find_robot",))

@@ -169,6 +169,30 @@ async def test_clean_rooms_params(gw):
     assert call.kwargs["params"] == [{"segments": [16, 17], "repeat": 1}]
 
 
+async def test_clean_rooms_repeat_threads_into_params(gw):
+    await gw.clean_rooms([16, 17], repeat=2)
+    call = _last_send(gw)
+    assert call.args[0] == RoborockCommand.APP_SEGMENT_CLEAN
+    assert call.kwargs["params"] == [{"segments": [16, 17], "repeat": 2}]
+
+
+async def test_reset_consumable_calls_trait_with_library_attribute(gw):
+    from roborock.devices.traits.v1.consumeable import ConsumableAttribute
+
+    from roborock_auto.domain.models import ConsumablePart
+
+    trait = SimpleNamespace(reset_consumable=AsyncMock())
+    gw._device.v1_properties.consumables = trait
+    await gw.reset_consumable(ConsumablePart.MAIN_BRUSH)
+    trait.reset_consumable.assert_awaited_once_with(ConsumableAttribute.MAIN_BRUSH_WORK_TIME)
+    await gw.reset_consumable(ConsumablePart.SIDE_BRUSH)
+    trait.reset_consumable.assert_awaited_with(ConsumableAttribute.SIDE_BRUSH_WORK_TIME)
+    await gw.reset_consumable(ConsumablePart.FILTER)
+    trait.reset_consumable.assert_awaited_with(ConsumableAttribute.FILTER_WORK_TIME)
+    await gw.reset_consumable(ConsumablePart.SENSOR)
+    trait.reset_consumable.assert_awaited_with(ConsumableAttribute.SENSOR_DIRTY_TIME)
+
+
 async def test_fan_and_mop(gw):
     await gw.set_fan_power(FanPower.MAX)
     assert _last_send(gw).args[0] == RoborockCommand.SET_CUSTOM_MODE

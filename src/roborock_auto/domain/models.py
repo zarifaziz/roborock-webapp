@@ -37,6 +37,16 @@ class CleaningMode(Enum):
     VAC_AND_MOP = "vac_and_mop"
 
 
+class ConsumablePart(Enum):
+    """A user-serviceable consumable whose life counter can be reset after the owner
+    replaces (brushes, filter) or cleans (sensors) it."""
+
+    MAIN_BRUSH = "main_brush"
+    SIDE_BRUSH = "side_brush"
+    FILTER = "filter"
+    SENSOR = "sensor"
+
+
 @dataclass(frozen=True)
 class DeviceStatus:
     state_name: str            # normalized: "cleaning", "charging", "idle", "error", ...

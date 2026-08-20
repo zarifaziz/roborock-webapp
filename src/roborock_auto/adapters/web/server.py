@@ -21,7 +21,13 @@ from roborock_auto.adapters import get_auth, get_gateway
 from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
-from roborock_auto.domain.models import CarpetMode, CleaningMode, FanPower, MopMode
+from roborock_auto.domain.models import (
+    CarpetMode,
+    CleaningMode,
+    ConsumablePart,
+    FanPower,
+    MopMode,
+)
 from roborock_auto.ports import RobotGateway
 from roborock_auto.ports.auth import AuthPort
 
@@ -124,6 +130,12 @@ async def routines(request: Request):
 @app.get("/consumables")
 async def consumables(request: Request):
     return dataclasses.asdict(await _gw(request).get_consumables())
+
+
+@app.post("/consumables/reset")
+async def consumables_reset(request: Request, part: str = Body(..., embed=True)):
+    await _gw(request).reset_consumable(_parse(ConsumablePart, part))
+    return {"ok": True}
 
 
 @app.post("/start")
@@ -252,13 +264,16 @@ async def clean_segments(
     request: Request,
     segment_ids: list[int] = Body(..., embed=True),
     mode: str = Body(..., embed=True),
+    repeat: int = Body(1, embed=True),
 ):
     if not segment_ids:
         raise HTTPException(422, "segment_ids must not be empty")
+    if not 1 <= repeat <= 3:
+        raise HTTPException(422, "repeat must be between 1 and 3")
     parsed = _parse(CleaningMode, mode)
     gw = _gw(request)
     await gw.set_cleaning_mode(parsed)
-    await gw.clean_rooms(segment_ids)
+    await gw.clean_rooms(segment_ids, repeat=repeat)
     return {"ok": True}
 
 

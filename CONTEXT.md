@@ -1,0 +1,82 @@
+# Roborock Automation
+
+One household, one robot (Qrevo L Pro). The app reads the robot's state, decides what
+should happen, and commands it. The robot's firmware owns everything about the robot;
+this app owns only what the firmware cannot answer, which is what *we* intended and when.
+
+## Language
+
+### Cleaning
+
+**Segment**:
+A room, as one robot's map numbers it. Segment numbers are scoped to a device, never
+global: segment 16 on one robot has nothing to do with segment 16 on another.
+_Avoid_: Room ID, zone
+
+**Room**:
+A segment plus its human name, as shown in the UI.
+_Avoid_: Area
+
+**Clean**:
+One instruction to the robot to start cleaning, whole-house or a chosen set of segments.
+_Avoid_: Job, run, task
+
+**Cleaning Run**:
+A record that this app started a clean, with its source, its segments, and when. The
+durable trace of a Clean.
+_Avoid_: Clean history, clean log
+
+**Two-Stage Clean**:
+The house-specific procedure that never wets carpet: a vacuum pass with carpet mode
+Rise, then a mop pass with carpet mode Avoid, waiting for the robot to genuinely return
+between them.
+_Avoid_: Deep clean, full clean
+
+**Departure**:
+The robot having actually left the dock for the current job, as distinct from the dock
+servicing itself after the previous one.
+
+### Scheduling
+
+**Schedule Rule**:
+A user's standing intent, made of a Recurrence and an Action: when it should happen and
+what should happen. It describes what should happen repeatedly; it never records what did.
+_Avoid_: Schedule, cron, timer, trigger
+
+**Recurrence**:
+The "when" half of a Schedule Rule: a rule for generating instants. A weekly grid of
+days plus a time of day is the only shape the app understands today.
+_Avoid_: Frequency, pattern, cron expression
+
+**Action**:
+The "what" half of a Schedule Rule: cleaning a set of segments in a given mode today, and
+in principle any other standing instruction to the robot.
+_Avoid_: Job, command, task, payload
+
+**Occurrence**:
+One specific firing of one Schedule Rule at one instant, as a durable record with its own
+lifecycle. "The 09:30 on Wednesday 26 August", not "the 09:30 rule".
+_Avoid_: Fire, tick, event, instance
+
+**Materialise**:
+To generate the Occurrences a Schedule Rule implies over a forward horizon, so that a
+firing is something the system holds rather than something it re-infers.
+
+**Deadline**:
+How stale an Occurrence may become before the system gives up on it rather than firing it
+late. Belongs to the Occurrence, not to the scheduler.
+_Avoid_: Grace, grace window, misfire window
+
+**Room Interval**:
+How often a segment should be cleaned, in days. A user's standing intent about a room,
+the per-room counterpart to a Schedule Rule.
+_Avoid_: Frequency, cadence, schedule
+
+**Overdue**:
+A segment whose time since its last Cleaning Run exceeds its Room Interval.
+
+**Priority**:
+How overdue a segment is, normalised as days elapsed divided by its Room Interval, so
+rooms with different intervals compare directly. A never-cleaned room is maximally
+overdue.
+_Avoid_: Score, urgency, rank

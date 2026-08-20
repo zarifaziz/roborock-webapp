@@ -7,56 +7,58 @@
 <style>
   :root {
     color-scheme: light;
-    --bg1:        #d6f5e6;
-    --bg2:        #d8ecfd;
-    --bg-blob:    rgba(255,255,255,0.55);
-    --card:       rgba(255,255,255,0.72);
-    --card-solid: #ffffff;
-    --frost:      rgba(255,255,255,0.6);
-    --border:     rgba(255,255,255,0.7);
-    --hairline:   rgba(15,36,54,0.08);
-    --ink:        #10293c;
-    --ink-2:      #4a6272;
-    --ink-3:      #8aa2b2;
-    --accent:     #12b3c9;
-    --accent-2:   #1f9bd8;
-    --accent-ink: #ffffff;
-    --accent-soft:rgba(18,179,201,0.14);
-    --track:      rgba(15,36,54,0.08);
-    --map-bg:     radial-gradient(120% 120% at 30% 20%, #eef5fb, #e0eaf4);
-    --good:       #16b877;
-    --warning:    #f2a51c;
-    --critical:   #e5484d;
-    --shadow:     0 2px 6px rgb(23 60 84 / 0.06), 0 16px 40px rgb(23 60 84 / 0.10);
-    --shadow-sm:  0 1px 2px rgb(23 60 84 / 0.06), 0 6px 18px rgb(23 60 84 / 0.08);
-    --glow:       0 10px 28px rgb(18 179 201 / 0.45), 0 2px 8px rgb(18 179 201 / 0.35);
+    --bg1:        #F6F7F9;
+    --bg2:        #EEF0F3;
+    --bg-blob:    rgba(255,255,255,0.60);
+    --card:       rgba(255,255,255,0.78);
+    --card-solid: #FFFFFF;
+    --frost:      rgba(255,255,255,0.65);
+    --border:     rgba(20,22,26,0.07);
+    --hairline:   rgba(20,22,26,0.07);
+    --ink:        #1D1D1F;
+    --ink-2:      #55565C;
+    --ink-3:      #73747A;
+    --accent:     #0071E3;
+    --accent-2:   #0064C8;
+    --accent-ink: #FFFFFF;
+    --accent-soft:rgba(0,113,227,0.10);
+    --track:      rgba(20,22,26,0.06);
+    /* One graphite plate in both themes: the room tints and frosted labels are
+       designed against a dark ground, like a camera tile in Apple Home. */
+    --map-bg:     radial-gradient(120% 120% at 30% 20%, #232428, #17181B);
+    --good:       #248A3D;
+    --warning:    #B45309;
+    --critical:   #D70015;
+    --shadow:     0 1px 2px rgb(16 18 22 / 0.04), 0 10px 30px rgb(16 18 22 / 0.06);
+    --shadow-sm:  0 1px 2px rgb(16 18 22 / 0.05), 0 4px 12px rgb(16 18 22 / 0.05);
+    --glow:       0 6px 18px rgb(0 113 227 / 0.25), 0 1px 4px rgb(0 113 227 / 0.18);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       color-scheme: dark;
-      --bg1:        #12202e;
-      --bg2:        #0d1620;
-      --bg-blob:    rgba(90,160,190,0.10);
+      --bg1:        #1B1C1F;
+      --bg2:        #121316;
+      --bg-blob:    rgba(255,255,255,0.04);
       --card:       rgba(255,255,255,0.055);
-      --card-solid: #182531;
-      --frost:      rgba(255,255,255,0.08);
-      --border:     rgba(255,255,255,0.10);
-      --hairline:   rgba(255,255,255,0.09);
-      --ink:        #ecf4fa;
-      --ink-2:      #a9bfce;
-      --ink-3:      #6f8797;
-      --accent:     #23c7dc;
-      --accent-2:   #3aa6e8;
-      --accent-ink: #05242a;
-      --accent-soft:rgba(35,199,220,0.16);
-      --track:      rgba(255,255,255,0.10);
-      --map-bg:     radial-gradient(120% 120% at 30% 20%, #16232f, #0f1925);
-      --good:       #22c98a;
-      --warning:    #f4b13a;
-      --critical:   #f2686c;
-      --shadow:     0 2px 6px rgb(0 0 0 / 0.35), 0 18px 44px rgb(0 0 0 / 0.45);
-      --shadow-sm:  0 1px 2px rgb(0 0 0 / 0.4), 0 8px 22px rgb(0 0 0 / 0.4);
-      --glow:       0 10px 30px rgb(35 199 220 / 0.4), 0 2px 10px rgb(35 199 220 / 0.35);
+      --card-solid: #232429;
+      --frost:      rgba(255,255,255,0.07);
+      --border:     rgba(255,255,255,0.08);
+      --hairline:   rgba(255,255,255,0.08);
+      --ink:        #F5F5F7;
+      --ink-2:      #AEAFB6;
+      --ink-3:      #84858C;
+      --accent:     #0A84FF;
+      --accent-2:   #3395FF;
+      --accent-ink: #FFFFFF;
+      --accent-soft:rgba(10,132,255,0.16);
+      --track:      rgba(255,255,255,0.08);
+      --map-bg:     radial-gradient(120% 120% at 30% 20%, #232428, #17181B);
+      --good:       #32D74B;
+      --warning:    #FFB340;
+      --critical:   #FF6961;
+      --shadow:     0 1px 2px rgb(0 0 0 / 0.30), 0 12px 32px rgb(0 0 0 / 0.35);
+      --shadow-sm:  0 1px 2px rgb(0 0 0 / 0.30), 0 4px 14px rgb(0 0 0 / 0.30);
+      --glow:       0 6px 18px rgb(10 132 255 / 0.35), 0 1px 4px rgb(0 0 0 / 0.30);
     }
   }
 
@@ -131,7 +133,7 @@
   .hdr-main { display: flex; align-items: center; gap: 14px; padding: 0 2px; }
   .hdr-titles { min-width: 0; flex: 1; }
   .device-name {
-    font-size: 1.6rem; font-weight: 750; letter-spacing: -0.02em; margin: 2px 0 0;
+    font-size: 1.6rem; font-weight: 700; letter-spacing: -0.02em; margin: 2px 0 0;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   }
   .device-sub { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 3px; }
@@ -171,14 +173,14 @@
   .card {
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 22px;
+    border-radius: 20px;
     padding: 18px;
     box-shadow: var(--shadow);
-    -webkit-backdrop-filter: blur(20px) saturate(1.4);
-    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.1);
+    backdrop-filter: blur(20px) saturate(1.1);
   }
   .card h2 {
-    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
     color: var(--ink-3); margin: 0 0 14px;
   }
 
@@ -204,7 +206,7 @@
        aspect ratio while fitting the viewport, so the stage never overflows and the
        img (object-fit: fill) stays perfectly aligned with the click regions. */
     width: 100%; aspect-ratio: var(--map-ar, 1);
-    border-radius: 18px; overflow: hidden;
+    border-radius: 16px; overflow: hidden;
     background: var(--map-bg);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
   }
@@ -224,12 +226,14 @@
     display: flex; align-items: center; justify-content: center; overflow: hidden;
     transition: background 0.18s ease, box-shadow 0.18s ease;
   }
-  .map-region:hover { background: rgb(255 255 255 / 0.12); }
+  .map-region:hover { background: rgb(255 255 255 / 0.06); box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 0.35); }
   .map-label {
-    max-width: 92%; padding: 1px 6px; border-radius: 999px;
-    font-size: 11px; font-weight: 600; line-height: 1.4; white-space: nowrap;
+    max-width: 92%; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.01em; line-height: 1.4; white-space: nowrap;
     overflow: hidden; text-overflow: ellipsis; pointer-events: none;
-    color: #fff; background: rgb(20 24 40 / 0.55); backdrop-filter: blur(2px);
+    color: #2B3340; background: rgb(255 255 255 / 0.55);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    box-shadow: 0 0 0 0.5px rgb(20 22 26 / 0.10);
   }
   .map-region.sel {
     background: color-mix(in srgb, var(--rc, var(--accent)) 26%, transparent);
@@ -251,8 +255,8 @@
   }
   .tab:hover { color: var(--ink); }
   .tab.active {
-    background: var(--card-solid); color: var(--accent);
-    box-shadow: 0 1px 3px rgb(23 60 84 / 0.14);
+    background: var(--card-solid); color: var(--ink);
+    box-shadow: var(--shadow-sm);
   }
 
   .panel { display: none; flex-direction: column; gap: 16px; animation: fade 0.25s ease; }
@@ -265,10 +269,10 @@
     display: inline-flex; align-items: center; gap: 8px;
     font-size: 1.1rem; font-weight: 700; text-transform: capitalize;
   }
-  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--ink-3); box-shadow: 0 0 0 4px transparent; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--ink-3); }
   .dot.active { background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
-  .dot.good { background: var(--good); box-shadow: 0 0 0 4px color-mix(in srgb, var(--good) 20%, transparent); }
-  .dot.bad { background: var(--critical); box-shadow: 0 0 0 4px color-mix(in srgb, var(--critical) 20%, transparent); }
+  .dot.good { background: var(--good); }
+  .dot.bad { background: var(--critical); }
   .pill {
     font-size: 0.72rem; font-weight: 650; padding: 4px 11px; border-radius: 999px;
     background: var(--track); color: var(--ink-2);
@@ -300,7 +304,7 @@
   .meter { height: 8px; border-radius: 999px; background: var(--track); margin-top: 7px; overflow: hidden; }
   .meter i {
     display: block; height: 100%; border-radius: 999px;
-    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    background: var(--accent);
     transition: width 0.6s ease;
   }
 
@@ -308,7 +312,7 @@
   .btn {
     width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     font: inherit; font-size: 0.92rem; font-weight: 650;
-    padding: 13px 14px; border-radius: 14px; cursor: pointer;
+    padding: 13px 14px; border-radius: 12px; cursor: pointer;
     border: 1px solid var(--border); background: var(--card-solid); color: var(--ink);
     box-shadow: var(--shadow-sm);
     transition: transform 0.1s ease, background 0.2s ease;
@@ -316,10 +320,10 @@
   .btn:hover { background: var(--track); }
   .btn:active { transform: translateY(1px); }
   .btn.primary {
-    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    background: var(--accent);
     border-color: transparent; color: var(--accent-ink); box-shadow: var(--glow);
   }
-  .btn.primary:hover { filter: brightness(1.04); background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+  .btn.primary:hover { filter: brightness(1.04); background: var(--accent); }
   .btn svg { width: 15px; height: 15px; fill: currentColor; }
   .btn-row { display: flex; gap: 10px; }
   .btn-row .btn { width: auto; flex: 1; }
@@ -332,14 +336,14 @@
   /* ---------- segmented ---------- */
   .seg-label { font-size: 0.78rem; font-weight: 600; color: var(--ink-2); margin: 16px 0 7px; }
   .seg-label:first-of-type { margin-top: 0; }
-  .seg { display: flex; background: var(--track); border-radius: 13px; padding: 4px; gap: 4px; }
+  .seg { display: flex; background: var(--track); border-radius: 12px; padding: 4px; gap: 4px; }
   .seg button {
     flex: 1; font: inherit; font-size: 0.8rem; font-weight: 600; color: var(--ink-2);
     border: 0; background: transparent; border-radius: 10px; padding: 9px 4px; cursor: pointer;
     transition: color 0.15s ease;
   }
   .seg button:hover { color: var(--ink); }
-  .seg button.active { background: var(--card-solid); color: var(--accent); box-shadow: 0 1px 3px rgb(23 60 84 / 0.16); }
+  .seg button.active { background: var(--card-solid); color: var(--ink); box-shadow: var(--shadow-sm); }
   /* Room mode picker: four equal-width buttons so every label (incl. "Vac + Mop",
      "Two-stage") fits with even spacing instead of being squeezed to the right. */
   #seg-room-mode button {
@@ -362,12 +366,16 @@
   .chip::before {
     content: ""; width: 8px; height: 8px; border-radius: 50%;
     background: var(--accent); opacity: 0.85; flex-shrink: 0;
+    box-shadow: inset 0 0 0 1px rgb(20 22 26 / 0.12);
   }
-  .chip:nth-child(5n+1)::before { background: #12b3c9; }
-  .chip:nth-child(5n+2)::before { background: #7a5cff; }
-  .chip:nth-child(5n+3)::before { background: #f2a51c; }
-  .chip:nth-child(5n+4)::before { background: #16b877; }
-  .chip:nth-child(5n+5)::before { background: #e5678f; }
+  .chip:nth-child(8n+1)::before { background: #9DBFE3; }
+  .chip:nth-child(8n+2)::before { background: #D6BC88; }
+  .chip:nth-child(8n+3)::before { background: #7A9FC4; }
+  .chip:nth-child(8n+4)::before { background: #DACDB8; }
+  .chip:nth-child(8n+5)::before { background: #8FBB97; }
+  .chip:nth-child(8n+6)::before { background: #D6A8AF; }
+  .chip:nth-child(8n+7)::before { background: #90C2BB; }
+  .chip:nth-child(8n+8)::before { background: #B3A8D6; }
   .chip:hover { background: var(--track); }
   .chip:active { transform: scale(0.96); }
   .chip.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
@@ -392,7 +400,7 @@
     margin-bottom: 7px; transition: background 0.3s ease;
   }
   .stage-step.done .bar { background: var(--good); }
-  .stage-step.active .bar { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+  .stage-step.active .bar { background: var(--accent); }
   .stage-step.active { color: var(--accent); }
   .stage-step.done { color: var(--ink-2); }
   .stage-msg { margin-top: 12px; font-size: 0.84rem; color: var(--ink-2); font-weight: 600; min-height: 1.1em; }
@@ -424,7 +432,7 @@
     padding: 12px 22px; border-radius: 30px;
     background: var(--frost); border: 1px solid var(--border);
     box-shadow: var(--shadow);
-    -webkit-backdrop-filter: blur(22px) saturate(1.4); backdrop-filter: blur(22px) saturate(1.4);
+    -webkit-backdrop-filter: blur(22px) saturate(1.1); backdrop-filter: blur(22px) saturate(1.1);
     z-index: 40;
   }
   @media (min-width: 1100px) {
@@ -450,11 +458,10 @@
     width: 84px; height: 84px; margin-top: -30px; border-radius: 50%;
     display: inline-flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px;
     border: 0; cursor: pointer; color: var(--accent-ink);
-    background: linear-gradient(140deg, var(--accent), var(--accent-2));
-    box-shadow: var(--glow), 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent);
+    background: var(--accent);
+    box-shadow: var(--glow);
     font: inherit; font-size: 0.58rem; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
     transition: transform 0.12s ease, filter 0.2s ease;
-    animation: breathe 3.2s ease-in-out infinite;
   }
   .primary-action svg { width: 28px; height: 28px; fill: currentColor; }
   .primary-action .orb-sub {
@@ -464,11 +471,7 @@
   }
   .primary-action:hover { filter: brightness(1.05); }
   .primary-action:active { transform: scale(0.95); }
-  .primary-action:disabled { opacity: 0.6; cursor: default; animation: none; filter: grayscale(0.2); }
-  @keyframes breathe {
-    0%, 100% { box-shadow: var(--glow), 0 0 0 6px color-mix(in srgb, var(--accent) 16%, transparent); }
-    50%      { box-shadow: var(--glow), 0 0 0 12px color-mix(in srgb, var(--accent) 6%, transparent); }
-  }
+  .primary-action:disabled { opacity: 0.6; cursor: default; filter: grayscale(0.2); }
 
   /* ---------- connect sheet ---------- */
   .scrim {
@@ -481,7 +484,7 @@
     position: fixed; left: 50%; bottom: 0; transform: translate(-50%, 100%);
     width: 100%; max-width: 500px; z-index: 60;
     background: var(--card-solid); border: 1px solid var(--border);
-    border-radius: 26px 26px 0 0; padding: 10px 18px calc(24px + env(safe-area-inset-bottom));
+    border-radius: 20px 20px 0 0; padding: 10px 18px calc(24px + env(safe-area-inset-bottom));
     box-shadow: 0 -18px 50px rgb(6 20 30 / 0.3);
     transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
     max-height: 88vh; overflow-y: auto;
@@ -502,7 +505,7 @@
   #toast {
     position: fixed; left: 50%; bottom: 120px; transform: translate(-50%, 16px);
     background: var(--ink); color: var(--bg2); font-size: 0.86rem; font-weight: 650;
-    padding: 11px 20px; border-radius: 14px; opacity: 0; pointer-events: none;
+    padding: 11px 20px; border-radius: 12px; opacity: 0; pointer-events: none;
     transition: opacity 0.25s ease, transform 0.25s ease; max-width: 90vw; z-index: 70;
     box-shadow: var(--shadow);
   }
@@ -830,8 +833,8 @@ function applyRot() { $("map-rotor").style.transform = `rotate(${rot}deg)`; }
 function rotateMap() { rot = (rot + 90) % 360; localStorage.setItem("mapRot", rot); applyRot(); }
 
 /* ---------- rooms ---------- */
-// Chip accents cycle every 5 (mirrors the .chip:nth-child CSS); map regions reuse them.
-const ROOM_COLORS = ["#12b3c9", "#7a5cff", "#f2a51c", "#16b877", "#e5678f"];
+// Chip accents cycle every 8 (mirrors the .chip:nth-child CSS); map regions reuse them.
+const ROOM_COLORS = ["#9DBFE3", "#D6BC88", "#7A9FC4", "#DACDB8", "#8FBB97", "#D6A8AF", "#90C2BB", "#B3A8D6"];
 
 // Chips and map regions share one selection: toggling either syncs the other.
 function toggleRoom(id) {

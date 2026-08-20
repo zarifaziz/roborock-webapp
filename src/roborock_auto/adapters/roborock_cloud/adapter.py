@@ -20,6 +20,7 @@ from typing import Any
 
 from roborock import RoborockCommand
 
+from roborock_auto.adapters.map_text import TextRoom, render_map_text
 from roborock_auto.adapters.roborock_cloud.codes import (
     CLEANING_MODE_NAMES,
     CONSUMABLE_ATTRS,
@@ -235,6 +236,49 @@ class RoborockCloudAdapter:
             # (bboxes/robot marker) must not flip the "placeholder" badge over a real map.
             _LOGGER.warning("live map data fetch failed", exc_info=True)
             return MapData()
+
+    async def get_map_text(self) -> str:
+        try:
+            async def read() -> str:
+                mc = self._v1.map_content
+                await mc.refresh()
+                data = mc.map_data
+                dims = getattr(getattr(data, "image", None), "dimensions", None)
+                width = int(dims.width * dims.scale) if dims else 0
+                height = int(dims.height * dims.scale) if dims else 0
+                if not dims or not width or not height:
+                    return "(no map yet)"
+                raw = getattr(data, "rooms", None) or {}
+                items = raw.items() if hasattr(raw, "items") else enumerate(raw)
+                rooms = [
+                    TextRoom(getattr(r, "name", None) or f"Room {seg_id}", bbox)
+                    for seg_id, r in items
+                    if (bbox := _room_bbox(r, dims, width, height)) is not None
+                ]
+                robot = None
+                pos = getattr(data, "vacuum_position", None)
+                if pos is not None:
+                    try:
+                        rp = dims.to_img(pos)
+                        robot = (rp.x / width, rp.y / height)
+                    except Exception:  # noqa: BLE001 - robot marker is cosmetic
+                        robot = None
+                # Path.path is a list of segments (each a list of map-coord Points); transform
+                # each into the same normalized image space the rooms use.
+                path: list[tuple[float, float]] = []
+                for seg in getattr(getattr(data, "path", None), "path", None) or []:
+                    for p in seg:
+                        try:
+                            ip = dims.to_img(p)
+                            path.append((ip.x / width, ip.y / height))
+                        except Exception:  # noqa: BLE001, S112 - a bad point is just skipped
+                            continue
+                return render_map_text(rooms, robot, path)
+
+            return await self._locked_retry(read)
+        except Exception:
+            _LOGGER.warning("live map text render failed", exc_info=True)
+            return "(map unavailable)"
 
     def map_ok(self) -> bool:
         return self._map_ok

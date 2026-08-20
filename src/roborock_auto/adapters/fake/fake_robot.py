@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from roborock_auto.adapters.map_text import TextRoom, render_map_text
 from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
 from roborock_auto.domain.models import (
     CarpetMode,
@@ -132,6 +133,10 @@ class FakeRobot:
 
     async def get_map_data(self) -> MapData:
         return MapData(rooms=_MAP_ROOMS, robot=Point(50, 50), image_width=100, image_height=100)
+
+    async def get_map_text(self) -> str:
+        rooms = [TextRoom(r.name, r.bbox) for r in _MAP_ROOMS if r.bbox]
+        return render_map_text(rooms, (0.5, 0.5), [])  # robot at centre, no path in fake
 
     async def list_rooms(self) -> list[Room]:
         return list(_ROOMS)

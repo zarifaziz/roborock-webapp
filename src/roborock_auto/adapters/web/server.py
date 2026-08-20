@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from roborock_auto.adapters import get_auth, get_gateway
@@ -101,6 +101,13 @@ async def status(request: Request):
 @app.get("/map-data")
 async def map_data(request: Request):
     return dataclasses.asdict(await _gw(request).get_map_data())
+
+
+@app.get("/map.txt", response_class=PlainTextResponse)
+async def map_txt(request: Request):
+    """A compact text/ASCII map — rooms, robot position, driven-path coverage — cheap to read
+    (curl it, or an agent reads it) instead of decoding the PNG."""
+    return await _gw(request).get_map_text()
 
 
 _MAP_TTL_SEC = 15.0  # the map is fetched at most this often, independent of status polling

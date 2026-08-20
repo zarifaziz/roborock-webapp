@@ -32,6 +32,15 @@ def test_carpet_readback(client):
     assert client.get("/carpet").json() == {"mode": "rise"}
 
 
+def test_map_txt_served(client):
+    r = client.get("/map.txt")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+    body = r.text
+    assert "@ = robot" in body
+    assert "Living Room" in body and "Kitchen" in body and "Hallway" in body
+
+
 def test_map_png_served(client):
     r = client.get("/map.png")
     assert r.status_code == 200

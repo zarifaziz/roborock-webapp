@@ -175,6 +175,13 @@ async def mop(request: Request, mode: str = Body(..., embed=True)):
     return {"ok": True}
 
 
+@app.get("/carpet")
+async def carpet_get(request: Request):
+    # One boot-time read so the Setup carpet toggle can show the device's current setting;
+    # deliberately NOT part of the status poll (it costs a device command each call).
+    return {"mode": (await _gw(request).get_carpet_mode()).value}
+
+
 @app.post("/carpet")
 async def carpet(request: Request, mode: str = Body(..., embed=True)):
     parsed = _parse(CarpetMode, mode)

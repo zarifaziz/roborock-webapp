@@ -19,9 +19,17 @@ def client(monkeypatch):
 def test_status_shape(client):
     body = client.get("/status").json()
     assert set(body) == {
-        "state_name", "battery", "in_cleaning", "docked", "error", "cleaning", "map_ok"
+        "state_name", "battery", "in_cleaning", "docked", "error",
+        "fan_power", "mop_route", "clean_area_m2", "clean_time_s", "dock_error",
+        "cleaning", "map_ok",
     }
     assert body["map_ok"] is True
+
+
+def test_carpet_readback(client):
+    assert client.get("/carpet").json() == {"mode": "avoid"}  # fake's default
+    client.post("/carpet", json={"mode": "rise"})
+    assert client.get("/carpet").json() == {"mode": "rise"}
 
 
 def test_map_png_served(client):

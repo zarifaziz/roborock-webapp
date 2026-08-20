@@ -89,19 +89,28 @@ class FakeRobot:
         return self._machine_status()
 
     def _machine_status(self) -> DeviceStatus:
+        # Settings readback mirrors the last set_* call, like the real status poll does.
+        settings = dict(fan_power=self._fan.value, mop_route=self._mop.value)
         if self._job_start is None:
-            return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True)
+            return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True,
+                                **settings)
         elapsed = self._clock() - self._job_start
         if elapsed >= CLEAN_DURATION:
             self._job_start = None
-            return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True)
+            return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True,
+                                **settings)
         if elapsed < DEPART_DELAY:
             # Job accepted but robot still on the dock: the "looks docked right after
             # trigger" case. in_cleaning is already true, which is what keeps the
             # completion predicate from firing early. Not yet out cleaning (cleaning=False).
-            return DeviceStatus("charging", self._battery, in_cleaning=True, docked=True)
+            return DeviceStatus("charging", self._battery, in_cleaning=True, docked=True,
+                                **settings)
+        # Out cleaning: telemetry grows with elapsed time, so the UI shows live numbers.
+        cleaning_for = elapsed - DEPART_DELAY
         return DeviceStatus(
-            "cleaning", self._battery, in_cleaning=True, docked=False, cleaning=True
+            "cleaning", self._battery, in_cleaning=True, docked=False, cleaning=True,
+            clean_area_m2=round(cleaning_for * 0.6, 1), clean_time_s=int(cleaning_for),
+            **settings,
         )
 
     def map_ok(self) -> bool:

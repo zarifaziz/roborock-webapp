@@ -90,6 +90,24 @@ def error_str(error_code: Any) -> str | None:
     return None if name in ("none", "ok", "0") else name
 
 
+# Wash-dock errors worth a friendlier phrase than the enum name. Anything unmapped falls
+# back to the enum name with underscores replaced, so a new code is still shown, just rawer.
+_DOCK_ERROR_MESSAGES = {
+    "water_empty": "clean water tank empty",           # RoborockDockErrorCode 38
+    "waste_water_tank_full": "waste water tank full",  # RoborockDockErrorCode 39
+}
+
+
+def dock_error_str(code: Any) -> str | None:
+    """RoborockDockErrorCode -> human-ish message, or None when there is no error."""
+    if code is None:
+        return None
+    name = getattr(code, "name", str(code))
+    if name in ("ok", "none", "0"):
+        return None
+    return _DOCK_ERROR_MESSAGES.get(name, name.replace("_", " "))
+
+
 def extract_carpet_value(resp: Any) -> Any:
     """Pull the int out of [{"carpet_clean_mode": n}] (or a bare int, defensively)."""
     if isinstance(resp, list) and resp:

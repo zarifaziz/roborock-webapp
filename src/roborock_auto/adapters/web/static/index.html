@@ -23,6 +23,7 @@
     --accent-ink: #ffffff;
     --accent-soft:rgba(18,179,201,0.14);
     --track:      rgba(15,36,54,0.08);
+    --map-bg:     radial-gradient(120% 120% at 30% 20%, #eef5fb, #e0eaf4);
     --good:       #16b877;
     --warning:    #f2a51c;
     --critical:   #e5484d;
@@ -49,6 +50,7 @@
       --accent-ink: #05242a;
       --accent-soft:rgba(35,199,220,0.16);
       --track:      rgba(255,255,255,0.10);
+      --map-bg:     radial-gradient(120% 120% at 30% 20%, #16232f, #0f1925);
       --good:       #22c98a;
       --warning:    #f4b13a;
       --critical:   #f2686c;
@@ -203,7 +205,7 @@
        img (object-fit: fill) stays perfectly aligned with the click regions. */
     width: 100%; aspect-ratio: var(--map-ar, 1);
     border-radius: 18px; overflow: hidden;
-    background: radial-gradient(120% 120% at 30% 20%, #1e3f74, #13284d);
+    background: var(--map-bg);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
   }
   .map-rotor {

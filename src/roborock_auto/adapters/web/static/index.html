@@ -1878,14 +1878,15 @@ function renderTimeline(list) {
     el.innerHTML = `<div class="sched-empty">Nothing scheduled yet — create a rule above.</div>`;
     return;
   }
-  const now = Date.now();
+  // Live states (pending/claimed) are Upcoming even when their instant has passed —
+  // a blocked firing is still waiting, not history. History is terminal states only.
+  const TERMINAL = new Set(["fired", "failed", "expired", "cancelled"]);
   const upcoming = list
-    .filter((o) => o.state === "pending" && new Date(o.scheduled_for).getTime() >= now)
+    .filter((o) => !TERMINAL.has(o.state))
     .sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
     .slice(0, 8);
-  const shown = new Set(upcoming);
   const recent = list
-    .filter((o) => !shown.has(o))
+    .filter((o) => TERMINAL.has(o.state))
     .sort((a, b) => new Date(b.scheduled_for) - new Date(a.scheduled_for))
     .slice(0, 12);
   const row = (o) => {

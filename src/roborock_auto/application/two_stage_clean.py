@@ -14,11 +14,19 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Callable
+from datetime import datetime
 from typing import Any, Protocol
 
 from roborock_auto.application.retry import AutomationError, DepartRejected, Sleep, with_retry
+from roborock_auto.application.start_clean import utc_now
 from roborock_auto.config import Config
-from roborock_auto.domain.models import CarpetMode, CleaningMode, DeviceStatus
+from roborock_auto.domain.models import (
+    CarpetMode,
+    CleaningMode,
+    CleaningRun,
+    CleanSource,
+    DeviceStatus,
+)
 from roborock_auto.domain.policies import (
     has_departed,
     home_and_idle,
@@ -26,6 +34,7 @@ from roborock_auto.domain.policies import (
     ready_to_start,
     recharging_pending,
 )
+from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.robot import CleaningControlPort, CleaningSettingsPort, RobotStatusPort
 
 Clock = Callable[[], float]
@@ -142,8 +151,11 @@ async def run_two_stage(
     gw: TwoStagePorts,
     config: Config,
     *,
+    cleaning_log: CleaningLogPort,
+    source: CleanSource,
     clock: Clock = time.monotonic,
     sleep: Sleep = asyncio.sleep,
+    now: Callable[[], datetime] = utc_now,
     interval: float | None = None,
     segment_ids: list[int] | None = None,
     log: Callable[[str], None] = print,
@@ -160,6 +172,14 @@ async def run_two_stage(
     # Whole-house departs with start(); a room-scoped run departs with clean_rooms(segments).
     depart = (lambda: gw.clean_rooms(segment_ids)) if segment_ids else gw.start
     scope = "selected rooms" if segment_ids else "whole-house"
+    segments = tuple(segment_ids) if segment_ids else None
+
+    async def record_pass(mode: CleaningMode) -> None:
+        # One Cleaning Run per pass, written here rather than by the caller, so a mop
+        # failure still leaves an honest record that the vacuum pass happened.
+        await cleaning_log.record_run(
+            CleaningRun(source=source, mode=mode, segment_ids=segments, started_at=now())
+        )
 
     start = await gw.get_status()
     if not ready_to_start(start):
@@ -176,6 +196,7 @@ async def run_two_stage(
         await _set_carpet_verified(gw, CarpetMode.RISE, sleep=sleep)
         await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.VACUUM), sleep=sleep)
         await _depart_and_confirm(gw, depart, clock=clock, sleep=sleep, interval=poll, log=log)
+        await record_pass(CleaningMode.VACUUM)
         log("vacuum stage: robot left the dock, waiting for it to finish")
         on_stage("vacuum_waiting")
         await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
@@ -187,6 +208,7 @@ async def run_two_stage(
         await _set_carpet_verified(gw, CarpetMode.AVOID, sleep=sleep)
         await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.MOP), sleep=sleep)
         await _depart_and_confirm(gw, depart, clock=clock, sleep=sleep, interval=poll, log=log)
+        await record_pass(CleaningMode.MOP)
         log("mop stage: robot left the dock, waiting for it to finish")
         on_stage("mop_waiting")
         await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)

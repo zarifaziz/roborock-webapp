@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Protocol, runtime_checkable
 
 from roborock_auto.ports.auth import AuthPort
+from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.lifecycle import ConnectionPort
 from roborock_auto.ports.maintenance import MaintenancePort
 from roborock_auto.ports.mapping import MapPort
@@ -22,6 +23,7 @@ from roborock_auto.ports.robot import (
 __all__ = [
     "AuthPort",
     "CleaningControlPort",
+    "CleaningLogPort",
     "CleaningSettingsPort",
     "ConnectionPort",
     "MaintenancePort",

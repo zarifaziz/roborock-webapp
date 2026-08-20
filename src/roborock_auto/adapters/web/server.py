@@ -18,12 +18,15 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from roborock_auto.adapters import get_auth, get_gateway
+from roborock_auto.adapters.sqlite import SqliteCleaningLog, open_database
+from roborock_auto.application.start_clean import start_clean
 from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
 from roborock_auto.domain.models import (
     CarpetMode,
     CleaningMode,
+    CleanSource,
     ConsumablePart,
     FanPower,
     MopMode,
@@ -54,9 +57,11 @@ async def lifespan(app: FastAPI):
     config = Config.from_env()
     gw = get_gateway(config)
     await gw.connect()
+    db = open_database(config.database_path)
     app.state.gateway = gw
     app.state.auth = get_auth(config)
     app.state.config = config
+    app.state.cleaning_log = SqliteCleaningLog(db, device_id=config.duid or "fake")
     app.state.map_cache = {"at": 0.0, "png": b""}
     app.state.two_stage = _idle_progress()
     app.state.two_stage_task = None
@@ -67,6 +72,7 @@ async def lifespan(app: FastAPI):
         if task is not None:
             task.cancel()
         await gw.close()
+        db.close()
 
 
 app = FastAPI(title="roborock-webapp", lifespan=lifespan)
@@ -147,7 +153,21 @@ async def consumables_reset(request: Request, part: str = Body(..., embed=True))
 
 
 @app.post("/start")
-async def start(request: Request):
+async def start(request: Request, mode: str = Body(..., embed=True)):
+    await start_clean(
+        _gw(request),
+        cleaning_log=request.app.state.cleaning_log,
+        source=CleanSource.APP,
+        mode=_parse(CleaningMode, mode),
+        segment_ids=None,
+    )
+    return {"ok": True}
+
+
+@app.post("/resume")
+async def resume(request: Request):
+    # Resume is the same firmware command as start, but it continues the paused job:
+    # no mode change and no new Cleaning Run.
     await _gw(request).start()
     return {"ok": True}
 
@@ -284,10 +304,14 @@ async def clean_segments(
         raise HTTPException(422, "segment_ids must not be empty")
     if not 1 <= repeat <= 3:
         raise HTTPException(422, "repeat must be between 1 and 3")
-    parsed = _parse(CleaningMode, mode)
-    gw = _gw(request)
-    await gw.set_cleaning_mode(parsed)
-    await gw.clean_rooms(segment_ids, repeat=repeat)
+    await start_clean(
+        _gw(request),
+        cleaning_log=request.app.state.cleaning_log,
+        source=CleanSource.APP,
+        mode=_parse(CleaningMode, mode),
+        segment_ids=segment_ids,
+        repeat=repeat,
+    )
     return {"ok": True}
 
 
@@ -307,7 +331,9 @@ async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, 
     async def runner() -> None:
         try:
             await run_two_stage(
-                gw, config, segment_ids=segment_ids or None, on_stage=on_stage, log=_LOGGER.info
+                gw, config,
+                cleaning_log=request.app.state.cleaning_log, source=CleanSource.APP,
+                segment_ids=segment_ids or None, on_stage=on_stage, log=_LOGGER.info,
             )
         except Exception as exc:  # noqa: BLE001 - surface any failure to the status endpoint
             progress.update(stage="error", message=str(exc), error=str(exc))

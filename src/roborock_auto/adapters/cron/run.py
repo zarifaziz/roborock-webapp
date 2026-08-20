@@ -9,22 +9,27 @@ import asyncio
 import sys
 
 from roborock_auto.adapters import get_gateway
+from roborock_auto.adapters.sqlite import SqliteCleaningLog, open_database
 from roborock_auto.application.retry import AutomationError
 from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
+from roborock_auto.domain.models import CleanSource
 
 
 async def main() -> int:
     config = Config.from_env()
     gw = get_gateway(config)
+    db = open_database(config.database_path)
+    cleaning_log = SqliteCleaningLog(db, device_id=config.duid or "fake")
     await gw.connect()
     try:
-        await run_two_stage(gw, config)
+        await run_two_stage(gw, config, cleaning_log=cleaning_log, source=CleanSource.CRON)
     except AutomationError as e:
         print(f"automation aborted: {e}", file=sys.stderr)
         return 1
     finally:
         await gw.close()
+        db.close()
     return 0
 
 

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 from roborock_auto.adapters.fake import FakeRobot
+from roborock_auto.adapters.sqlite import SqliteCleaningLog, open_database
 from roborock_auto.application.retry import AutomationError
 from roborock_auto.application.two_stage_clean import (
     STATUS_FAULT_BUDGET,
@@ -13,7 +16,13 @@ from roborock_auto.application.two_stage_clean import (
     wait_for_return,
 )
 from roborock_auto.config import Config
-from roborock_auto.domain.models import CarpetMode, CleaningMode, DeviceStatus
+from roborock_auto.domain.models import (
+    CarpetMode,
+    CleaningMode,
+    CleaningRun,
+    CleanSource,
+    DeviceStatus,
+)
 
 
 class FakeClock:
@@ -31,10 +40,14 @@ def _config(**over) -> Config:
     base = dict(
         gateway="fake", email="", duid="",
         carpet_rise_value=0, carpet_avoid_value=1, poll_interval_sec=5.0, app_port=8000,
-        session_path="user_data.json",
+        session_path="user_data.json", database_path=":memory:",
     )
     base.update(over)
     return Config(**base)
+
+
+def _log() -> SqliteCleaningLog:
+    return SqliteCleaningLog(open_database(":memory:"), device_id="fake")
 
 
 CLEANING = DeviceStatus("cleaning", 90, in_cleaning=True, docked=False, cleaning=True)
@@ -310,7 +323,8 @@ async def test_two_stage_happy_path_ordering():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)  # machine mode: docked -> cleaning -> docked
     await run_two_stage(
-        gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
     )
     kinds = gw.commands
     assert ("set_carpet_mode", CarpetMode.RISE) in kinds
@@ -334,7 +348,8 @@ async def test_two_stage_reports_stage_sequence():
     gw = FakeRobot(clock=clock)
     stages: list[str] = []
     await run_two_stage(
-        gw, _config(), clock=clock, sleep=clock.sleep, interval=5,
+        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        clock=clock, sleep=clock.sleep, interval=5,
         log=lambda m: None, on_stage=stages.append,
     )
     assert stages == ["vacuuming", "vacuum_waiting", "mopping", "mop_waiting", "done"]
@@ -345,7 +360,8 @@ async def test_two_stage_scoped_departs_with_clean_rooms():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)
     await run_two_stage(
-        gw, _config(), clock=clock, sleep=clock.sleep, interval=5,
+        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        clock=clock, sleep=clock.sleep, interval=5,
         segment_ids=[16, 17], log=lambda m: None,
     )
     departs = [c for c in gw.commands if c[0] in ("start", "clean_rooms")]
@@ -375,7 +391,8 @@ async def test_two_stage_retries_a_dropped_depart():
     clock = FakeClock()
     gw = _DropFirstDepartRobot(clock=clock, drops=1)  # drop only the vacuum stage's first try
     await run_two_stage(
-        gw, _config(), clock=clock, sleep=clock.sleep, interval=5, segment_ids=[7],
+        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        clock=clock, sleep=clock.sleep, interval=5, segment_ids=[7],
         log=lambda m: None,
     )
     departs = [c for c in gw.commands if c[0] == "clean_rooms"]
@@ -394,7 +411,8 @@ async def test_two_stage_aborts_if_carpet_mode_does_not_take():
     gw.set_carpet_mode = stuck_carpet  # get_carpet_mode still returns the old AVOID
     with pytest.raises(AutomationError, match="did not take"):
         await run_two_stage(
-            gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
 
 
@@ -405,7 +423,8 @@ async def test_two_stage_rejects_a_coarse_poll_interval():
     gw = FakeRobot(clock=clock)
     with pytest.raises(AutomationError, match="poll interval"):
         await run_two_stage(
-            gw, _config(poll_interval_sec=30.0), clock=clock, sleep=clock.sleep,
+            gw, _config(poll_interval_sec=30.0), cleaning_log=_log(), source=CleanSource.APP,
+            clock=clock, sleep=clock.sleep,
             log=lambda m: None,
         )
 
@@ -416,7 +435,8 @@ async def test_two_stage_aborts_if_not_docked_at_start():
     gw.set_timeline([(0, CLEANING)])  # already busy
     with pytest.raises(AutomationError, match="not docked"):
         await run_two_stage(
-            gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
 
 
@@ -435,7 +455,8 @@ async def test_two_stage_docks_and_restores_carpet_on_abort():
     gw = _ErrorsMidCleanRobot(clock=clock)
     with pytest.raises(AutomationError, match="brush stuck"):
         await run_two_stage(
-            gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
     assert ("dock",) in gw.commands
     # The recovery Avoid comes after the vacuum stage's Rise, and is the final carpet write.
@@ -456,7 +477,8 @@ async def test_two_stage_cleanup_failure_does_not_mask_the_original_error():
     gw.dock = broken_dock
     with pytest.raises(AutomationError, match="brush stuck"):
         await run_two_stage(
-            gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
 
 
@@ -464,6 +486,62 @@ async def test_two_stage_happy_path_does_not_dock_or_reset():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)
     await run_two_stage(
-        gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
+        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
     )
     assert ("dock",) not in gw.commands
+
+
+RUN_EPOCH = datetime(2026, 8, 20, 9, 0, tzinfo=UTC)
+
+
+def _wall_clock(clock: FakeClock):
+    """A wall clock that tracks the fake monotonic clock, so started_at is deterministic."""
+    return lambda: RUN_EPOCH + timedelta(seconds=clock.now)
+
+
+async def test_two_stage_records_one_cleaning_run_per_pass():
+    """Each pass writes its own Cleaning Run with its real mode — vacuum then mop — once
+    the robot has genuinely departed for that pass. The recording lives in the procedure,
+    so every caller (button or cron) gets the same trace."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    log = _log()
+    await run_two_stage(
+        gw, _config(), cleaning_log=log, source=CleanSource.CRON,
+        clock=clock, sleep=clock.sleep, interval=5, segment_ids=[16, 17],
+        log=lambda m: None, now=_wall_clock(clock),
+    )
+    assert await log.list_runs() == [
+        CleaningRun(source=CleanSource.CRON, mode=CleaningMode.VACUUM,
+                    segment_ids=(16, 17), started_at=RUN_EPOCH + timedelta(seconds=10)),
+        CleaningRun(source=CleanSource.CRON, mode=CleaningMode.MOP,
+                    segment_ids=(16, 17), started_at=RUN_EPOCH + timedelta(seconds=45)),
+    ]
+
+
+class _MopRefusedRobot(FakeRobot):
+    """Machine-mode robot whose firmware refuses to enter mop mode."""
+
+    async def set_cleaning_mode(self, mode: CleaningMode) -> None:
+        if mode is CleaningMode.MOP:
+            raise ConnectionError("mop mode refused")
+        await super().set_cleaning_mode(mode)
+
+
+async def test_failed_mop_pass_still_records_the_vacuum_pass():
+    """A mop pass that never starts must leave the vacuum's Cleaning Run in place: one
+    honest record of what actually happened, not zero and not a synthetic pair."""
+    clock = FakeClock()
+    gw = _MopRefusedRobot(clock=clock)
+    log = _log()
+    with pytest.raises(ConnectionError, match="mop mode refused"):
+        await run_two_stage(
+            gw, _config(), cleaning_log=log, source=CleanSource.APP,
+            clock=clock, sleep=clock.sleep, interval=5,
+            log=lambda m: None, now=_wall_clock(clock),
+        )
+    assert await log.list_runs() == [
+        CleaningRun(source=CleanSource.APP, mode=CleaningMode.VACUUM,
+                    segment_ids=None, started_at=RUN_EPOCH + timedelta(seconds=10)),
+    ]

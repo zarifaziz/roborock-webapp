@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC
+
 import pytest
 from fastapi.testclient import TestClient
 
 from roborock_auto.adapters.web.server import app
-from roborock_auto.domain.models import CleaningMode, ConsumablePart
+from roborock_auto.domain.models import CleaningMode, CleaningRun, CleanSource, ConsumablePart
 
 
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("DATABASE_PATH", ":memory:")
     with TestClient(app) as c:
         yield c
+
+
+def _runs(client) -> list[CleaningRun]:
+    return asyncio.run(client.app.state.cleaning_log.list_runs())
 
 
 def test_status_shape(client):
@@ -81,18 +89,67 @@ def test_rooms_and_routines(client):
 
 
 def test_commands_take_effect(client):
-    assert client.post("/start").json() == {"ok": True}
+    assert client.post("/start", json={"mode": "vacuum"}).json() == {"ok": True}
     assert client.get("/status").json()["in_cleaning"] is True
     assert client.post("/dock").json() == {"ok": True}
     assert client.get("/status").json()["in_cleaning"] is False
 
 
 def test_stop_ends_job(client):
-    assert client.post("/start").json() == {"ok": True}
+    assert client.post("/start", json={"mode": "vacuum"}).json() == {"ok": True}
     assert client.get("/status").json()["in_cleaning"] is True
     assert client.post("/stop").json() == {"ok": True}
     assert client.get("/status").json()["in_cleaning"] is False
-    assert client.app.state.gateway.commands == [("connect",), ("start",), ("stop",)]
+    assert client.app.state.gateway.commands == [
+        ("connect",),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("start",),
+        ("stop",),
+    ]
+
+
+def test_start_requires_a_mode(client):
+    # A whole-house clean must name its cleaning mode; without it the robot would inherit
+    # whatever mode it was last in.
+    assert client.post("/start").status_code == 422
+    assert client.post("/start", json={"mode": "bogus"}).status_code == 422
+
+
+def test_start_records_a_cleaning_run(client):
+    assert client.post("/start", json={"mode": "vacuum"}).json() == {"ok": True}
+    runs = _runs(client)
+    assert runs == [
+        CleaningRun(
+            source=CleanSource.APP,
+            mode=CleaningMode.VACUUM,
+            segment_ids=None,  # whole house
+            started_at=runs[0].started_at,
+        ),
+    ]
+    assert runs[0].started_at.tzinfo == UTC
+
+
+def test_resume_sends_a_bare_start_and_records_nothing(client):
+    # Resuming a paused job is not a new Clean: no mode change, no Cleaning Run.
+    assert client.post("/resume").json() == {"ok": True}
+    assert client.app.state.gateway.commands == [("connect",), ("start",)]
+    assert _runs(client) == []
+
+
+def test_clean_segments_records_a_cleaning_run(client):
+    assert client.post(
+        "/clean/segments", json={"segment_ids": [16, 17], "mode": "mop"}
+    ).json() == {"ok": True}
+    runs = _runs(client)
+    assert runs == [
+        CleaningRun(
+            source=CleanSource.APP,
+            mode=CleaningMode.MOP,
+            segment_ids=(16, 17),
+            started_at=runs[0].started_at,
+        ),
+    ]
+    assert runs[0].started_at.tzinfo == UTC
 
 
 def test_find_records_command_without_state_change(client):

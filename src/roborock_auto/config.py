@@ -45,6 +45,7 @@ class Config:
     poll_interval_sec: float
     app_port: int
     session_path: str       # where login.py writes / live mode reads user_data.json
+    database_path: str      # SQLite file recording what this app did (cleaning runs)
 
     @classmethod
     def from_env(cls) -> Config:
@@ -63,4 +64,5 @@ class Config:
             poll_interval_sec=float(_get("POLL_INTERVAL_SEC", "5")),
             app_port=int(_get("APP_PORT", "8000")),
             session_path=_get("SESSION_PATH", "user_data.json"),
+            database_path=_get("DATABASE_PATH", "roborock.db"),
         )

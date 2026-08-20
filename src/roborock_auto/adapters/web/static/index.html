@@ -307,6 +307,17 @@
     background: var(--accent);
     transition: width 0.6s ease;
   }
+  /* per-consumable reset affordance, next to the % readout */
+  .reset-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    font: inherit; font-size: 0.7rem; font-weight: 600; color: var(--ink-2);
+    border: 1px solid var(--border); background: var(--card-solid);
+    border-radius: 999px; padding: 3px 9px; margin-left: 9px; cursor: pointer;
+    box-shadow: var(--shadow-sm); transition: color 0.15s ease, border-color 0.15s ease;
+  }
+  .reset-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .reset-btn:active { transform: scale(0.95); }
+  .reset-btn svg { width: 11px; height: 11px; fill: currentColor; }
 
   /* ---------- buttons ---------- */
   .btn {
@@ -665,7 +676,13 @@
             <button data-v="vac_and_mop" title="Vacuum and mop together">Vac + Mop</button>
             <button data-v="two-stage" class="active" title="Vacuum, then mop avoiding carpet">Two-stage</button>
           </div>
-          <p class="seg-help">Two-stage sets carpet automatically — Rise while vacuuming, then Avoid while mopping (overrides the Setup carpet setting for this run). The Setup carpet setting applies to the Vacuum / Mop modes.</p>
+          <div class="seg-label">Passes</div>
+          <div class="seg" id="seg-passes">
+            <button data-v="1" class="active" title="Clean each room once">1×</button>
+            <button data-v="2" title="Clean each room twice">2×</button>
+            <button data-v="3" title="Clean each room three times">3×</button>
+          </div>
+          <p class="seg-help">Two-stage sets carpet automatically — Rise while vacuuming, then Avoid while mopping (overrides the Setup carpet setting for this run). The Setup carpet setting applies to the Vacuum / Mop modes. Passes applies to the Vacuum / Mop / Vac + Mop modes.</p>
           <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
         </div>
       </section>
@@ -858,6 +875,10 @@ function roomMode() {
   const b = $("seg-room-mode").querySelector("button.active");
   return b ? b.dataset.v : "two-stage";
 }
+function roomPasses() {
+  const b = $("seg-passes").querySelector("button.active");
+  return b ? Number(b.dataset.v) : 1;
+}
 
 async function buildMapRegions() {
   let data, names = {};
@@ -891,7 +912,7 @@ function cleanRooms() {
   if (mode === "two-stage") {
     startTwoStage(ids);  // switches to Clean tab + drives the 5-step progress poller
   } else {
-    post("/clean/segments", { segment_ids: ids, mode }, `cleaning ${ids.length} room${ids.length > 1 ? "s" : ""}`);
+    post("/clean/segments", { segment_ids: ids, mode, repeat: roomPasses() }, `cleaning ${ids.length} room${ids.length > 1 ? "s" : ""}`);
   }
 }
 function syncCleanBtn() {
@@ -1068,6 +1089,39 @@ async function discover() {
     </div>`;
 }
 
+/* ---------- consumables ---------- */
+// [label, pct field, reset part]. A null part has no reset: the dock consumables are not
+// resettable via RESET_CONSUMABLE on this firmware.
+const CONSUMABLE_ITEMS = [
+  ["Main brush", "main_brush_pct", "main_brush"],
+  ["Side brush", "side_brush_pct", "side_brush"],
+  ["Filter", "filter_pct", "filter"],
+  ["Sensors", "sensor_pct", "sensor"],
+  ["Dock water filter", "strainer_pct", null],
+  ["Dock cleaning brush", "cleaning_brush_pct", null],
+];
+const RESET_ICON = '<svg viewBox="0 0 16 16"><path d="M8 3V0.8L4.7 4 8 7.2V5a4 4 0 1 1-3.87 5h-1.53A5.5 5.5 0 1 0 8 3z"/></svg>';
+
+async function loadConsumables() {
+  let c;
+  try { c = await (await fetch("/consumables")).json(); } catch { return; }
+  $("cons").innerHTML = CONSUMABLE_ITEMS
+    .filter(([, key]) => c[key] != null)
+    .map(([name, key, part]) => `
+    <div>
+      <div class="meter-row"><b>${name}</b><span>${c[key]}%${part ? `
+        <button class="reset-btn" title="Reset ${name.toLowerCase()} life after replacing or cleaning it"
+          onclick="resetConsumable('${part}', '${name}')">${RESET_ICON}Reset</button>` : ""}
+      </span></div>
+      <div class="meter"><i style="width:${c[key]}%"></i></div>
+    </div>`).join("");
+}
+
+async function resetConsumable(part, name) {
+  if (!liveConfirm(`Reset the ${name.toLowerCase()} life counter to 100%? Do this after replacing or cleaning it.`)) return;
+  if (await post("/consumables/reset", { part }, `${name} life reset`)) loadConsumables();
+}
+
 /* ---------- two-stage clean ---------- */
 const TWO_STAGE_ORDER = { vacuuming: 0, vacuum_waiting: 1, mopping: 2, mop_waiting: 3, done: 4 };
 let twoStageTimer = null;
@@ -1152,27 +1206,20 @@ async function boot() {
   });
   await buildMapRegions();
 
-  $("seg-room-mode").addEventListener("click", (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-    [...$("seg-room-mode").children].forEach((b) => b.classList.toggle("active", b === btn));
-  });
+  // Local-only pickers (no POST until the clean is started): mode + passes.
+  for (const segId of ["seg-room-mode", "seg-passes"]) {
+    $(segId).addEventListener("click", (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+      [...$(segId).children].forEach((b) => b.classList.toggle("active", b === btn));
+    });
+  }
 
   const routines = await (await fetch("/routines")).json();
   $("routines").innerHTML = routines.map((r) =>
     `<button class="btn" onclick="post('/routine',{routine_id:${r.id}},'${r.name} started')">${r.name}</button>`).join("");
 
-  const c = await (await fetch("/consumables")).json();
-  const items = [
-    ["Main brush", c.main_brush_pct], ["Side brush", c.side_brush_pct], ["Filter", c.filter_pct],
-    ["Sensors", c.sensor_pct], ["Dock water filter", c.strainer_pct],
-    ["Dock cleaning brush", c.cleaning_brush_pct],
-  ].filter(([, pct]) => pct != null);
-  $("cons").innerHTML = items.map(([name, pct]) => `
-    <div>
-      <div class="meter-row"><b>${name}</b><span>${pct}%</span></div>
-      <div class="meter"><i style="width:${pct}%"></i></div>
-    </div>`).join("");
+  await loadConsumables();
 
   // Carpet setting: one boot-time device read (not per poll — each read costs a command).
   try {

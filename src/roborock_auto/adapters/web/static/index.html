@@ -473,6 +473,50 @@
   .stage-cancel:hover { text-decoration: underline; }
   .stage-cancel:active { transform: scale(0.97); }
 
+  /* ---------- schedule ---------- */
+  .sched-health {
+    display: flex; align-items: center; gap: 8px; padding: 0 6px;
+    font-size: 0.78rem; font-weight: 600; color: var(--ink-2);
+  }
+  .sched-health .dot { flex-shrink: 0; }
+  .sched-list { display: flex; flex-direction: column; gap: 10px; }
+  .sched-row {
+    display: flex; flex-direction: column; gap: 4px; padding: 10px 13px;
+    border: 1px solid var(--border); border-radius: 12px;
+    background: var(--card-solid); box-shadow: var(--shadow-sm);
+  }
+  .sched-row .row-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .sched-row .row-top b {
+    flex: 1; min-width: 0; font-size: 0.88rem; font-weight: 650;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .sched-row .reset-btn { margin-left: 0; }
+  .sched-sub { font-size: 0.76rem; font-weight: 600; color: var(--ink-3); line-height: 1.45; }
+  .sched-head { font-size: 0.72rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-3); margin-top: 4px; }
+  .sched-empty { font-size: 0.8rem; color: var(--ink-3); }
+  .pill.good { background: color-mix(in srgb, var(--good) 14%, transparent); color: var(--good); }
+  .pill.warn { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+  .pill.bad { background: color-mix(in srgb, var(--critical) 13%, transparent); color: var(--critical); }
+  #overdue-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: var(--shadow-sm); }
+  .form-row { display: flex; gap: 10px; align-items: flex-end; }
+  .form-row .field { flex: 1; min-width: 0; }
+  .form-row .btn { width: auto; flex-shrink: 0; }
+  .days { display: flex; gap: 5px; }
+  .days button {
+    flex: 1; min-width: 0; font: inherit; font-size: 0.72rem; font-weight: 700;
+    padding: 9px 0; border-radius: 10px; cursor: pointer;
+    border: 1px solid var(--border); background: var(--card-solid); color: var(--ink-2);
+    transition: color 0.15s ease, background 0.2s ease;
+  }
+  .days button.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+  /* display:flex/inline-flex on .chips/.btn would defeat the hidden attribute */
+  #rule-rooms[hidden], #rule-new-btn[hidden] { display: none; }
+  .form-error {
+    display: none; margin-top: 12px; padding: 10px 13px; border-radius: 12px;
+    background: color-mix(in srgb, var(--critical) 12%, transparent);
+    color: var(--critical); font-size: 0.85rem; font-weight: 600;
+  }
+
   /* ---------- connect ---------- */
   .field { display: flex; flex-direction: column; gap: 6px; }
   .field label { font-size: 0.78rem; font-weight: 600; color: var(--ink-2); }
@@ -672,6 +716,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="clean" onclick="showTab('clean')">Clean</button>
         <button class="tab" data-tab="rooms" onclick="showTab('rooms')">Rooms</button>
+        <button class="tab" data-tab="schedule" onclick="showTab('schedule')">Schedule</button>
         <button class="tab" data-tab="routines" onclick="showTab('routines')">Routines</button>
         <button class="tab" data-tab="setup" onclick="showTab('setup')">Setup</button>
       </div>
@@ -736,6 +781,87 @@
           </div>
           <p class="seg-help">Two-stage sets carpet automatically — Rise while vacuuming, then Avoid while mopping (overrides the Setup carpet setting for this run). The Setup carpet setting applies to the Vacuum / Mop modes. Passes applies to the Vacuum / Mop / Vac + Mop modes.</p>
           <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
+        </div>
+      </section>
+
+      <!-- SCHEDULE -->
+      <section class="panel" data-panel="schedule">
+        <div class="sched-health" id="sched-health"><span class="dot"></span><span>Scheduler — connecting…</span></div>
+
+        <div class="card">
+          <h2>Overdue</h2>
+          <p class="note">Every room with a Room Interval, sorted worst-first by Priority.</p>
+          <div class="sched-list" id="overdue-list"><div class="sched-empty">Loading…</div></div>
+          <div class="seg-label">Mode</div>
+          <div class="seg" id="seg-overdue-mode">
+            <button data-v="vacuum" class="active" title="Vacuum only">Vacuum</button>
+            <button data-v="mop" title="Mop only">Mop</button>
+            <button data-v="vac_and_mop" title="Vacuum and mop together">Vac + Mop</button>
+          </div>
+          <button class="btn primary" id="overdue-btn" style="margin-top: 14px" disabled onclick="cleanAllOverdue()">Clean all overdue</button>
+        </div>
+
+        <div class="card">
+          <h2>Room intervals</h2>
+          <p class="note">How often each room should be cleaned. A room past its interval shows up above as overdue.</p>
+          <div class="form-row">
+            <div class="field">
+              <label for="interval-room">Room</label>
+              <select class="input" id="interval-room"></select>
+            </div>
+            <div class="field" style="max-width: 112px">
+              <label for="interval-days">Every (days)</label>
+              <input class="input" id="interval-days" type="number" min="0.5" step="0.5" placeholder="2" />
+            </div>
+            <button class="btn" onclick="saveInterval()">Set</button>
+          </div>
+          <div class="sched-list" id="interval-list" style="margin-top: 14px"></div>
+        </div>
+
+        <div class="card">
+          <h2>Schedule rules</h2>
+          <div class="sched-list" id="rule-list"><div class="sched-empty">Loading…</div></div>
+          <button class="btn" id="rule-new-btn" style="margin-top: 14px" onclick="openRuleForm()">New rule</button>
+          <div id="rule-form" hidden>
+            <div class="field" style="margin-top: 14px">
+              <label for="rule-name">Name</label>
+              <input class="input" id="rule-name" type="text" placeholder="Weekday morning vacuum" />
+            </div>
+            <div class="seg-label">Days</div>
+            <div class="days" id="rule-days">
+              <button data-v="monday">Mon</button><button data-v="tuesday">Tue</button>
+              <button data-v="wednesday">Wed</button><button data-v="thursday">Thu</button>
+              <button data-v="friday">Fri</button><button data-v="saturday">Sat</button>
+              <button data-v="sunday">Sun</button>
+            </div>
+            <div class="field" style="margin-top: 14px">
+              <label for="rule-time">Time</label>
+              <input class="input" id="rule-time" type="time" value="09:30" />
+            </div>
+            <div class="seg-label">Rooms</div>
+            <div class="seg" id="seg-rule-scope">
+              <button data-v="whole" class="active" title="Clean the whole house">Whole house</button>
+              <button data-v="rooms" title="Clean chosen rooms only">Chosen rooms</button>
+            </div>
+            <div class="chips" id="rule-rooms" style="margin-top: 10px" hidden></div>
+            <div class="seg-label">Mode</div>
+            <div class="seg" id="seg-rule-mode">
+              <button data-v="vacuum" class="active" title="Vacuum only">Vacuum</button>
+              <button data-v="mop" title="Mop only">Mop</button>
+              <button data-v="vac_and_mop" title="Vacuum and mop together">Vac + Mop</button>
+            </div>
+            <div class="form-error" id="rule-error"></div>
+            <div class="form-row" style="margin-top: 14px">
+              <button class="btn primary" style="flex: 1" onclick="saveRule()">Save rule</button>
+              <button class="btn" style="flex: 1" onclick="closeRuleForm()">Cancel</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Timeline</h2>
+          <p class="note">Upcoming and recent firings. A blocked firing stays pending with its reason shown — never silently dropped.</p>
+          <div class="sched-list" id="timeline-list"><div class="sched-empty">Loading…</div></div>
         </div>
       </section>
 
@@ -845,6 +971,7 @@ const $ = (id) => document.getElementById(id);
 function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
+  if (name === "schedule") refreshSchedule();
 }
 
 /* ---------- connect sheet ---------- */
@@ -1519,6 +1646,280 @@ async function cancelTwoStage() {
   pollTwoStage();
 }
 
+/* ---------- schedule ---------- */
+let roomsCache = [];  // set in boot; the schedule cards always speak room names, not Segment numbers
+function roomName(id) {
+  const room = roomsCache.find((r) => r.segment_id === id);
+  return room ? room.name : `room ${id}`;
+}
+
+// Like post(), but returns the parsed body and surfaces the server's error detail —
+// the schedule endpoints put their validation messages there.
+async function api(path, method = "GET", body) {
+  try {
+    const r = await fetch(path, {
+      method,
+      headers: body === undefined ? undefined : { "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    let data = null;
+    try { data = await r.json(); } catch { /* empty body */ }
+    if (!r.ok) return { ok: false, status: r.status, detail: (data && data.detail) || `${path} failed (${r.status})` };
+    return { ok: true, data };
+  } catch { return { ok: false, status: 0, detail: "No connection — is the app still running?" }; }
+}
+
+function segValue(segId) {
+  const b = $(segId).querySelector("button.active");
+  return b ? b.dataset.v : null;
+}
+function markSeg(segId, v) {
+  [...$(segId).children].forEach((b) => b.classList.toggle("active", b.dataset.v === v));
+}
+
+const DAY_SHORT = { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu", friday: "Fri", saturday: "Sat", sunday: "Sun" };
+const MODE_LABEL = { vacuum: "Vacuum", mop: "Mop", vac_and_mop: "Vac + Mop" };
+
+function fmtWhen(iso) {
+  return new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+}
+function fmtAgo(iso) {
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  if (h < 48) return `${h} h ago`;
+  return `${Math.round(h / 24)} days ago`;
+}
+const plural = (n, unit) => `${n} ${unit}${n === 1 ? "" : "s"}`;
+
+function renderHealth(h) {
+  const erroring = h.consecutive_errors > 0;
+  const dot = erroring ? "bad" : (h.last_tick_at ? "good" : "");
+  const tick = h.last_tick_at ? `last tick ${fmtAgo(h.last_tick_at)}` : "waiting for first tick";
+  const err = erroring ? ` · erroring (${h.consecutive_errors} in a row, retrying in ${h.current_backoff_seconds}s)` : "";
+  $("sched-health").innerHTML = `<span class="dot ${dot}"></span><span>Scheduler · ${tick}${err} · ${h.timezone}</span>`;
+}
+
+/* --- overdue --- */
+function renderOverdue(list) {
+  $("overdue-btn").disabled = !list.some((e) => e.overdue);
+  const el = $("overdue-list");
+  if (!list.length) {
+    el.innerHTML = `<div class="sched-empty">No Room Intervals yet — set one below to start tracking.</div>`;
+    return;
+  }
+  el.innerHTML = list.map((e) => {
+    const mark = e.never_cleaned
+      ? `<span class="pill bad">never cleaned</span>`
+      : e.overdue ? `<span class="pill warn">overdue</span>` : `<span class="pill good">ok</span>`;
+    const pr = e.never_cleaned ? "max" : `${e.priority.toFixed(2)}×`;
+    const last = e.never_cleaned ? "never cleaned" : `last cleaned ${fmtAgo(e.last_cleaned_at)}`;
+    return `<div class="sched-row">
+      <div class="row-top"><b>${roomName(e.segment_id)}</b>${mark}<span class="pill">priority ${pr}</span></div>
+      <div class="sched-sub">${last} · every ${plural(e.interval_days, "day")}</div>
+    </div>`;
+  }).join("");
+}
+
+async function cleanAllOverdue() {
+  if (!liveConfirm("Clean every overdue room now?")) return;
+  const res = await api("/clean/overdue", "POST", { mode: segValue("seg-overdue-mode") });
+  if (!res.ok) { toast(res.detail, true); return; }
+  const n = (res.data.segment_ids || []).length;
+  toast(n ? `Cleaning ${plural(n, "overdue room")}` : "Nothing is overdue right now");
+  refreshStatus();
+  refreshSchedule();
+}
+
+/* --- room intervals --- */
+function renderIntervals(list) {
+  const el = $("interval-list");
+  if (!list.length) { el.innerHTML = `<div class="sched-empty">No intervals set.</div>`; return; }
+  el.innerHTML = list.map((i) => `<div class="sched-row"><div class="row-top">
+      <b>${roomName(i.segment_id)}</b>
+      <span class="pill">every ${plural(i.interval_days, "day")}</span>
+      <button class="reset-btn" title="Edit this interval" onclick="editInterval(${i.segment_id}, ${i.interval_days})">Edit</button>
+      <button class="reset-btn" title="Stop tracking this room" onclick="removeInterval(${i.segment_id})">Remove</button>
+    </div></div>`).join("");
+}
+function editInterval(segmentId, days) {
+  $("interval-room").value = String(segmentId);
+  $("interval-days").value = days;
+  $("interval-days").focus();
+}
+async function saveInterval() {
+  const segmentId = Number($("interval-room").value);
+  const days = Number($("interval-days").value);
+  if (!(days > 0)) { toast("The interval must be a positive number of days", true); return; }
+  const res = await api("/intervals", "POST", { segment_id: segmentId, interval_days: days });
+  if (!res.ok) { toast(res.detail, true); return; }
+  toast(`${roomName(segmentId)} — every ${plural(days, "day")}`);
+  $("interval-days").value = "";
+  refreshSchedule();
+}
+async function removeInterval(segmentId) {
+  const res = await api(`/intervals/${segmentId}`, "DELETE");
+  if (!res.ok) { toast(res.detail, true); return; }
+  toast(`${roomName(segmentId)} — interval removed`);
+  refreshSchedule();
+}
+
+/* --- schedule rules --- */
+let rulesCache = [];
+let editingRuleId = null;   // null = the form is creating, not editing
+let editingEnabled = true;  // preserved through an edit so Save does not re-enable a paused rule
+
+function renderRules(rules) {
+  rulesCache = rules;
+  const el = $("rule-list");
+  if (!rules.length) { el.innerHTML = `<div class="sched-empty">No rules yet.</div>`; return; }
+  el.innerHTML = rules.map((r) => {
+    const days = r.recurrence.days.map((d) => DAY_SHORT[d]).join(" ");
+    const scope = r.action.segment_ids == null ? "whole house" : r.action.segment_ids.map(roomName).join(", ");
+    const next = !r.enabled ? `<span class="pill">disabled</span>`
+      : r.next_fires_at ? `<span class="pill on">next ${fmtWhen(r.next_fires_at)}</span>`
+      : `<span class="pill">no upcoming firing</span>`;
+    return `<div class="sched-row">
+      <div class="row-top"><b>${r.name}</b>${next}</div>
+      <div class="sched-sub">${days} at ${r.recurrence.at} · ${MODE_LABEL[r.action.mode]} · ${scope}</div>
+      <div class="row-top" style="margin-top: 2px">
+        <button class="reset-btn" title="${r.enabled ? "Pause this rule without deleting it" : "Resume this rule"}" onclick="toggleRule(${r.id})">${r.enabled ? "Disable" : "Enable"}</button>
+        <button class="reset-btn" title="Edit this rule" onclick="editRule(${r.id})">Edit</button>
+        <button class="reset-btn" title="Delete this rule" onclick="deleteRule(${r.id})">Delete</button>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+function openRuleForm(rule) {
+  editingRuleId = rule ? rule.id : null;
+  editingEnabled = rule ? rule.enabled : true;
+  $("rule-form").hidden = false;
+  $("rule-new-btn").hidden = true;
+  $("rule-error").style.display = "none";
+  $("rule-name").value = rule ? rule.name : "";
+  const days = rule ? rule.recurrence.days : [];
+  [...$("rule-days").children].forEach((b) => b.classList.toggle("sel", days.includes(b.dataset.v)));
+  $("rule-time").value = rule ? rule.recurrence.at : "09:30";
+  const ids = rule ? rule.action.segment_ids : null;
+  markSeg("seg-rule-scope", ids == null ? "whole" : "rooms");
+  $("rule-rooms").hidden = ids == null;
+  [...$("rule-rooms").children].forEach((c) => c.classList.toggle("sel", !!ids && ids.includes(Number(c.dataset.id))));
+  markSeg("seg-rule-mode", rule ? rule.action.mode : "vacuum");
+}
+function editRule(id) {
+  const rule = rulesCache.find((r) => r.id === id);
+  if (rule) openRuleForm(rule);
+}
+function closeRuleForm() {
+  $("rule-form").hidden = true;
+  $("rule-new-btn").hidden = false;
+  editingRuleId = null;
+}
+function ruleError(msg) {
+  const el = $("rule-error");
+  el.textContent = "⚠ " + msg;
+  el.style.display = "block";
+}
+
+async function saveRule() {
+  $("rule-error").style.display = "none";
+  const name = $("rule-name").value.trim();
+  const days = [...$("rule-days").children].filter((b) => b.classList.contains("sel")).map((b) => b.dataset.v);
+  const at = $("rule-time").value;
+  const whole = segValue("seg-rule-scope") === "whole";
+  const ids = [...$("rule-rooms").children].filter((c) => c.classList.contains("sel")).map((c) => Number(c.dataset.id));
+  if (!name) return ruleError("Give the rule a name");
+  if (!days.length) return ruleError("Pick at least one day");
+  if (!at) return ruleError("Pick a time");
+  if (!whole && !ids.length) return ruleError("Pick at least one room, or switch to whole house");
+  const body = {
+    name,
+    recurrence: { days, at },
+    action: { type: "clean", mode: segValue("seg-rule-mode"), segment_ids: whole ? null : ids },
+    enabled: editingEnabled,
+  };
+  const res = editingRuleId == null
+    ? await api("/schedules", "POST", body)
+    : await api(`/schedules/${editingRuleId}`, "PUT", body);
+  if (!res.ok) return ruleError(res.detail);
+  toast(editingRuleId == null ? `Rule "${name}" created` : `Rule "${name}" updated`);
+  closeRuleForm();
+  refreshSchedule();
+}
+
+async function toggleRule(id) {
+  const rule = rulesCache.find((r) => r.id === id);
+  if (!rule) return;
+  const res = await api(`/schedules/${id}`, "PUT", {
+    name: rule.name, recurrence: rule.recurrence, action: rule.action, enabled: !rule.enabled,
+  });
+  if (!res.ok) { toast(res.detail, true); return; }
+  toast(`Rule "${rule.name}" ${rule.enabled ? "disabled" : "enabled"}`);
+  refreshSchedule();
+}
+
+async function deleteRule(id) {
+  const rule = rulesCache.find((r) => r.id === id);
+  if (!window.confirm(`Delete the rule "${rule ? rule.name : id}"? Its upcoming firings are cancelled.`)) return;
+  const res = await api(`/schedules/${id}`, "DELETE");
+  if (!res.ok) { toast(res.detail, true); return; }
+  toast("Rule deleted");
+  refreshSchedule();
+}
+
+/* --- timeline --- */
+const STATE_PILL = { pending: "on", claimed: "warn", fired: "good", failed: "bad", expired: "bad", cancelled: "" };
+
+function renderTimeline(list) {
+  const el = $("timeline-list");
+  if (!list.length) {
+    el.innerHTML = `<div class="sched-empty">Nothing scheduled yet — create a rule above.</div>`;
+    return;
+  }
+  // Live states (pending/claimed) are Upcoming even when their instant has passed —
+  // a blocked firing is still waiting, not history. History is terminal states only.
+  const TERMINAL = new Set(["fired", "failed", "expired", "cancelled"]);
+  const upcoming = list
+    .filter((o) => !TERMINAL.has(o.state))
+    .sort((a, b) => new Date(a.scheduled_for) - new Date(b.scheduled_for))
+    .slice(0, 8);
+  const recent = list
+    .filter((o) => TERMINAL.has(o.state))
+    .sort((a, b) => new Date(b.scheduled_for) - new Date(a.scheduled_for))
+    .slice(0, 12);
+  const row = (o) => {
+    const pill = `<span class="pill ${STATE_PILL[o.state] ?? ""}">${o.state}</span>`;
+    const blocked = o.blocked_reason && o.state !== "fired"
+      ? `<div class="sched-sub">⏸ ${o.blocked_reason}</div>` : "";
+    const fired = o.fired_at ? ` · fired ${fmtAgo(o.fired_at)}` : "";
+    return `<div class="sched-row">
+      <div class="row-top"><b>${o.rule_name}</b>${pill}</div>
+      <div class="sched-sub">${fmtWhen(o.scheduled_for)}${fired}</div>${blocked}
+    </div>`;
+  };
+  el.innerHTML =
+    (upcoming.length ? `<div class="sched-head">Upcoming</div>` + upcoming.map(row).join("") : "") +
+    (recent.length ? `<div class="sched-head">History</div>` + recent.map(row).join("") : "");
+}
+
+/* --- refresh --- */
+async function refreshSchedule() {
+  const get = (p) => fetch(p).then((r) => r.json());
+  let ov, ints, rules, occ, health;
+  try {
+    [ov, ints, rules, occ, health] = await Promise.all([
+      get("/overdue"), get("/intervals"), get("/schedules"), get("/occurrences"), get("/scheduler/status"),
+    ]);
+  } catch { return; }  // offline: the status poller already shows the banner
+  renderOverdue(ov);
+  renderIntervals(ints);
+  renderRules(rules);
+  renderTimeline(occ);
+  renderHealth(health);
+}
+
 /* ---------- boot ---------- */
 async function boot() {
   applyRot();
@@ -1531,6 +1932,7 @@ async function boot() {
   } catch { /* capabilities are cosmetic */ }
 
   const rooms = await (await fetch("/rooms")).json();
+  roomsCache = rooms;
   $("rooms").innerHTML = rooms.map((r) =>
     `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
   $("rooms").addEventListener("click", (e) => {
@@ -1540,13 +1942,33 @@ async function boot() {
   await buildMapRegions();
 
   // Local-only pickers (no POST until the clean is started): mode + passes.
-  for (const segId of ["seg-room-mode", "seg-passes"]) {
+  for (const segId of ["seg-room-mode", "seg-passes", "seg-overdue-mode", "seg-rule-mode"]) {
     $(segId).addEventListener("click", (e) => {
       const btn = e.target.closest("button");
       if (!btn) return;
       [...$(segId).children].forEach((b) => b.classList.toggle("active", b === btn));
     });
   }
+
+  // Schedule cards: rooms are picked by name everywhere, never by Segment number.
+  $("interval-room").innerHTML = rooms.map((r) =>
+    `<option value="${r.segment_id}">${r.name}</option>`).join("");
+  $("rule-rooms").innerHTML = rooms.map((r) =>
+    `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
+  $("rule-rooms").addEventListener("click", (e) => {
+    const chip = e.target.closest(".chip");
+    if (chip) chip.classList.toggle("sel");
+  });
+  $("rule-days").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (btn) btn.classList.toggle("sel");
+  });
+  $("seg-rule-scope").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    markSeg("seg-rule-scope", btn.dataset.v);
+    $("rule-rooms").hidden = btn.dataset.v !== "rooms";
+  });
 
   const routines = await (await fetch("/routines")).json();
   $("routines").innerHTML = routines.map((r) =>
@@ -1564,8 +1986,13 @@ async function boot() {
   if (st0) { renderTwoStage(st0); if (st0.running) startTwoStagePoll(); }
 
   await refreshStatus();
+  refreshSchedule();
   setInterval(refreshStatus, 5000);
   setInterval(refreshMap, 15000);  // matches the server-side map TTL
+  // Keep the schedule cards live (a firing shows up as it happens), but only while visible.
+  setInterval(() => {
+    if (document.querySelector('.panel[data-panel="schedule"]').classList.contains("active")) refreshSchedule();
+  }, 5000);
 }
 boot();
 </script>

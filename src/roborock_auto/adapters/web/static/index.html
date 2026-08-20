@@ -530,11 +530,12 @@
   @media (max-width: 480px) {
     .sched-row .row-top b { flex-basis: 100%; white-space: normal; }
   }
-  /* The floating action bar is a cleaning control; on mobile it floats over the Schedule
-     tab's long lists and obscures rows while scrolling. Hide it there — it is back the
-     moment any other tab is shown. Desktop's action bar is inline, so it is unaffected. */
+  /* On mobile the floating action bar overlays the Schedule tab's long lists; pad the
+     panel so scrolled-to-bottom rows clear it. The bar itself must stay visible —
+     Stop and Dock are safety controls while a clean is running. Desktop's action bar
+     is inline, so it is unaffected. */
   @media (max-width: 1099px) {
-    body[data-active-tab="schedule"] .actionbar { display: none; }
+    .panel[data-panel="schedule"] { padding-bottom: 130px; }
   }
 
   /* ---------- connect ---------- */
@@ -999,8 +1000,6 @@ function esc(s) {
 function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
-  // The CSS hides the floating action bar on the Schedule tab (mobile) via this attribute.
-  document.body.dataset.activeTab = name;
   if (name === "schedule") refreshSchedule();
 }
 

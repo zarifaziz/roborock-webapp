@@ -12,7 +12,7 @@
  *    firing later is worse than no offline mode at all.
  */
 
-const CACHE = "roborock-shell-v2";
+const CACHE = "roborock-shell-v3";
 
 const SHELL = [
   "/",
@@ -45,12 +45,13 @@ self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET") return; // commands: network-only, never intercepted
   const url = new URL(req.url);
-  const isShell = url.origin === self.location.origin
-    && (req.mode === "navigate" || SHELL.includes(url.pathname));
+  // Only exact shell paths — a navigation to an API GET route (/status, /map.png in a
+  // new tab) is also mode "navigate", and caching it under "/" would poison the shell.
+  const isShell = url.origin === self.location.origin && SHELL.includes(url.pathname);
   if (!isShell) return; // live robot/scheduler state: network-only, never cached
 
   // Shell: network-first (never stale while online), cache fallback (instant offline).
-  const cacheKey = req.mode === "navigate" ? "/" : url.pathname;
+  const cacheKey = url.pathname;
   e.respondWith(
     fetch(req)
       .then((res) => {

@@ -73,6 +73,60 @@ class SqliteOccurrences:
         )
         self._conn.commit()
 
+    async def mark_expired(self, occurrence_id: int) -> None:
+        self._conn.execute(
+            "UPDATE occurrences SET state = ?"
+            " WHERE device_id = ? AND id = ? AND state = ?",
+            (
+                OccurrenceState.EXPIRED.value,
+                self._device_id,
+                occurrence_id,
+                OccurrenceState.PENDING.value,
+            ),
+        )
+        self._conn.commit()
+
+    async def mark_blocked(self, occurrence_id: int, reason: str) -> None:
+        self._conn.execute(
+            "UPDATE occurrences SET blocked_reason = ?"
+            " WHERE device_id = ? AND id = ? AND state = ?",
+            (reason, self._device_id, occurrence_id, OccurrenceState.PENDING.value),
+        )
+        self._conn.commit()
+
+    async def mark_fired(self, occurrence_id: int, fired_at: datetime) -> None:
+        self._conn.execute(
+            "UPDATE occurrences SET state = ?, fired_at = ?, blocked_reason = NULL"
+            " WHERE device_id = ? AND id = ? AND state = ?",
+            (
+                OccurrenceState.FIRED.value,
+                _utc_text("fired_at", fired_at),
+                self._device_id,
+                occurrence_id,
+                OccurrenceState.CLAIMED.value,
+            ),
+        )
+        self._conn.commit()
+
+    async def record_failed_attempt(
+        self, occurrence_id: int, *, at: datetime, reason: str, exhausted: bool
+    ) -> None:
+        state = OccurrenceState.FAILED if exhausted else OccurrenceState.PENDING
+        self._conn.execute(
+            "UPDATE occurrences SET state = ?, attempts = attempts + 1,"
+            " last_attempt_at = ?, blocked_reason = ?"
+            " WHERE device_id = ? AND id = ? AND state = ?",
+            (
+                state.value,
+                _utc_text("last_attempt_at", at),
+                reason,
+                self._device_id,
+                occurrence_id,
+                OccurrenceState.CLAIMED.value,
+            ),
+        )
+        self._conn.commit()
+
     async def list_occurrences(self) -> list[Occurrence]:
         rows = self._conn.execute(
             "SELECT o.id, o.rule_id, r.name, o.scheduled_for, o.deadline, o.state,"

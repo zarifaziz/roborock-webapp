@@ -489,9 +489,9 @@ async def test_a_fired_instant_is_never_rematerialised(open_rules, open_occurren
 
 
 async def test_lifecycle_bookkeeping_round_trips_exactly(open_rules, open_occurrences, tmp_path):
-    """The port has no writer for the attempt count, last-attempt time, blocked reason,
-    or fired time yet, so they are set with raw SQL; each carries a distinct value so a
-    column-to-field mix-up in the read mapping cannot pass."""
+    """Every lifecycle column set with raw SQL, each to a distinct value, so a
+    column-to-field mix-up in the read mapping cannot pass regardless of which port
+    writer produced the row."""
     await open_rules().create_rule(**_weekday_mornings())
     store = open_occurrences()
     await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
@@ -601,3 +601,99 @@ async def test_the_claim_is_atomic_under_two_concurrent_claimers(open_rules, tmp
 
     assert sorted(results) == [False, True]
     assert await setup.list_occurrences() == [_occurrence(1, state=OccurrenceState.CLAIMED)]
+
+
+FIRED_AT = SCHEDULED + timedelta(minutes=45)
+
+
+async def test_mark_blocked_leaves_the_occurrence_pending_with_its_reason(
+    open_rules, open_occurrences
+):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await store.mark_blocked(1, "the robot is mid-job")
+    assert await store.list_occurrences() == [
+        _occurrence(1, blocked_reason="the robot is mid-job")
+    ]
+
+
+async def test_mark_expired_moves_only_a_pending_occurrence(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    later = SCHEDULED + timedelta(days=3)
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await store.add_pending(1, scheduled_for=later, deadline=later + timedelta(hours=6))
+    assert await store.claim(1) is True
+    await store.mark_expired(1)  # CLAIMED: commands are in flight, expiry keeps its hands off
+    await store.mark_expired(2)
+    assert await store.list_occurrences() == [
+        _occurrence(1, state=OccurrenceState.CLAIMED),
+        _occurrence(
+            2,
+            scheduled_for=later,
+            deadline=later + timedelta(hours=6),
+            state=OccurrenceState.EXPIRED,
+        ),
+    ]
+
+
+async def test_mark_fired_stamps_the_instant_and_clears_a_stale_blocked_reason(
+    open_rules, open_occurrences
+):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await store.mark_blocked(1, "the robot is mid-job")
+    assert await store.claim(1) is True
+    await store.mark_fired(1, FIRED_AT)
+    assert await store.list_occurrences() == [
+        _occurrence(1, state=OccurrenceState.FIRED, fired_at=FIRED_AT)
+    ]
+
+
+async def test_mark_fired_requires_the_claim(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await store.mark_fired(1, FIRED_AT)
+    assert await store.list_occurrences() == [_occurrence(1)]
+
+
+async def test_failed_attempts_accumulate_and_the_exhausted_one_is_final(
+    open_rules, open_occurrences
+):
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await store.claim(1) is True
+    await store.record_failed_attempt(1, at=FIRED_AT, reason="refused", exhausted=False)
+    assert await store.list_occurrences() == [
+        _occurrence(1, attempts=1, last_attempt_at=FIRED_AT, blocked_reason="refused")
+    ]
+    assert await store.claim(1) is True  # back to PENDING: the intent is still live
+    await store.record_failed_attempt(
+        1, at=FIRED_AT + timedelta(minutes=5), reason="refused again", exhausted=True
+    )
+    assert await store.list_occurrences() == [
+        _occurrence(
+            1,
+            state=OccurrenceState.FAILED,
+            attempts=2,
+            last_attempt_at=FIRED_AT + timedelta(minutes=5),
+            blocked_reason="refused again",
+        )
+    ]
+    assert await store.claim(1) is False  # FAILED is terminal
+
+
+async def test_outcome_writes_are_device_scoped(open_rules, open_occurrences):
+    await open_rules().create_rule(**_weekday_mornings())
+    ours, theirs = open_occurrences("robot-1"), open_occurrences("robot-2")
+    await ours.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    await theirs.mark_blocked(1, "not yours")
+    await theirs.mark_expired(1)
+    assert await ours.claim(1) is True
+    await theirs.mark_fired(1, FIRED_AT)
+    await theirs.record_failed_attempt(1, at=FIRED_AT, reason="not yours", exhausted=True)
+    assert await ours.list_occurrences() == [_occurrence(1, state=OccurrenceState.CLAIMED)]

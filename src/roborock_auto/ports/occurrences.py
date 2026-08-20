@@ -38,6 +38,29 @@ class OccurrencePort(Protocol):
         CLAIMED Occurrence is left alone: commands are in flight."""
         ...
 
+    async def mark_expired(self, occurrence_id: int) -> None:
+        """Move one PENDING Occurrence to EXPIRED: its Deadline passed unfired, so the
+        intent is abandoned rather than run at a surprising hour."""
+        ...
+
+    async def mark_blocked(self, occurrence_id: int, reason: str) -> None:
+        """Attach why a PENDING Occurrence could not fire this time, leaving it PENDING
+        — the intent is still live and no attempt is consumed."""
+        ...
+
+    async def mark_fired(self, occurrence_id: int, fired_at: datetime) -> None:
+        """Move one CLAIMED Occurrence to FIRED at `fired_at`, clearing any stale
+        blocked reason from earlier waits."""
+        ...
+
+    async def record_failed_attempt(
+        self, occurrence_id: int, *, at: datetime, reason: str, exhausted: bool
+    ) -> None:
+        """Count one genuinely failed firing of a CLAIMED Occurrence: attempts grows by
+        one and `at` anchors the spacing before the next try. The Occurrence returns to
+        PENDING, or to FAILED when `exhausted` says this was the last allowed attempt."""
+        ...
+
     async def list_occurrences(self) -> list[Occurrence]:
         """Every Occurrence ever recorded, earliest scheduled first — the timeline."""
         ...

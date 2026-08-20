@@ -10,7 +10,13 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
 
-from roborock_auto.domain.models import DeviceStatus, RoomInterval, SegmentOverdue
+from roborock_auto.domain.models import (
+    DeviceStatus,
+    Occurrence,
+    OccurrenceState,
+    RoomInterval,
+    SegmentOverdue,
+)
 
 # States that mean "no information", not a robot state: a wifi/cloud blip reports unknown or
 # device_offline with every flag cleared, which would otherwise read as cancelled off-dock.
@@ -50,6 +56,33 @@ def recharging_pending(status: DeviceStatus) -> bool:
     """The job was accepted but the robot is charging on the dock before leaving (deep
     discharge). The job is still pending — this is progress, not a dropped trigger."""
     return status.docked and status.in_cleaning
+
+
+# A busy or unready robot never consumes an attempt — that is not a failure — so these
+# bound only genuine refusals: an exception that survived the adapter's transport retry.
+OCCURRENCE_MAX_ATTEMPTS = 3
+OCCURRENCE_RETRY_SPACING = timedelta(minutes=5)
+
+
+def occurrence_expired(occurrence: Occurrence, now: datetime) -> bool:
+    """A PENDING Occurrence whose Deadline has passed is abandoned rather than fired at
+    a surprising hour. Only PENDING expires: every other state already resolved."""
+    return occurrence.state is OccurrenceState.PENDING and now >= occurrence.deadline
+
+
+def claimable_occurrences(occurrences: Sequence[Occurrence], now: datetime) -> list[Occurrence]:
+    """The selector: every PENDING Occurrence ripe to fire — at or past its instant,
+    inside its Deadline, and past the minimum spacing since its last failed attempt.
+    Ordered by instant then identity, so simultaneous firings run in a total order and
+    none is dropped for being second."""
+    ripe = [
+        o
+        for o in occurrences
+        if o.state is OccurrenceState.PENDING
+        and o.scheduled_for <= now < o.deadline
+        and (o.last_attempt_at is None or now - o.last_attempt_at >= OCCURRENCE_RETRY_SPACING)
+    ]
+    return sorted(ripe, key=lambda o: (o.scheduled_for, o.id))
 
 
 def clean_priority(

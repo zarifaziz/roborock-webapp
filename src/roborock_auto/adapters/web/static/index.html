@@ -1008,6 +1008,7 @@ async function discover() {
       <div class="disc-row"><b>Main brush</b><span>${pct(d.consumables?.main_brush_pct)}</span></div>
       <div class="disc-row"><b>Side brush</b><span>${pct(d.consumables?.side_brush_pct)}</span></div>
       <div class="disc-row"><b>Filter</b><span>${pct(d.consumables?.filter_pct)}</span></div>
+      <div class="disc-row"><b>Sensors</b><span>${pct(d.consumables?.sensor_pct)}</span></div>
     </div>`;
 }
 
@@ -1106,7 +1107,11 @@ async function boot() {
     `<button class="btn" onclick="post('/routine',{routine_id:${r.id}},'${r.name} started')">${r.name}</button>`).join("");
 
   const c = await (await fetch("/consumables")).json();
-  const items = [["Main brush", c.main_brush_pct], ["Side brush", c.side_brush_pct], ["Filter", c.filter_pct]];
+  const items = [
+    ["Main brush", c.main_brush_pct], ["Side brush", c.side_brush_pct], ["Filter", c.filter_pct],
+    ["Sensors", c.sensor_pct], ["Dock water filter", c.strainer_pct],
+    ["Dock cleaning brush", c.cleaning_brush_pct],
+  ].filter(([, pct]) => pct != null);
   $("cons").innerHTML = items.map(([name, pct]) => `
     <div>
       <div class="meter-row"><b>${name}</b><span>${pct}%</span></div>

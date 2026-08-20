@@ -31,6 +31,17 @@ def test_map_png_served(client):
     assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_consumables_snapshot(client):
+    assert client.get("/consumables").json() == {
+        "main_brush_pct": 82,
+        "side_brush_pct": 64,
+        "filter_pct": 71,
+        "sensor_pct": 45,
+        "strainer_pct": 88,
+        "cleaning_brush_pct": 93,
+    }
+
+
 def test_rooms_and_routines(client):
     rooms = client.get("/rooms").json()
     assert {"segment_id", "name"} <= set(rooms[0])
@@ -154,7 +165,14 @@ def test_auth_discover_shape(client):
             {"id": 1001, "name": "Vacuum whole house"},
             {"id": 1002, "name": "Mop whole house"},
         ],
-        "consumables": {"main_brush_pct": 82, "side_brush_pct": 64, "filter_pct": 71},
+        "consumables": {
+            "main_brush_pct": 82,
+            "side_brush_pct": 64,
+            "filter_pct": 71,
+            "sensor_pct": 45,
+            "strainer_pct": 88,
+            "cleaning_brush_pct": 93,
+        },
     }
 
 

@@ -120,7 +120,10 @@ class FakeRobot:
         return list(_ROUTINES)
 
     async def get_consumables(self) -> Consumables:
-        return Consumables(main_brush_pct=82, side_brush_pct=64, filter_pct=71)
+        return Consumables(
+            main_brush_pct=82, side_brush_pct=64, filter_pct=71,
+            sensor_pct=45, strainer_pct=88, cleaning_brush_pct=93,
+        )
 
     async def get_carpet_mode(self) -> CarpetMode:
         return self._carpet

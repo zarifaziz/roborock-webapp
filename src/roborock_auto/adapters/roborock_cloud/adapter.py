@@ -241,11 +241,20 @@ class RoborockCloudAdapter:
         async def read() -> Consumables:
             cons = self._v1.consumables
             await cons.refresh()
-            # Fields are seconds of use; Roborock's standard lifetimes are 300/200/150 hours.
+            # Fields are seconds of use; Roborock's standard lifetimes are 300/200/150/30
+            # hours (brush/brush/filter/sensor). Dock consumables stay None when the
+            # firmware doesn't report them, so the UI can hide them.
+            def opt_pct(attr: str, max_hours: float) -> int | None:
+                work_time = getattr(cons, attr, None)
+                return None if work_time is None else life_pct(work_time, max_hours)
+
             return Consumables(
                 main_brush_pct=life_pct(getattr(cons, "main_brush_work_time", None), 300),
                 side_brush_pct=life_pct(getattr(cons, "side_brush_work_time", None), 200),
                 filter_pct=life_pct(getattr(cons, "filter_work_time", None), 150),
+                sensor_pct=life_pct(getattr(cons, "sensor_dirty_time", None), 30),
+                strainer_pct=opt_pct("strainer_work_times", 150),
+                cleaning_brush_pct=opt_pct("cleaning_brush_work_times", 300),
             )
 
         return await self._locked_retry(read)

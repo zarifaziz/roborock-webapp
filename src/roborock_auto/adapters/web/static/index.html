@@ -199,6 +199,7 @@
     padding: 6px 12px; cursor: pointer;
   }
   .rotate-btn:hover { background: var(--card-solid); }
+  .rotate-btn[hidden] { display: none; }
   .rotate-btn svg { width: 13px; height: 13px; fill: currentColor; }
   .map-stage {
     position: relative; margin-inline: auto;
@@ -209,6 +210,10 @@
     border-radius: 16px; overflow: hidden;
     background: var(--map-bg);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
+  }
+  .map-zoom {
+    position: absolute; inset: 0;
+    transform-origin: 0 0; will-change: transform;
   }
   .map-rotor {
     position: absolute; inset: 0;
@@ -565,16 +570,24 @@
         <div class="map-head">
           <h2>Map</h2>
           <span class="map-badge" id="map-badge">⚠ placeholder — live map unavailable</span>
+          <button class="rotate-btn" id="map-reset" hidden onclick="resetZoom()" title="Reset zoom" aria-label="Reset map zoom and pan">
+            <svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 1-5 5H1.5A6.5 6.5 0 1 0 8 1.5V0L4.5 3 8 6V3z"/></svg>
+            Reset
+          </button>
           <button class="rotate-btn" onclick="rotateMap()" title="Rotate map 90°">
             <svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 5 5h-1.5A3.5 3.5 0 1 1 8 4.5V7l3.5-3L8 1v2z"/></svg>
             Rotate
           </button>
         </div>
-        <!-- rotor wraps img + overlay so click regions rotate together with the map -->
+        <!-- zoom wrapper carries pan/zoom; the rotor inside it carries rotation, so the
+             two transforms compose without knowing about each other. img + overlay share
+             the rotor, so click regions and labels track the map through both. -->
         <div class="map-stage" id="map-stage">
-          <div class="map-rotor" id="map-rotor">
-            <img id="map" alt="live map" />
-            <div class="map-overlay" id="map-overlay"></div>
+          <div class="map-zoom" id="map-zoom">
+            <div class="map-rotor" id="map-rotor">
+              <img id="map" alt="live map" />
+              <div class="map-overlay" id="map-overlay"></div>
+            </div>
           </div>
         </div>
       </div>
@@ -832,9 +845,118 @@ let rot = Number(localStorage.getItem("mapRot") || 0);
 function applyRot() { $("map-rotor").style.transform = `rotate(${rot}deg)`; }
 function rotateMap() { rot = (rot + 90) % 360; localStorage.setItem("mapRot", rot); applyRot(); }
 
+/* ---------- map zoom & pan ---------- */
+// Zoom/pan lives on #map-zoom (translate then scale, origin 0 0); rotation stays on
+// #map-rotor inside it, so the two never interact. Panning is clamped so the scaled
+// map always covers the stage — no gutters past any edge.
+const ZOOM_MIN = 1, ZOOM_MAX = 4;
+let zScale = 1, zTx = 0, zTy = 0;
+
+function applyZoom() {
+  const stage = $("map-stage");
+  zScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zScale));
+  zTx = Math.min(0, Math.max(stage.clientWidth * (1 - zScale), zTx));
+  zTy = Math.min(0, Math.max(stage.clientHeight * (1 - zScale), zTy));
+  $("map-zoom").style.transform = `translate(${zTx}px, ${zTy}px) scale(${zScale})`;
+  $("map-reset").hidden = zScale === 1 && zTx === 0 && zTy === 0;
+  // While zoomed the pointer pans the map, so touch scrolling must not fight it.
+  stage.style.touchAction = zScale > 1 ? "none" : "";
+  stage.style.cursor = zScale > 1 ? "grab" : "";
+}
+
+// Rescale about a stage-local point so whatever is under it stays put.
+function zoomAt(px, py, next) {
+  next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, next));
+  zTx = px - ((px - zTx) / zScale) * next;
+  zTy = py - ((py - zTy) / zScale) * next;
+  zScale = next;
+  applyZoom();
+}
+
+function resetZoom() {
+  const el = $("map-zoom");
+  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    el.style.transition = "transform 0.3s ease";
+    el.addEventListener("transitionend", () => { el.style.transition = ""; }, { once: true });
+  }
+  zScale = 1; zTx = 0; zTy = 0;
+  applyZoom();
+}
+
+function initMapZoom() {
+  const stage = $("map-stage");
+  const local = (e) => {
+    const r = stage.getBoundingClientRect();
+    return [e.clientX - r.left, e.clientY - r.top];
+  };
+
+  // Trackpad pinch arrives as ctrl+wheel (cmd+wheel also zooms); plain wheel scrolls
+  // the page when unzoomed, and pans once zoomed — until the pan hits a clamp edge,
+  // where the event falls back through to page scroll.
+  stage.addEventListener("wheel", (e) => {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      const [px, py] = local(e);
+      zoomAt(px, py, zScale * Math.exp(-e.deltaY * 0.01));
+      return;
+    }
+    if (zScale === 1) return;  // unzoomed plain wheel -> page scroll
+    const nx = Math.min(0, Math.max(stage.clientWidth * (1 - zScale), zTx - e.deltaX));
+    const ny = Math.min(0, Math.max(stage.clientHeight * (1 - zScale), zTy - e.deltaY));
+    if (nx === zTx && ny === zTy) return;  // pinned at the clamp -> page scroll
+    e.preventDefault();
+    zTx = nx; zTy = ny;
+    applyZoom();
+  }, { passive: false });
+
+  stage.addEventListener("dblclick", (e) => {
+    clearTimeout(pendingRoomClick);  // the paired clicks must not toggle a room
+    const [px, py] = local(e);
+    if (zScale >= ZOOM_MAX) resetZoom();
+    else zoomAt(px, py, zScale * 2);
+  });
+
+  // Pointer drag pans when zoomed. Under 4px of travel it is a click (room select);
+  // past it the click that ends the drag is swallowed below.
+  let drag = null, dragged = false;
+  stage.addEventListener("pointerdown", (e) => {
+    // A touch pan ends with no trailing click, so the swallow flag can go stale;
+    // clearing it here keeps the next tap from being eaten.
+    dragged = false;
+    if (zScale === 1 || (e.pointerType === "mouse" && e.button !== 0)) return;
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
+  });
+  stage.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!dragged) {
+      if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) <= 4) return;
+      dragged = true;
+      stage.setPointerCapture(e.pointerId);
+      stage.style.cursor = "grabbing";
+    }
+    zTx += e.clientX - drag.x;
+    zTy += e.clientY - drag.y;
+    drag.x = e.clientX; drag.y = e.clientY;
+    applyZoom();
+  });
+  const endDrag = (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    drag = null;
+    if (zScale > 1) stage.style.cursor = "grab";
+  };
+  stage.addEventListener("pointerup", endDrag);
+  stage.addEventListener("pointercancel", endDrag);
+  stage.addEventListener("click", (e) => {
+    if (dragged) { e.stopPropagation(); e.preventDefault(); dragged = false; }
+  }, true);
+}
+
 /* ---------- rooms ---------- */
 // Chip accents cycle every 8 (mirrors the .chip:nth-child CSS); map regions reuse them.
 const ROOM_COLORS = ["#9DBFE3", "#D6BC88", "#7A9FC4", "#DACDB8", "#8FBB97", "#D6A8AF", "#90C2BB", "#B3A8D6"];
+
+// Map-region clicks are deferred so a dblclick zoom can cancel them.
+let pendingRoomClick = 0;
 
 // Chips and map regions share one selection: toggling either syncs the other.
 function toggleRoom(id) {
@@ -880,7 +1002,10 @@ async function buildMapRegions() {
   }).join("");
   overlay.addEventListener("click", (e) => {
     const region = e.target.closest(".map-region");
-    if (region) toggleRoom(Number(region.dataset.id));
+    if (!region) return;
+    // Defer so a dblclick (zoom) can cancel the paired single clicks.
+    clearTimeout(pendingRoomClick);
+    pendingRoomClick = setTimeout(() => toggleRoom(Number(region.dataset.id)), 250);
   });
 }
 
@@ -997,6 +1122,7 @@ function sizeMap() {
   if (h > maxH) { h = maxH; w = h * ar; }
   stage.style.width = w + "px";
   stage.style.height = h + "px";
+  applyZoom();  // stage size changed, so the pan clamp bounds did too
 }
 
 function refreshMap() {
@@ -1136,6 +1262,7 @@ async function startTwoStage(segmentIds) {
 /* ---------- boot ---------- */
 async function boot() {
   applyRot();
+  initMapZoom();
   refreshMap();
   window.addEventListener("resize", sizeMap);
   try {

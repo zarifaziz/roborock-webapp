@@ -41,7 +41,31 @@ async def test_reads_return_expected_types():
 
 async def test_idle_when_no_job():
     status = await FakeRobot().get_status()
-    assert status.docked and not status.in_cleaning
+    assert status == DeviceStatus(
+        "charging", 100, in_cleaning=False, docked=True,
+        fan_power="balanced", mop_route="standard",  # defaults, readable before any set_*
+    )
+
+
+async def test_status_reflects_setting_changes():
+    """Settings readback: the status mirrors the last set_fan_power/set_mop_mode."""
+    gw = FakeRobot(clock=Clock())
+    await gw.set_fan_power(FanPower.TURBO)
+    await gw.set_mop_mode(MopMode.DEEP)
+    status = await gw.get_status()
+    assert (status.fan_power, status.mop_route) == ("turbo", "deep")
+
+
+async def test_cleaning_status_carries_telemetry():
+    clock = Clock()
+    gw = FakeRobot(clock=clock)
+    await gw.start()
+    clock.now = 13.0  # 3s depart delay + 10s of actual cleaning
+    assert await gw.get_status() == DeviceStatus(
+        "cleaning", 100, in_cleaning=True, docked=False, cleaning=True,
+        fan_power="balanced", mop_route="standard",
+        clean_area_m2=6.0, clean_time_s=10,
+    )
 
 
 async def test_polling_does_not_advance_progress():
@@ -79,6 +103,26 @@ async def test_commands_recorded_and_carpet_roundtrip():
     await gw.run_routine(1001)
     assert ("set_carpet_mode", CarpetMode.RISE) in gw.commands
     assert ("run_routine", 1001) in gw.commands
+
+
+async def test_stop_ends_job():
+    clock = Clock()
+    gw = FakeRobot(clock=clock)
+    await gw.start()
+    clock.now = 10.0
+    assert (await gw.get_status()).in_cleaning
+    await gw.stop()
+    done = await gw.get_status()
+    assert done.docked and not done.in_cleaning
+    assert ("stop",) in gw.commands
+
+
+async def test_find_robot_records_without_state_change():
+    gw = FakeRobot()
+    before = await gw.get_status()
+    await gw.find_robot()
+    assert await gw.get_status() == before
+    assert gw.commands == [("find_robot",)]
 
 
 async def test_timeline_is_clock_relative():

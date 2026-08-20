@@ -23,6 +23,9 @@
     --accent-ink: #FFFFFF;
     --accent-soft:rgba(0,113,227,0.10);
     --track:      rgba(20,22,26,0.06);
+    /* One graphite plate in both themes: the room tints and frosted labels are
+       designed against a dark ground, like a camera tile in Apple Home. */
+    --map-bg:     radial-gradient(120% 120% at 30% 20%, #232428, #17181B);
     --good:       #248A3D;
     --warning:    #B45309;
     --critical:   #D70015;
@@ -49,6 +52,7 @@
       --accent-ink: #FFFFFF;
       --accent-soft:rgba(10,132,255,0.16);
       --track:      rgba(255,255,255,0.08);
+      --map-bg:     radial-gradient(120% 120% at 30% 20%, #232428, #17181B);
       --good:       #32D74B;
       --warning:    #FFB340;
       --critical:   #FF6961;
@@ -203,7 +207,7 @@
        img (object-fit: fill) stays perfectly aligned with the click regions. */
     width: 100%; aspect-ratio: var(--map-ar, 1);
     border-radius: 16px; overflow: hidden;
-    background: radial-gradient(120% 120% at 30% 20%, #232428, #17181B);
+    background: var(--map-bg);
     box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.05);
   }
   .map-rotor {
@@ -279,6 +283,19 @@
     background: color-mix(in srgb, var(--critical) 12%, transparent);
     color: var(--critical); font-size: 0.85rem; font-weight: 600;
   }
+  #dock-banner {
+    display: none; margin-top: 14px; padding: 10px 13px; border-radius: 12px;
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+    color: var(--warning); font-size: 0.85rem; font-weight: 600;
+  }
+  /* live clean telemetry (area + time), shown only while a job is active */
+  #clean-stats {
+    display: none; align-items: center; gap: 8px; margin-top: 13px;
+    font-size: 0.84rem; font-weight: 600; color: var(--ink-2);
+  }
+  #clean-stats.show { display: inline-flex; }
+  #clean-stats svg { width: 14px; height: 14px; fill: var(--accent); flex-shrink: 0; }
+  #clean-stats b { color: var(--ink); font-weight: 750; font-variant-numeric: tabular-nums; }
   .battery { margin-top: 16px; }
   .meter-row { display: flex; align-items: baseline; justify-content: space-between; font-size: 0.82rem; }
   .meter-row b { font-weight: 600; color: var(--ink-2); }
@@ -310,6 +327,11 @@
   .btn svg { width: 15px; height: 15px; fill: currentColor; }
   .btn-row { display: flex; gap: 10px; }
   .btn-row .btn { width: auto; flex: 1; }
+  /* four control buttons don't fit one row on phones; wrap into a 2x2 grid */
+  @media (max-width: 480px) {
+    .btn-row { flex-wrap: wrap; }
+    .btn-row .btn { flex: 1 1 40%; }
+  }
 
   /* ---------- segmented ---------- */
   .seg-label { font-size: 0.78rem; font-weight: 600; color: var(--ink-2); margin: 16px 0 7px; }
@@ -500,6 +522,9 @@
       </button>
       <span id="offline">● connection lost — is the app still running?</span>
       <div class="hdr-icons">
+        <button class="frost-btn" onclick="post('/find', {}, 'Robot is announcing its location')" title="Find my robot">
+          <svg viewBox="0 0 24 24"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7zm0 9.5a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5z"/></svg>
+        </button>
         <button class="frost-btn" onclick="showTab('setup')" title="Settings">
           <svg viewBox="0 0 24 24"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm8.94 4a7 7 0 0 0-.13-1.28l2.03-1.58-2-3.46-2.39.96a7 7 0 0 0-2.22-1.28L15.8 2h-4l-.43 2.62a7 7 0 0 0-2.22 1.28l-2.39-.96-2 3.46 2.03 1.58a7 7 0 0 0 0 2.56L2.77 14.1l2 3.46 2.39-.96a7 7 0 0 0 2.22 1.28L11.8 20h4l.43-2.62a7 7 0 0 0 2.22-1.28l2.39.96 2-3.46-2.03-1.58c.09-.42.13-.85.13-1.28z"/></svg>
         </button>
@@ -597,7 +622,12 @@
             <span class="pill" id="p-cleaning">cleaning</span>
             <span class="pill" id="p-docked">docked</span>
           </div>
+          <div id="clean-stats">
+            <svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 0 7 7h-1.5A5.5 5.5 0 1 1 8 2.5V1zm.75 3v4.31l3 1.73-.75 1.3L7.25 9V4h1.5z"/></svg>
+            <span>Cleaned <b id="cs-area">—</b> · <b id="cs-time">—</b></span>
+          </div>
           <div id="error-banner"></div>
+          <div id="dock-banner"></div>
           <div class="battery">
             <div class="meter-row"><b>Battery</b><span><span id="s-battery">—</span><span class="low" id="s-low" hidden>low</span></span></div>
             <div class="meter"><i id="battery-bar" style="width:0%"></i></div>
@@ -612,6 +642,9 @@
             </button>
             <button class="btn" onclick="cmd('/pause')">
               <svg viewBox="0 0 16 16"><path d="M4 2h3v12H4zM9 2h3v12H9z"/></svg>Pause
+            </button>
+            <button class="btn" onclick="cmd('/stop')" title="Stop the current job">
+              <svg viewBox="0 0 16 16"><path d="M3 3h10v10H3z"/></svg>Stop
             </button>
             <button class="btn" onclick="cmd('/dock')">
               <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
@@ -786,6 +819,14 @@ for (const [segId, path, key] of SEGMENTS) {
   });
 }
 
+// Mark the segmented button matching the device-reported value. null/undefined = unknown:
+// keep whatever is shown rather than blanking a toggle the user can see.
+function syncSeg(segId, value) {
+  if (value == null) return;
+  const v = String(value).toLowerCase();
+  [...$(segId).children].forEach((b) => b.classList.toggle("active", b.dataset.v === v));
+}
+
 /* ---------- map rotation ---------- */
 let rot = Number(localStorage.getItem("mapRot") || 0);
 function applyRot() { $("map-rotor").style.transform = `rotate(${rot}deg)`; }
@@ -880,6 +921,13 @@ function stateDot(s) {
 }
 const RING_CIRC = 2 * Math.PI * 16;
 
+function fmtCleanTime(sec) {
+  if (sec == null) return "—";
+  if (sec < 60) return sec + " s";
+  const min = Math.floor(sec / 60);
+  return min < 60 ? min + " min" : `${Math.floor(min / 60)} h ${min % 60} min`;
+}
+
 async function refreshStatus() {
   let s;
   try {
@@ -898,6 +946,23 @@ async function refreshStatus() {
   const eb = $("error-banner");
   eb.style.display = s.error ? "block" : "none";
   eb.textContent = s.error ? "⚠ " + s.error : "";
+
+  // Dock/tank problems (empty clean-water tank, full waste-water tank, ...).
+  const db = $("dock-banner");
+  db.style.display = s.dock_error ? "block" : "none";
+  db.textContent = s.dock_error ? "⚠ Dock: " + s.dock_error : "";
+
+  // Live clean telemetry, only while a job is active (matches the phone app).
+  const jobActive = s.cleaning || s.in_cleaning;
+  const haveStats = s.clean_area_m2 != null || s.clean_time_s != null;
+  $("clean-stats").classList.toggle("show", jobActive && haveStats);
+  $("cs-area").textContent = s.clean_area_m2 != null ? s.clean_area_m2 + " m²" : "—";
+  $("cs-time").textContent = fmtCleanTime(s.clean_time_s);
+
+  // Settings readback: reflect the device's CURRENT fan/mop setting (covers phone-app
+  // changes too). Carpet is synced from its boot-time read + local clicks, not per poll.
+  syncSeg("seg-fan", s.fan_power);
+  syncSeg("seg-mop", s.mop_route);
   // Explicit false only: a server that predates map_ok omits the field, which is not a failure.
   $("map-badge").style.display = s.map_ok === false ? "inline-block" : "none";
 
@@ -987,6 +1052,7 @@ async function discover() {
   let d;
   try { d = await (await fetch("/auth/discover")).json(); }
   catch { toast("Discover failed — no connection", true); return; }
+  syncSeg("seg-carpet", d.carpet_mode);  // discover re-reads the device: refresh the toggle
   const pct = (v) => (v == null ? "—" : v + "%");
   const names = (list) => (list && list.length ? list.map((x) => x.name).join(", ") : "—");
   $("discover-results").innerHTML = `
@@ -998,6 +1064,7 @@ async function discover() {
       <div class="disc-row"><b>Main brush</b><span>${pct(d.consumables?.main_brush_pct)}</span></div>
       <div class="disc-row"><b>Side brush</b><span>${pct(d.consumables?.side_brush_pct)}</span></div>
       <div class="disc-row"><b>Filter</b><span>${pct(d.consumables?.filter_pct)}</span></div>
+      <div class="disc-row"><b>Sensors</b><span>${pct(d.consumables?.sensor_pct)}</span></div>
     </div>`;
 }
 
@@ -1096,12 +1163,21 @@ async function boot() {
     `<button class="btn" onclick="post('/routine',{routine_id:${r.id}},'${r.name} started')">${r.name}</button>`).join("");
 
   const c = await (await fetch("/consumables")).json();
-  const items = [["Main brush", c.main_brush_pct], ["Side brush", c.side_brush_pct], ["Filter", c.filter_pct]];
+  const items = [
+    ["Main brush", c.main_brush_pct], ["Side brush", c.side_brush_pct], ["Filter", c.filter_pct],
+    ["Sensors", c.sensor_pct], ["Dock water filter", c.strainer_pct],
+    ["Dock cleaning brush", c.cleaning_brush_pct],
+  ].filter(([, pct]) => pct != null);
   $("cons").innerHTML = items.map(([name, pct]) => `
     <div>
       <div class="meter-row"><b>${name}</b><span>${pct}%</span></div>
       <div class="meter"><i style="width:${pct}%"></i></div>
     </div>`).join("");
+
+  // Carpet setting: one boot-time device read (not per poll — each read costs a command).
+  try {
+    syncSeg("seg-carpet", (await (await fetch("/carpet")).json()).mode);
+  } catch { /* toggle stays unmarked until the user sets it */ }
 
   await loadAuthStatus();
   const st0 = await fetchTwoStageStatus();

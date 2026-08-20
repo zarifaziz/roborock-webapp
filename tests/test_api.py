@@ -19,9 +19,17 @@ def client(monkeypatch):
 def test_status_shape(client):
     body = client.get("/status").json()
     assert set(body) == {
-        "state_name", "battery", "in_cleaning", "docked", "error", "cleaning", "map_ok"
+        "state_name", "battery", "in_cleaning", "docked", "error",
+        "fan_power", "mop_route", "clean_area_m2", "clean_time_s", "dock_error",
+        "cleaning", "map_ok",
     }
     assert body["map_ok"] is True
+
+
+def test_carpet_readback(client):
+    assert client.get("/carpet").json() == {"mode": "avoid"}  # fake's default
+    client.post("/carpet", json={"mode": "rise"})
+    assert client.get("/carpet").json() == {"mode": "rise"}
 
 
 def test_map_png_served(client):
@@ -29,6 +37,17 @@ def test_map_png_served(client):
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/png"
     assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_consumables_snapshot(client):
+    assert client.get("/consumables").json() == {
+        "main_brush_pct": 82,
+        "side_brush_pct": 64,
+        "filter_pct": 71,
+        "sensor_pct": 45,
+        "strainer_pct": 88,
+        "cleaning_brush_pct": 93,
+    }
 
 
 def test_rooms_and_routines(client):
@@ -43,6 +62,20 @@ def test_commands_take_effect(client):
     assert client.get("/status").json()["in_cleaning"] is True
     assert client.post("/dock").json() == {"ok": True}
     assert client.get("/status").json()["in_cleaning"] is False
+
+
+def test_stop_ends_job(client):
+    assert client.post("/start").json() == {"ok": True}
+    assert client.get("/status").json()["in_cleaning"] is True
+    assert client.post("/stop").json() == {"ok": True}
+    assert client.get("/status").json()["in_cleaning"] is False
+    assert client.app.state.gateway.commands == [("connect",), ("start",), ("stop",)]
+
+
+def test_find_records_command_without_state_change(client):
+    assert client.post("/find").json() == {"ok": True}
+    assert client.get("/status").json()["in_cleaning"] is False
+    assert client.app.state.gateway.commands == [("connect",), ("find_robot",)]
 
 
 def test_carpet_roundtrip(client):
@@ -140,7 +173,14 @@ def test_auth_discover_shape(client):
             {"id": 1001, "name": "Vacuum whole house"},
             {"id": 1002, "name": "Mop whole house"},
         ],
-        "consumables": {"main_brush_pct": 82, "side_brush_pct": 64, "filter_pct": 71},
+        "consumables": {
+            "main_brush_pct": 82,
+            "side_brush_pct": 64,
+            "filter_pct": 71,
+            "sensor_pct": 45,
+            "strainer_pct": 88,
+            "cleaning_brush_pct": 93,
+        },
     }
 
 

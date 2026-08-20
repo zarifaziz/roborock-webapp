@@ -89,19 +89,28 @@ class FakeRobot:
         return self._machine_status()
 
     def _machine_status(self) -> DeviceStatus:
+        # Settings readback mirrors the last set_* call, like the real status poll does.
+        settings = dict(fan_power=self._fan.value, mop_route=self._mop.value)
         if self._job_start is None:
-            return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True)
+            return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True,
+                                **settings)
         elapsed = self._clock() - self._job_start
         if elapsed >= CLEAN_DURATION:
             self._job_start = None
-            return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True)
+            return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True,
+                                **settings)
         if elapsed < DEPART_DELAY:
             # Job accepted but robot still on the dock: the "looks docked right after
             # trigger" case. in_cleaning is already true, which is what keeps the
             # completion predicate from firing early. Not yet out cleaning (cleaning=False).
-            return DeviceStatus("charging", self._battery, in_cleaning=True, docked=True)
+            return DeviceStatus("charging", self._battery, in_cleaning=True, docked=True,
+                                **settings)
+        # Out cleaning: telemetry grows with elapsed time, so the UI shows live numbers.
+        cleaning_for = elapsed - DEPART_DELAY
         return DeviceStatus(
-            "cleaning", self._battery, in_cleaning=True, docked=False, cleaning=True
+            "cleaning", self._battery, in_cleaning=True, docked=False, cleaning=True,
+            clean_area_m2=round(cleaning_for * 0.6, 1), clean_time_s=int(cleaning_for),
+            **settings,
         )
 
     def map_ok(self) -> bool:
@@ -120,7 +129,10 @@ class FakeRobot:
         return list(_ROUTINES)
 
     async def get_consumables(self) -> Consumables:
-        return Consumables(main_brush_pct=82, side_brush_pct=64, filter_pct=71)
+        return Consumables(
+            main_brush_pct=82, side_brush_pct=64, filter_pct=71,
+            sensor_pct=45, strainer_pct=88, cleaning_brush_pct=93,
+        )
 
     async def get_carpet_mode(self) -> CarpetMode:
         return self._carpet
@@ -134,9 +146,16 @@ class FakeRobot:
         self.commands.append(("pause",))
         self._job_start = None
 
+    async def stop(self) -> None:
+        self.commands.append(("stop",))
+        self._job_start = None
+
     async def dock(self) -> None:
         self.commands.append(("dock",))
         self._job_start = None
+
+    async def find_robot(self) -> None:
+        self.commands.append(("find_robot",))
 
     async def clean_rooms(self, segment_ids: list[int]) -> None:
         self.commands.append(("clean_rooms", tuple(segment_ids)))

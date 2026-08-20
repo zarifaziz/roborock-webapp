@@ -16,6 +16,7 @@ from roborock.data.v1 import RoborockInCleaning, RoborockStateCode
 from roborock_auto.adapters.roborock_cloud.adapter import RoborockCloudAdapter, _pick_device
 from roborock_auto.adapters.roborock_cloud.codes import (
     derive_in_cleaning,
+    dock_error_str,
     extract_carpet_value,
     is_cleaning,
     is_docked,
@@ -93,6 +94,18 @@ def test_extract_carpet_value():
     assert extract_carpet_value([5]) == 5
 
 
+def test_dock_error_str():
+    from roborock.data.v1.v1_code_mappings import RoborockDockErrorCode
+
+    assert dock_error_str(None) is None
+    assert dock_error_str(RoborockDockErrorCode.ok) is None
+    # The two wash-dock tank errors get friendly phrasing...
+    assert dock_error_str(RoborockDockErrorCode.water_empty) == "clean water tank empty"
+    assert dock_error_str(RoborockDockErrorCode.waste_water_tank_full) == "waste water tank full"
+    # ...any other code still surfaces, as its de-underscored enum name.
+    assert dock_error_str(RoborockDockErrorCode.duct_blockage) == "duct blockage"
+
+
 def test_pick_device_by_duid():
     from types import SimpleNamespace
     a = SimpleNamespace(duid="A", v1_properties=object())
@@ -124,6 +137,13 @@ async def test_start_pause_dock(gw):
     assert _last_send(gw).args[0] == RoborockCommand.APP_PAUSE
     await gw.dock()
     assert _last_send(gw).args[0] == RoborockCommand.APP_CHARGE
+
+
+async def test_stop_and_find_robot(gw):
+    await gw.stop()
+    assert _last_send(gw).args[0] == RoborockCommand.APP_STOP
+    await gw.find_robot()
+    assert _last_send(gw).args[0] == RoborockCommand.FIND_ME
 
 
 async def test_carpet_sends_configured_value(gw):
@@ -207,17 +227,85 @@ async def test_map_ok_survives_map_data_failure(gw):
     assert gw.map_ok() is True
 
 
+async def test_get_consumables_maps_trait(gw):
+    from roborock_auto.domain.models import Consumables
+
+    hours = 3600
+    gw._device.v1_properties.consumables = SimpleNamespace(
+        refresh=AsyncMock(),
+        main_brush_work_time=150 * hours,   # 300 h lifetime -> 50%
+        side_brush_work_time=50 * hours,    # 200 h lifetime -> 75%
+        filter_work_time=120 * hours,       # 150 h lifetime -> 20%
+        sensor_dirty_time=12 * hours,       # 30 h lifetime  -> 60%
+        strainer_work_times=75 * hours,     # 150 h lifetime -> 50%
+        cleaning_brush_work_times=30 * hours,  # 300 h lifetime -> 90%
+    )
+    assert await gw.get_consumables() == Consumables(
+        main_brush_pct=50, side_brush_pct=75, filter_pct=20,
+        sensor_pct=60, strainer_pct=50, cleaning_brush_pct=90,
+    )
+
+
+async def test_get_consumables_dockless_model_reports_none(gw):
+    from roborock_auto.domain.models import Consumables
+
+    # A model without a wash dock reports no strainer / cleaning-brush counters; the
+    # sensor counter absent reads as fresh (life_pct treats None as unused).
+    gw._device.v1_properties.consumables = SimpleNamespace(
+        refresh=AsyncMock(),
+        main_brush_work_time=0,
+        side_brush_work_time=0,
+        filter_work_time=0,
+        sensor_dirty_time=None,
+        strainer_work_times=None,
+        cleaning_brush_work_times=None,
+    )
+    assert await gw.get_consumables() == Consumables(
+        main_brush_pct=100, side_brush_pct=100, filter_pct=100,
+        sensor_pct=100, strainer_pct=None, cleaning_brush_pct=None,
+    )
+
+
 async def test_get_status_maps_trait(gw):
+    from roborock.data.v1.v1_code_mappings import RoborockDockErrorCode
+
     status_trait = SimpleNamespace(
         refresh=AsyncMock(),
         state=RoborockStateCode.segment_cleaning,
         battery=77,
         in_cleaning=RoborockInCleaning.segment_clean_not_complete,
         error_code=None,
+        # StatusTrait's friendly-name helpers and StatusV2's telemetry/dock fields.
+        fan_speed_name="balanced",
+        mop_route_name="standard",
+        square_meter_clean_area=12.4,
+        clean_time=480,
+        dock_error_status=RoborockDockErrorCode.water_empty,
     )
     gw._device.v1_properties.status = status_trait
     result = await gw.get_status()
     assert result == DeviceStatus(
         state_name="segment_cleaning", battery=77, in_cleaning=True, docked=False, error=None,
+        fan_power="balanced", mop_route="standard",
+        clean_area_m2=12.4, clean_time_s=480,
+        dock_error="clean water tank empty",
         cleaning=True,  # segment_cleaning is a genuine out-cleaning state
+    )
+
+
+async def test_get_status_tolerates_missing_enrichment_fields(gw):
+    """An older library/firmware without the enrichment attrs degrades to None, no crash."""
+    status_trait = SimpleNamespace(
+        refresh=AsyncMock(),
+        state=RoborockStateCode.charging,
+        battery=100,
+        in_cleaning=RoborockInCleaning.complete,
+        error_code=None,
+    )
+    gw._device.v1_properties.status = status_trait
+    result = await gw.get_status()
+    assert result == DeviceStatus(
+        state_name="charging", battery=100, in_cleaning=False, docked=True, error=None,
+        fan_power=None, mop_route=None, clean_area_m2=None, clean_time_s=None,
+        dock_error=None, cleaning=False,
     )

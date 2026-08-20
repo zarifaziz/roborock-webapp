@@ -138,9 +138,21 @@ async def pause(request: Request):
     return {"ok": True}
 
 
+@app.post("/stop")
+async def stop(request: Request):
+    await _gw(request).stop()
+    return {"ok": True}
+
+
 @app.post("/dock")
 async def dock(request: Request):
     await _gw(request).dock()
+    return {"ok": True}
+
+
+@app.post("/find")
+async def find(request: Request):
+    await _gw(request).find_robot()
     return {"ok": True}
 
 
@@ -161,6 +173,13 @@ async def fan(request: Request, power: str = Body(..., embed=True)):
 async def mop(request: Request, mode: str = Body(..., embed=True)):
     await _gw(request).set_mop_mode(_parse(MopMode, mode))
     return {"ok": True}
+
+
+@app.get("/carpet")
+async def carpet_get(request: Request):
+    # One boot-time read so the Setup carpet toggle can show the device's current setting;
+    # deliberately NOT part of the status poll (it costs a device command each call).
+    return {"mode": (await _gw(request).get_carpet_mode()).value}
 
 
 @app.post("/carpet")

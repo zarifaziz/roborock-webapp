@@ -72,6 +72,10 @@ class Consumables:
     main_brush_pct: int
     side_brush_pct: int
     filter_pct: int
+    sensor_pct: int | None = None
+    # Wash-dock consumables; None on models without a dock (or older firmware).
+    strainer_pct: int | None = None
+    cleaning_brush_pct: int | None = None
 
 
 @dataclass(frozen=True)

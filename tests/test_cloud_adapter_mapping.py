@@ -207,6 +207,45 @@ async def test_map_ok_survives_map_data_failure(gw):
     assert gw.map_ok() is True
 
 
+async def test_get_consumables_maps_trait(gw):
+    from roborock_auto.domain.models import Consumables
+
+    hours = 3600
+    gw._device.v1_properties.consumables = SimpleNamespace(
+        refresh=AsyncMock(),
+        main_brush_work_time=150 * hours,   # 300 h lifetime -> 50%
+        side_brush_work_time=50 * hours,    # 200 h lifetime -> 75%
+        filter_work_time=120 * hours,       # 150 h lifetime -> 20%
+        sensor_dirty_time=12 * hours,       # 30 h lifetime  -> 60%
+        strainer_work_times=75 * hours,     # 150 h lifetime -> 50%
+        cleaning_brush_work_times=30 * hours,  # 300 h lifetime -> 90%
+    )
+    assert await gw.get_consumables() == Consumables(
+        main_brush_pct=50, side_brush_pct=75, filter_pct=20,
+        sensor_pct=60, strainer_pct=50, cleaning_brush_pct=90,
+    )
+
+
+async def test_get_consumables_dockless_model_reports_none(gw):
+    from roborock_auto.domain.models import Consumables
+
+    # A model without a wash dock reports no strainer / cleaning-brush counters; the
+    # sensor counter absent reads as fresh (life_pct treats None as unused).
+    gw._device.v1_properties.consumables = SimpleNamespace(
+        refresh=AsyncMock(),
+        main_brush_work_time=0,
+        side_brush_work_time=0,
+        filter_work_time=0,
+        sensor_dirty_time=None,
+        strainer_work_times=None,
+        cleaning_brush_work_times=None,
+    )
+    assert await gw.get_consumables() == Consumables(
+        main_brush_pct=100, side_brush_pct=100, filter_pct=100,
+        sensor_pct=100, strainer_pct=None, cleaning_brush_pct=None,
+    )
+
+
 async def test_get_status_maps_trait(gw):
     status_trait = SimpleNamespace(
         refresh=AsyncMock(),

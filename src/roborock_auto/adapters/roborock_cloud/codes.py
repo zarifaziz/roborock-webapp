@@ -51,6 +51,15 @@ ACTIVE_STATES = CLEANING_STATES | {
 FAN_LEVELS = {FanPower.QUIET: 101, FanPower.BALANCED: 102, FanPower.TURBO: 103, FanPower.MAX: 104}
 MOP_MODES = {MopMode.STANDARD: 300, MopMode.DEEP: 301}
 WATER_MODES = {WaterMode.MILD: 201, WaterMode.STANDARD: 202, WaterMode.INTENSE: 203}
+# Read water flow back by INTEGER, not the library's name: this firmware names 203 "high"
+# (an alias of our "intense"), which wouldn't match the control. Codes outside our three
+# (off/custom/pure-water-flow) map to None so the toggle just shows nothing selected.
+_WATER_MODE_BY_CODE = {code: mode for mode, code in WATER_MODES.items()}
+
+
+def water_mode_value(code: Any) -> str | None:
+    mode = _WATER_MODE_BY_CODE.get(code)
+    return mode.value if mode is not None else None
 
 # Our semantic mode -> the library's device-aware CleaningMode name.
 CLEANING_MODE_NAMES = {

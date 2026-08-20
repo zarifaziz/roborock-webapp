@@ -309,7 +309,8 @@ async def test_get_status_maps_trait(gw):
         # StatusTrait's friendly-name helpers and StatusV2's telemetry/dock fields.
         fan_speed_name="balanced",
         mop_route_name="standard",
-        water_mode_name="mild",
+        # Read by integer, not name: 203 is this firmware's "high", our "intense".
+        water_box_mode=203,
         square_meter_clean_area=12.4,
         clean_time=480,
         dock_error_status=RoborockDockErrorCode.water_empty,
@@ -318,7 +319,7 @@ async def test_get_status_maps_trait(gw):
     result = await gw.get_status()
     assert result == DeviceStatus(
         state_name="segment_cleaning", battery=77, in_cleaning=True, docked=False, error=None,
-        fan_power="balanced", mop_route="standard", water_mode="mild",
+        fan_power="balanced", mop_route="standard", water_mode="intense",
         clean_area_m2=12.4, clean_time_s=480,
         dock_error="clean water tank empty",
         cleaning=True,  # segment_cleaning is a genuine out-cleaning state

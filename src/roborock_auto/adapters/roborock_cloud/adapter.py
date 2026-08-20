@@ -34,6 +34,7 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     is_docked,
     life_pct,
     state_name,
+    water_mode_value,
 )
 from roborock_auto.adapters.roborock_cloud.session import load_user_data
 from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
@@ -168,7 +169,7 @@ class RoborockCloudAdapter:
                 # helper property raising on odd data) degrades to None, never a crash.
                 fan_power=_opt(st, "fan_speed_name"),
                 mop_route=_opt(st, "mop_route_name"),
-                water_mode=_opt(st, "water_mode_name"),
+                water_mode=water_mode_value(_opt(st, "water_box_mode")),
                 clean_area_m2=_opt(st, "square_meter_clean_area"),
                 clean_time_s=_opt(st, "clean_time"),
                 dock_error=dock_error_str(_opt(st, "dock_error_status")),

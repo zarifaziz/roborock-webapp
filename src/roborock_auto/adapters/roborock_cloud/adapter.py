@@ -248,10 +248,19 @@ class RoborockCloudAdapter:
                 height = int(dims.height * dims.scale) if dims else 0
                 if not dims or not width or not height:
                     return "(no map yet)"
+                # The parser rooms only know generic "Room N"; join the friendly names.
+                try:
+                    rooms_trait = self._v1.rooms
+                    await rooms_trait.refresh()
+                    names = {
+                        int(m.segment_id): m.name for m in (rooms_trait.rooms or []) if m.name
+                    }
+                except Exception:  # noqa: BLE001 - names are a nicety; fall back to Room N
+                    names = {}
                 raw = getattr(data, "rooms", None) or {}
                 items = raw.items() if hasattr(raw, "items") else enumerate(raw)
                 rooms = [
-                    TextRoom(getattr(r, "name", None) or f"Room {seg_id}", bbox)
+                    TextRoom(names.get(int(seg_id)) or f"Room {seg_id}", bbox)
                     for seg_id, r in items
                     if (bbox := _room_bbox(r, dims, width, height)) is not None
                 ]

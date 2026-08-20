@@ -95,8 +95,12 @@ def render_map_text(
 
 
 def _room_at(rooms: list[TextRoom], pt: tuple[float, float]) -> str | None:
-    for room in rooms:
-        x0, y0, x1, y1 = room.bbox
-        if x0 <= pt[0] <= x1 and y0 <= pt[1] <= y1:
-            return room.name
-    return None
+    # Room bboxes overlap, so pick the SMALLEST box that contains the point — the most
+    # specific room, not just the first (which is often the big central room).
+    hits = [
+        r for r in rooms
+        if r.bbox[0] <= pt[0] <= r.bbox[2] and r.bbox[1] <= pt[1] <= r.bbox[3]
+    ]
+    if not hits:
+        return None
+    return min(hits, key=lambda r: (r.bbox[2] - r.bbox[0]) * (r.bbox[3] - r.bbox[1])).name

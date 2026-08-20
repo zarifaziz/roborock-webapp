@@ -20,7 +20,7 @@ def test_status_shape(client):
     body = client.get("/status").json()
     assert set(body) == {
         "state_name", "battery", "in_cleaning", "docked", "error",
-        "fan_power", "mop_route", "clean_area_m2", "clean_time_s", "dock_error",
+        "fan_power", "mop_route", "water_mode", "clean_area_m2", "clean_time_s", "dock_error",
         "cleaning", "map_ok",
     }
     assert body["map_ok"] is True
@@ -81,6 +81,13 @@ def test_find_records_command_without_state_change(client):
 def test_carpet_roundtrip(client):
     assert client.post("/carpet", json={"mode": "rise"}).status_code == 200
     assert client.post("/carpet", json={"mode": "bogus"}).status_code == 422
+
+
+def test_water_roundtrip(client):
+    assert client.get("/status").json()["water_mode"] == "standard"  # fake's default
+    assert client.post("/water", json={"mode": "intense"}).json() == {"ok": True}
+    assert client.get("/status").json()["water_mode"] == "intense"
+    assert client.post("/water", json={"mode": "bogus"}).status_code == 422
 
 
 def test_map_data_shape(client):

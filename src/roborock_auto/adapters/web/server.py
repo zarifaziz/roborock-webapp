@@ -21,7 +21,7 @@ from roborock_auto.adapters import get_auth, get_gateway
 from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
-from roborock_auto.domain.models import CarpetMode, CleaningMode, FanPower, MopMode
+from roborock_auto.domain.models import CarpetMode, CleaningMode, FanPower, MopMode, WaterMode
 from roborock_auto.ports import RobotGateway
 from roborock_auto.ports.auth import AuthPort
 
@@ -172,6 +172,12 @@ async def fan(request: Request, power: str = Body(..., embed=True)):
 @app.post("/mop")
 async def mop(request: Request, mode: str = Body(..., embed=True)):
     await _gw(request).set_mop_mode(_parse(MopMode, mode))
+    return {"ok": True}
+
+
+@app.post("/water")
+async def water(request: Request, mode: str = Body(..., embed=True)):
+    await _gw(request).set_water_mode(_parse(WaterMode, mode))
     return {"ok": True}
 
 

@@ -24,7 +24,7 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     state_name,
 )
 from roborock_auto.config import Config
-from roborock_auto.domain.models import CarpetMode, DeviceStatus, FanPower, MopMode
+from roborock_auto.domain.models import CarpetMode, DeviceStatus, FanPower, MopMode, WaterMode
 
 
 def _config(**over) -> Config:
@@ -176,6 +176,13 @@ async def test_fan_and_mop(gw):
     assert _last_send(gw).args[0] == RoborockCommand.SET_MOP_MODE
 
 
+async def test_set_water_mode(gw):
+    await gw.set_water_mode(WaterMode.INTENSE)
+    call = _last_send(gw)
+    assert call.args[0] == RoborockCommand.SET_WATER_BOX_CUSTOM_MODE
+    assert call.kwargs["params"] == [203]
+
+
 async def test_run_routine_uses_web_execute_scene(gw):
     await gw.run_routine(1001)
     gw._web.execute_scene.assert_awaited_once_with(gw._user_data, 1001)
@@ -278,6 +285,7 @@ async def test_get_status_maps_trait(gw):
         # StatusTrait's friendly-name helpers and StatusV2's telemetry/dock fields.
         fan_speed_name="balanced",
         mop_route_name="standard",
+        water_mode_name="mild",
         square_meter_clean_area=12.4,
         clean_time=480,
         dock_error_status=RoborockDockErrorCode.water_empty,
@@ -286,7 +294,7 @@ async def test_get_status_maps_trait(gw):
     result = await gw.get_status()
     assert result == DeviceStatus(
         state_name="segment_cleaning", battery=77, in_cleaning=True, docked=False, error=None,
-        fan_power="balanced", mop_route="standard",
+        fan_power="balanced", mop_route="standard", water_mode="mild",
         clean_area_m2=12.4, clean_time_s=480,
         dock_error="clean water tank empty",
         cleaning=True,  # segment_cleaning is a genuine out-cleaning state
@@ -306,6 +314,6 @@ async def test_get_status_tolerates_missing_enrichment_fields(gw):
     result = await gw.get_status()
     assert result == DeviceStatus(
         state_name="charging", battery=100, in_cleaning=False, docked=True, error=None,
-        fan_power=None, mop_route=None, clean_area_m2=None, clean_time_s=None,
+        fan_power=None, mop_route=None, water_mode=None, clean_area_m2=None, clean_time_s=None,
         dock_error=None, cleaning=False,
     )

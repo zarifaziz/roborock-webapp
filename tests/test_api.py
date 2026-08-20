@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -254,3 +256,28 @@ def test_two_stage_conflict_when_running(client):
     r = client.post("/clean/two-stage")
     assert r.status_code == 409
     assert r.json() == {"detail": "a two-stage clean is already running"}
+
+
+def test_two_stage_cancel_stops_the_run(client):
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+    assert client.post("/clean/two-stage/cancel").json() == {"ok": True}
+    # Cancellation wakes the run's next wait immediately; give the runner task a beat to
+    # dock, restore carpet, and publish the terminal status.
+    deadline = time.monotonic() + 5.0
+    status = client.get("/clean/two-stage/status").json()
+    while status["running"] and time.monotonic() < deadline:
+        time.sleep(0.02)
+        status = client.get("/clean/two-stage/status").json()
+    assert status == {
+        "running": False,
+        "stage": "cancelled",
+        "message": "Two-stage clean cancelled",
+        "error": None,
+    }
+    assert ("dock",) in client.app.state.gateway.commands
+
+
+def test_two_stage_cancel_when_not_running_is_409(client):
+    r = client.post("/clean/two-stage/cancel")
+    assert r.status_code == 409
+    assert r.json() == {"detail": "no two-stage clean is running"}

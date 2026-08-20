@@ -48,6 +48,33 @@ class TwoStagePorts(RobotStatusPort, CleaningControlPort, CleaningSettingsPort, 
     """Everything this use case needs from the robot — and nothing more."""
 
 
+class RunCancelled(Exception):
+    """The user cancelled the in-flight run. Raised out of run_two_stage after the same
+    recovery as any abort (dock + carpet Avoid), typed so the caller can report 'cancelled'
+    rather than an error."""
+
+
+def _cancellable_sleep(sleep: Sleep, cancel: asyncio.Event) -> Sleep:
+    """Wrap a sleep so it wakes the moment cancel is set (not at the end of the poll
+    interval) and raises RunCancelled. Every wait in the run funnels through sleep, so this
+    one seam makes the whole orchestration promptly cancellable."""
+
+    async def _sleep(seconds: float) -> None:
+        if cancel.is_set():
+            raise RunCancelled("two-stage clean cancelled")
+        sleeper = asyncio.ensure_future(sleep(seconds))
+        waiter = asyncio.ensure_future(cancel.wait())
+        try:
+            await asyncio.wait({sleeper, waiter}, return_when=asyncio.FIRST_COMPLETED)
+        finally:
+            sleeper.cancel()
+            waiter.cancel()
+        if cancel.is_set():
+            raise RunCancelled("two-stage clean cancelled")
+
+    return _sleep
+
+
 async def _next_status(gw: RobotStatusPort, *, sleep: Sleep, interval: float) -> DeviceStatus:
     """One resilient status poll. A raised get_status (transport blip) is a skipped poll —
     sleep and retry — up to STATUS_FAULT_BUDGET consecutive failures; any success resets the
@@ -148,8 +175,13 @@ async def run_two_stage(
     segment_ids: list[int] | None = None,
     log: Callable[[str], None] = print,
     on_stage: Callable[[str], None] = lambda _stage: None,
+    cancel: asyncio.Event | None = None,
 ) -> None:
     poll = interval if interval is not None else config.poll_interval_sec
+    if cancel is not None:
+        # RunCancelled raised from any sleep unwinds through the abort path below, so a
+        # cancel gets the same recovery (dock + carpet Avoid) as any other mid-run failure.
+        sleep = _cancellable_sleep(sleep, cancel)
     # The idle grace must span several polls, or a taken trigger reads as dropped after a
     # sample or two and gets re-issued into an already-departing robot.
     if poll <= 0 or poll * 3 > DEPART_IDLE_GRACE:

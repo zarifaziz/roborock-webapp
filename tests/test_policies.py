@@ -32,6 +32,31 @@ def test_job_stalled_on_pause_or_cancel_off_dock():
     assert job_stalled(_status()) is False  # home and idle is done, not stalled
 
 
+def test_indeterminate_states_are_not_stalled():
+    # unknown / device_offline / locked mean "no information", not "cancelled off-dock".
+    # A >5 min wifi/cloud blip must not abort a healthy run as a stall.
+    from roborock_auto.domain.policies import job_stalled
+
+    assert job_stalled(_status(state_name="unknown", in_cleaning=False, docked=False)) is False
+    assert (
+        job_stalled(_status(state_name="device_offline", in_cleaning=False, docked=False)) is False
+    )
+    assert job_stalled(_status(state_name="locked", in_cleaning=False, docked=False)) is False
+    # A genuine off-dock idle (user cancel) still stalls.
+    assert job_stalled(_status(state_name="idle", in_cleaning=False, docked=False)) is True
+
+
+def test_recharging_pending_is_docked_and_still_in_cleaning():
+    from roborock_auto.domain.policies import recharging_pending
+
+    # Low battery: the clean was accepted but the robot charges before leaving.
+    assert recharging_pending(_status(in_cleaning=True, docked=True, battery=15)) is True
+    assert recharging_pending(_status()) is False  # docked idle: nothing pending
+    assert (
+        recharging_pending(_status(state_name="cleaning", in_cleaning=True, docked=False)) is False
+    )
+
+
 def test_ready_to_start_requires_docked_idle_and_no_error():
     assert ready_to_start(_status()) is True
     assert ready_to_start(_status(in_cleaning=True)) is False

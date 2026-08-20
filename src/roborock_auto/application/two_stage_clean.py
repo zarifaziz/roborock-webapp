@@ -18,12 +18,13 @@ from typing import Any, Protocol
 
 from roborock_auto.application.retry import AutomationError, DepartRejected, Sleep, with_retry
 from roborock_auto.config import Config
-from roborock_auto.domain.models import CarpetMode, CleaningMode
+from roborock_auto.domain.models import CarpetMode, CleaningMode, DeviceStatus
 from roborock_auto.domain.policies import (
     has_departed,
     home_and_idle,
     job_stalled,
     ready_to_start,
+    recharging_pending,
 )
 from roborock_auto.ports.robot import CleaningControlPort, CleaningSettingsPort, RobotStatusPort
 
@@ -37,10 +38,28 @@ STALL_TIMEOUT = 300.0      # 5 min paused/cancelled: fail fast instead of burnin
 # before we act on it, so one stale cached read or a one-poll firmware flag flicker can't
 # truncate a stage or abort a healthy run.
 CONFIRM_SAMPLES = 2
+# Consecutive get_status failures tolerated as skipped polls before declaring contact lost.
+# A cloud/MQTT blip must not abort an hours-long unattended run; a real outage still fails
+# within budget+1 polls instead of hanging.
+STATUS_FAULT_BUDGET = 5
 
 
 class TwoStagePorts(RobotStatusPort, CleaningControlPort, CleaningSettingsPort, Protocol):
     """Everything this use case needs from the robot — and nothing more."""
+
+
+async def _next_status(gw: RobotStatusPort, *, sleep: Sleep, interval: float) -> DeviceStatus:
+    """One resilient status poll. A raised get_status (transport blip) is a skipped poll —
+    sleep and retry — up to STATUS_FAULT_BUDGET consecutive failures; any success resets the
+    streak because each poll starts a fresh budget."""
+    last: Exception | None = None
+    for _ in range(STATUS_FAULT_BUDGET + 1):
+        try:
+            return await gw.get_status()
+        except Exception as exc:  # noqa: BLE001 - any transport blip is a skipped poll
+            last = exc
+            await sleep(interval)
+    raise AutomationError(f"lost contact with the robot: {last}") from last
 
 
 async def wait_for_departure(
@@ -54,20 +73,24 @@ async def wait_for_departure(
     otherwise the mop stage 'departs' on leftover bin-emptying. Two failure paths: the robot
     settling idle on the dock for idle_grace raises DepartRejected (the trigger didn't take;
     the caller re-issues), and an absolute `timeout` backstop bounds total pre-departure time
-    — generous because the pre-mop wash can run minutes, but it still counts, so a rare
-    charge-before-depart longer than `timeout` would abort a job that is actually pending.
+    — generous because the pre-mop wash can run minutes. Charge-before-depart (docked with
+    the job still active) restarts the backstop: it is progress, not a hang.
     """
     deadline = clock() + timeout
     idle_since: float | None = None
     error_seen = departed_seen = 0
     while True:
-        status = await gw.get_status()
+        status = await _next_status(gw, sleep=sleep, interval=interval)
         error_seen = error_seen + 1 if status.error else 0
         if error_seen >= CONFIRM_SAMPLES:
             raise AutomationError(f"device error while waiting to depart: {status.error}")
         departed_seen = departed_seen + 1 if has_departed(status) else 0
         if departed_seen >= CONFIRM_SAMPLES:
             return
+        if recharging_pending(status):
+            # Charge-before-depart on a deep discharge: the job is pending, so the backstop
+            # restarts from here — a >timeout charge must not abort a job that will run.
+            deadline = clock() + timeout
         if home_and_idle(status):
             if idle_since is None:
                 idle_since = clock()
@@ -94,7 +117,7 @@ async def wait_for_return(
     stalled_since: float | None = None
     error_seen = done_seen = 0
     while True:
-        status = await gw.get_status()
+        status = await _next_status(gw, sleep=sleep, interval=interval)
         error_seen = error_seen + 1 if status.error else 0
         if error_seen >= CONFIRM_SAMPLES:
             raise AutomationError(f"device error during clean: {status.error}")
@@ -144,27 +167,48 @@ async def run_two_stage(
             f"robot not docked/idle at start (state={start.state_name}); aborting"
         )
 
-    log(f"vacuum stage: carpet -> Rise, clean mode -> vacuum, starting {scope} clean")
-    on_stage("vacuuming")
-    await _set_carpet_verified(gw, CarpetMode.RISE, sleep=sleep)
-    await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.VACUUM), sleep=sleep)
-    await _depart_and_confirm(gw, depart, clock=clock, sleep=sleep, interval=poll, log=log)
-    log("vacuum stage: robot left the dock, waiting for it to finish")
-    on_stage("vacuum_waiting")
-    await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
-    log("vacuum stage: complete")
+    # Any failure past this point can leave the robot mid-floor with wet pads down and carpet
+    # mode latched at Rise; recover best-effort before re-raising. Only past this point — an
+    # abort before we start (e.g. an official-app job running) must not dock someone's clean.
+    try:
+        log(f"vacuum stage: carpet -> Rise, clean mode -> vacuum, starting {scope} clean")
+        on_stage("vacuuming")
+        await _set_carpet_verified(gw, CarpetMode.RISE, sleep=sleep)
+        await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.VACUUM), sleep=sleep)
+        await _depart_and_confirm(gw, depart, clock=clock, sleep=sleep, interval=poll, log=log)
+        log("vacuum stage: robot left the dock, waiting for it to finish")
+        on_stage("vacuum_waiting")
+        await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
+        log("vacuum stage: complete")
 
-    log(f"mop stage: carpet -> Avoid, clean mode -> mop, starting {scope} clean")
-    on_stage("mopping")
-    # Read-back before mopping: if carpet Avoid did not stick, wet pads would cross carpet.
-    await _set_carpet_verified(gw, CarpetMode.AVOID, sleep=sleep)
-    await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.MOP), sleep=sleep)
-    await _depart_and_confirm(gw, depart, clock=clock, sleep=sleep, interval=poll, log=log)
-    log("mop stage: robot left the dock, waiting for it to finish")
-    on_stage("mop_waiting")
-    await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
+        log(f"mop stage: carpet -> Avoid, clean mode -> mop, starting {scope} clean")
+        on_stage("mopping")
+        # Read-back before mopping: if carpet Avoid did not stick, wet pads would cross carpet.
+        await _set_carpet_verified(gw, CarpetMode.AVOID, sleep=sleep)
+        await with_retry(lambda: gw.set_cleaning_mode(CleaningMode.MOP), sleep=sleep)
+        await _depart_and_confirm(gw, depart, clock=clock, sleep=sleep, interval=poll, log=log)
+        log("mop stage: robot left the dock, waiting for it to finish")
+        on_stage("mop_waiting")
+        await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
+    except BaseException:
+        await _recover_after_abort(gw, log=log)
+        raise
     log("mop stage: complete")
     on_stage("done")
+
+
+async def _recover_after_abort(gw: TwoStagePorts, *, log: Callable[[str], None]) -> None:
+    """Best-effort abort recovery: send the robot home and latch carpet mode to the safe
+    Avoid (never wets carpet). Each step swallows its own failure — recovery must never
+    mask the error that aborted the run."""
+    try:
+        await gw.dock()
+    except Exception as exc:  # noqa: BLE001 - recovery must never mask the original error
+        log(f"abort recovery: dock command failed: {exc}")
+    try:
+        await gw.set_carpet_mode(CarpetMode.AVOID)
+    except Exception as exc:  # noqa: BLE001 - recovery must never mask the original error
+        log(f"abort recovery: carpet reset failed: {exc}")
 
 
 async def _depart_and_confirm(

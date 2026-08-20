@@ -488,6 +488,34 @@ async def test_a_fired_instant_is_never_rematerialised(open_rules, open_occurren
     assert await store.list_occurrences() == [_occurrence(1, state=OccurrenceState.FIRED)]
 
 
+async def test_lifecycle_bookkeeping_round_trips_exactly(open_rules, open_occurrences, tmp_path):
+    """The port has no writer for the attempt count, last-attempt time, blocked reason,
+    or fired time yet, so they are set with raw SQL; each carries a distinct value so a
+    column-to-field mix-up in the read mapping cannot pass."""
+    await open_rules().create_rule(**_weekday_mornings())
+    store = open_occurrences()
+    await store.add_pending(1, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    conn = open_database(str(tmp_path / "roborock.db"))
+    conn.execute(
+        "UPDATE occurrences SET state = 'fired', attempts = 2,"
+        " last_attempt_at = '2026-08-21T23:45:00+00:00',"
+        " blocked_reason = 'robot busy',"
+        " fired_at = '2026-08-22T00:15:00+00:00'"
+    )
+    conn.commit()
+    conn.close()
+    assert await store.list_occurrences() == [
+        _occurrence(
+            1,
+            state=OccurrenceState.FIRED,
+            attempts=2,
+            last_attempt_at=SCHEDULED + timedelta(minutes=15),
+            blocked_reason="robot busy",
+            fired_at=SCHEDULED + timedelta(minutes=45),
+        )
+    ]
+
+
 async def test_a_naive_instant_is_rejected(open_rules, open_occurrences):
     await open_rules().create_rule(**_weekday_mornings())
     store = open_occurrences()

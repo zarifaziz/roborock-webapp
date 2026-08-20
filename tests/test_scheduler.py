@@ -354,6 +354,21 @@ async def test_the_loop_survives_tick_exceptions_and_backs_off_capped_at_five_mi
     assert broken.last_tick_at == START
 
 
+async def test_the_backoff_stays_capped_after_a_multi_day_outage():
+    h = Harness()
+    broken = Scheduler(
+        h.robot,
+        rules=ExplodingRules(),
+        occurrences=h.occurrences,
+        cleaning_log=h.cleaning_log,
+        tz=SYDNEY,
+        now=h.clock,
+    )
+    broken.consecutive_errors = 1030  # past where 2**n overflows float conversion
+    await broken.tick_safely()
+    assert (broken.consecutive_errors, broken.backoff_sec()) == (1031, 300.0)
+
+
 async def test_a_healthy_tick_resets_the_backoff():
     h = Harness()
     rules = ExplodingRules()

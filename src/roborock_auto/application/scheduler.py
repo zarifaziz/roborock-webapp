@@ -145,7 +145,9 @@ class Scheduler:
         self.consecutive_errors = 0
 
     def backoff_sec(self) -> float:
-        return min(TICK_INTERVAL_SEC * 2**self.consecutive_errors, MAX_BACKOFF_SEC)
+        # The exponent is capped before the power: 2**consecutive_errors would
+        # overflow float conversion after a long enough outage.
+        return min(TICK_INTERVAL_SEC * 2 ** min(self.consecutive_errors, 4), MAX_BACKOFF_SEC)
 
     async def run(self) -> None:
         _LOGGER.info("scheduler started timezone=%s tick_interval_sec=%s", self._tz,

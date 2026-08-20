@@ -1,9 +1,10 @@
-"""P7: the cleaning-log store contract, parameterised over persistence adapters.
+"""P7: the store contracts — the cleaning log and Room Intervals — parameterised over
+persistence adapters.
 
 Runs against the real SQLite adapter — no fake store (docs/adr/0006). Pins what no other
 seam structurally can: exact round-tripping of datetimes (timezone-aware, stored as UTC),
-enums, and Segment lists; last-cleaned derived as the max started_at per requested
-Segment, with a whole-house run counting towards every one of them; device
+enums, durations, and Segment lists; last-cleaned derived as the max started_at per
+requested Segment, with a whole-house run counting towards every one of them; device
 scoping of every row; and migrations that are idempotent across a re-open and atomic
 under a mid-script failure.
 """
@@ -17,10 +18,11 @@ import pytest
 from roborock_auto.adapters.sqlite import (
     MIGRATIONS,
     SqliteCleaningLog,
+    SqliteRoomIntervals,
     apply_migrations,
     open_database,
 )
-from roborock_auto.domain.models import CleaningMode, CleaningRun, CleanSource
+from roborock_auto.domain.models import CleaningMode, CleaningRun, CleanSource, RoomInterval
 
 RUN_AT = datetime(2026, 8, 18, 9, 30, tzinfo=UTC)
 
@@ -140,3 +142,57 @@ def test_failed_migration_commits_neither_schema_nor_cursor(tmp_path):
     apply_migrations(conn, (*MIGRATIONS, "CREATE TABLE half_done (id INTEGER);"))
     assert conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS) + 1
     conn.close()
+
+
+@pytest.fixture(params=["sqlite"])
+def open_intervals(request, tmp_path):
+    """Opens a Room Interval store over one shared database file; call again to re-open."""
+    connections = []
+
+    def _open(device_id: str = "robot-1") -> SqliteRoomIntervals:
+        conn = open_database(str(tmp_path / "roborock.db"))
+        connections.append(conn)
+        return SqliteRoomIntervals(conn, device_id=device_id)
+
+    yield _open
+    for conn in connections:
+        conn.close()
+
+
+async def test_intervals_round_trip_exactly_and_list_by_segment(open_intervals):
+    store = open_intervals()
+    await store.set_interval(RoomInterval(17, timedelta(days=2)))
+    await store.set_interval(RoomInterval(16, timedelta(hours=12)))
+    assert await store.list_intervals() == [
+        RoomInterval(16, timedelta(hours=12)),
+        RoomInterval(17, timedelta(days=2)),
+    ]
+
+
+async def test_setting_an_interval_twice_replaces_it(open_intervals):
+    store = open_intervals()
+    await store.set_interval(RoomInterval(16, timedelta(days=7)))
+    await store.set_interval(RoomInterval(16, timedelta(days=3)))
+    assert await store.list_intervals() == [RoomInterval(16, timedelta(days=3))]
+
+
+async def test_removing_reports_whether_an_interval_was_there(open_intervals):
+    store = open_intervals()
+    await store.set_interval(RoomInterval(16, timedelta(days=2)))
+    assert await store.remove_interval(16) is True
+    assert await store.remove_interval(16) is False
+    assert await store.list_intervals() == []
+
+
+async def test_intervals_are_device_scoped(open_intervals):
+    ours, theirs = open_intervals("robot-1"), open_intervals("robot-2")
+    await ours.set_interval(RoomInterval(16, timedelta(days=2)))
+    assert await theirs.list_intervals() == []
+    assert await theirs.remove_interval(16) is False
+    assert await ours.list_intervals() == [RoomInterval(16, timedelta(days=2))]
+
+
+async def test_reopening_keeps_the_intervals(open_intervals):
+    first = open_intervals()
+    await first.set_interval(RoomInterval(16, timedelta(hours=36)))
+    assert await open_intervals().list_intervals() == [RoomInterval(16, timedelta(hours=36))]

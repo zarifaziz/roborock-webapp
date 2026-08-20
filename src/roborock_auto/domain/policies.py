@@ -1,4 +1,5 @@
-"""Domain policies: the robot-behavior rules, as pure predicates over DeviceStatus.
+"""Domain policies: the robot-behavior rules, as pure predicates over DeviceStatus, and
+the Overdue scoring rules over Room Intervals.
 
 These are the interpretation of status; adapters only translate firmware codes into the
 semantic fields these functions read.
@@ -6,7 +7,10 @@ semantic fields these functions read.
 
 from __future__ import annotations
 
-from roborock_auto.domain.models import DeviceStatus
+from collections.abc import Mapping, Sequence
+from datetime import datetime, timedelta
+
+from roborock_auto.domain.models import DeviceStatus, RoomInterval, SegmentOverdue
 
 # States that mean "no information", not a robot state: a wifi/cloud blip reports unknown or
 # device_offline with every flag cleared, which would otherwise read as cancelled off-dock.
@@ -46,3 +50,39 @@ def recharging_pending(status: DeviceStatus) -> bool:
     """The job was accepted but the robot is charging on the dock before leaving (deep
     discharge). The job is still pending — this is progress, not a dropped trigger."""
     return status.docked and status.in_cleaning
+
+
+def clean_priority(
+    interval: timedelta, last_cleaned_at: datetime | None, now: datetime
+) -> float | None:
+    """How overdue a Segment is: time since its last Cleaning Run over its own Room
+    Interval, so rooms on different Intervals compare directly. A never-cleaned Segment is
+    maximally overdue, which is no finite number."""
+    if last_cleaned_at is None:
+        return None
+    return (now - last_cleaned_at) / interval
+
+
+def overdue_report(
+    intervals: Sequence[RoomInterval],
+    last_cleaned: Mapping[int, datetime],
+    now: datetime,
+) -> list[SegmentOverdue]:
+    """Every Segment with a Room Interval, scored and sorted worst-first: never-cleaned
+    above everything, then descending Priority, then Segment number so the order is
+    total and a reload cannot reshuffle equal rooms."""
+    entries = [
+        SegmentOverdue(
+            segment_id=interval.segment_id,
+            interval=interval.interval,
+            last_cleaned_at=last_cleaned.get(interval.segment_id),
+            priority=clean_priority(
+                interval.interval, last_cleaned.get(interval.segment_id), now
+            ),
+        )
+        for interval in intervals
+    ]
+    return sorted(
+        entries,
+        key=lambda e: (e.priority is not None, -(e.priority or 0.0), e.segment_id),
+    )

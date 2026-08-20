@@ -7,7 +7,7 @@ ports depends only on this module, so a library change stays quarantined in the 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 
 
@@ -97,6 +97,39 @@ class CleaningRun:
     mode: CleaningMode
     segment_ids: tuple[int, ...] | None
     started_at: datetime
+
+
+@dataclass(frozen=True)
+class RoomInterval:
+    """How often one Segment should be cleaned: the user's standing intent about a room.
+    A duration rather than a day count, so twice-daily is as expressible as weekly."""
+
+    segment_id: int
+    interval: timedelta
+
+    def __post_init__(self) -> None:
+        if self.interval <= timedelta(0):
+            raise ValueError("Room Interval must be a positive duration")
+
+
+@dataclass(frozen=True)
+class SegmentOverdue:
+    """One Segment's line in the Overdue report: its Interval, when it was last cleaned
+    (derived from Cleaning Runs, docs/adr/0003), and its Priority."""
+
+    segment_id: int
+    interval: timedelta
+    last_cleaned_at: datetime | None
+    priority: float | None
+
+    @property
+    def never_cleaned(self) -> bool:
+        return self.last_cleaned_at is None
+
+    @property
+    def overdue(self) -> bool:
+        """Never cleaned is maximally overdue; otherwise a full Interval has elapsed."""
+        return self.priority is None or self.priority >= 1.0
 
 
 @dataclass(frozen=True)

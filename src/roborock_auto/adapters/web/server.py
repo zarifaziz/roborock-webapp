@@ -11,6 +11,7 @@ import dataclasses
 import logging
 import time
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from pathlib import Path
 
 from fastapi import Body, FastAPI, HTTPException, Request
@@ -18,8 +19,9 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from roborock_auto.adapters import get_auth, get_gateway
-from roborock_auto.adapters.sqlite import SqliteCleaningLog, open_database
-from roborock_auto.application.start_clean import start_clean
+from roborock_auto.adapters.sqlite import SqliteCleaningLog, SqliteRoomIntervals, open_database
+from roborock_auto.application.overdue import clean_overdue, overdue_view
+from roborock_auto.application.start_clean import start_clean, utc_now
 from roborock_auto.application.two_stage_clean import RunCancelled, run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
@@ -30,8 +32,11 @@ from roborock_auto.domain.models import (
     ConsumablePart,
     FanPower,
     MopMode,
+    RoomInterval,
+    SegmentOverdue,
     WaterMode,
 )
+from roborock_auto.domain.policies import ready_to_start
 from roborock_auto.ports import RobotGateway
 from roborock_auto.ports.auth import AuthPort
 
@@ -62,6 +67,9 @@ async def lifespan(app: FastAPI):
     app.state.auth = get_auth(config)
     app.state.config = config
     app.state.cleaning_log = SqliteCleaningLog(db, device_id=config.duid or "fake")
+    app.state.room_intervals = SqliteRoomIntervals(db, device_id=config.duid or "fake")
+    # One injected clock for everything that reads or writes a time, so a test can freeze it.
+    app.state.now = utc_now
     app.state.map_cache = {"at": 0.0, "png": b""}
     app.state.two_stage = _idle_progress()
     app.state.two_stage_task = None
@@ -161,6 +169,7 @@ async def start(request: Request, mode: str = Body(..., embed=True)):
         source=CleanSource.APP,
         mode=_parse(CleaningMode, mode),
         segment_ids=None,
+        now=request.app.state.now,
     )
     return {"ok": True}
 
@@ -312,8 +321,85 @@ async def clean_segments(
         mode=_parse(CleaningMode, mode),
         segment_ids=segment_ids,
         repeat=repeat,
+        now=request.app.state.now,
     )
     return {"ok": True}
+
+
+_DAY = timedelta(days=1)
+
+
+def _interval_body(interval: RoomInterval) -> dict:
+    return {"segment_id": interval.segment_id, "interval_days": interval.interval / _DAY}
+
+
+@app.get("/intervals")
+async def intervals_list(request: Request):
+    return [_interval_body(i) for i in await request.app.state.room_intervals.list_intervals()]
+
+
+@app.post("/intervals")
+async def intervals_set(
+    request: Request,
+    segment_id: int = Body(..., embed=True),
+    interval_days: float = Body(..., embed=True),
+):
+    try:
+        interval = RoomInterval(segment_id=segment_id, interval=timedelta(days=interval_days))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    await request.app.state.room_intervals.set_interval(interval)
+    return {"ok": True}
+
+
+@app.delete("/intervals/{segment_id}")
+async def intervals_remove(request: Request, segment_id: int):
+    if not await request.app.state.room_intervals.remove_interval(segment_id):
+        raise HTTPException(404, f"segment {segment_id} has no Room Interval")
+    return {"ok": True}
+
+
+def _overdue_body(entry: SegmentOverdue) -> dict:
+    return {
+        "segment_id": entry.segment_id,
+        "interval_days": entry.interval / _DAY,
+        "last_cleaned_at": None if entry.never_cleaned else entry.last_cleaned_at.isoformat(),
+        # Null Priority means "maximally overdue", which JSON cannot spell; never_cleaned is
+        # what stops it reading as missing data.
+        "priority": entry.priority,
+        "never_cleaned": entry.never_cleaned,
+        "overdue": entry.overdue,
+    }
+
+
+@app.get("/overdue")
+async def overdue(request: Request):
+    report = await overdue_view(
+        intervals=request.app.state.room_intervals,
+        cleaning_log=request.app.state.cleaning_log,
+        now=request.app.state.now,
+    )
+    return [_overdue_body(entry) for entry in report]
+
+
+@app.post("/clean/overdue")
+async def clean_overdue_now(request: Request, mode: str = Body(..., embed=True)):
+    # Two distinct mechanisms, so two distinct conflicts: an in-process flag, then a live
+    # status read.
+    if request.app.state.two_stage["running"]:
+        raise HTTPException(409, "a two-stage clean is already running")
+    gw = _gw(request)
+    if not ready_to_start(await gw.get_status()):
+        raise HTTPException(409, "the robot is not ready: it must be docked, idle and error-free")
+    cleaned = await clean_overdue(
+        gw,
+        intervals=request.app.state.room_intervals,
+        cleaning_log=request.app.state.cleaning_log,
+        source=CleanSource.APP,
+        mode=_parse(CleaningMode, mode),
+        now=request.app.state.now,
+    )
+    return {"ok": True, "segment_ids": cleaned}
 
 
 @app.post("/clean/two-stage")

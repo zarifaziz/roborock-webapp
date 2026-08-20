@@ -68,7 +68,7 @@ late. Belongs to the Occurrence, not to the scheduler.
 _Avoid_: Grace, grace window, misfire window
 
 **Room Interval**:
-How often a segment should be cleaned, in days. A user's standing intent about a room,
+How often a segment should be cleaned, as a duration. A user's standing intent about a room,
 the per-room counterpart to a Schedule Rule.
 _Avoid_: Frequency, cadence, schedule
 

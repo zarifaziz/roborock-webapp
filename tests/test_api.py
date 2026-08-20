@@ -4,13 +4,19 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import UTC
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
 
 from roborock_auto.adapters.web.server import app
-from roborock_auto.domain.models import CleaningMode, CleaningRun, CleanSource, ConsumablePart
+from roborock_auto.domain.models import (
+    CleaningMode,
+    CleaningRun,
+    CleanSource,
+    ConsumablePart,
+    DeviceStatus,
+)
 
 
 @pytest.fixture
@@ -337,3 +343,158 @@ def test_two_stage_cancel_when_not_running_is_409(client):
     r = client.post("/clean/two-stage/cancel")
     assert r.status_code == 409
     assert r.json() == {"detail": "no two-stage clean is running"}
+
+
+@pytest.fixture
+def clock(client):
+    """Freezes the app's clock so Priority is an exact number; mutate to move time on."""
+    holder = {"now": datetime(2026, 8, 20, 9, 0, tzinfo=UTC)}
+    client.app.state.now = lambda: holder["now"]
+    return holder
+
+
+def _overdue(segment_id, *, days, cleaned_at=None, priority=None):
+    return {
+        "segment_id": segment_id,
+        "interval_days": days,
+        "last_cleaned_at": None if cleaned_at is None else cleaned_at.isoformat(),
+        "priority": priority,
+        "never_cleaned": cleaned_at is None,
+        "overdue": priority is None or priority >= 1.0,
+    }
+
+
+def test_intervals_set_list_and_remove(client):
+    assert client.post("/intervals", json={"segment_id": 17, "interval_days": 2}).json() == {
+        "ok": True
+    }
+    assert client.post("/intervals", json={"segment_id": 16, "interval_days": 0.5}).json() == {
+        "ok": True
+    }
+    assert client.get("/intervals").json() == [
+        {"segment_id": 16, "interval_days": 0.5},
+        {"segment_id": 17, "interval_days": 2.0},
+    ]
+    assert client.delete("/intervals/16").json() == {"ok": True}
+    assert client.get("/intervals").json() == [{"segment_id": 17, "interval_days": 2.0}]
+
+
+def test_setting_an_interval_again_replaces_it(client):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 7})
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 3})
+    assert client.get("/intervals").json() == [{"segment_id": 16, "interval_days": 3.0}]
+
+
+@pytest.mark.parametrize("interval_days", [0, -1, -0.5])
+def test_non_positive_interval_is_422(client, interval_days):
+    r = client.post("/intervals", json={"segment_id": 16, "interval_days": interval_days})
+    assert r.status_code == 422
+    assert r.json() == {"detail": "Room Interval must be a positive duration"}
+    assert client.get("/intervals").json() == []
+
+
+def test_interval_requires_both_fields(client):
+    assert client.post("/intervals", json={"segment_id": 16}).status_code == 422
+    assert client.post("/intervals", json={"interval_days": 2}).status_code == 422
+
+
+def test_removing_an_interval_that_was_never_set_is_404(client):
+    r = client.delete("/intervals/16")
+    assert r.status_code == 404
+    assert r.json() == {"detail": "segment 16 has no Room Interval"}
+
+
+def test_overdue_scores_every_segment_with_an_interval_worst_first(client, clock):
+    now = clock["now"]
+    client.post("/clean/segments", json={"segment_ids": [16, 17], "mode": "vacuum"})
+    clock["now"] = now + timedelta(days=3)
+    for segment_id, days in ((16, 7), (17, 2), (18, 1)):
+        client.post("/intervals", json={"segment_id": segment_id, "interval_days": days})
+    assert client.get("/overdue").json() == [
+        _overdue(18, days=1.0),
+        _overdue(17, days=2.0, cleaned_at=now, priority=1.5),
+        _overdue(16, days=7.0, cleaned_at=now, priority=3 / 7),
+    ]
+
+
+def test_overdue_clean_cleans_every_overdue_segment_and_records_the_run(client, clock):
+    now = clock["now"]
+    client.post("/clean/segments", json={"segment_ids": [16], "mode": "vacuum"})
+    client.post("/dock")  # the catch-up clean only starts from a docked, idle robot
+    clock["now"] = now + timedelta(days=1)
+    for segment_id, days in ((16, 7), (17, 2), (18, 1)):
+        client.post("/intervals", json={"segment_id": segment_id, "interval_days": days})
+    assert client.post("/clean/overdue", json={"mode": "mop"}).json() == {
+        "ok": True,
+        "segment_ids": [17, 18],
+    }
+    assert client.app.state.gateway.commands == [
+        ("connect",),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("clean_rooms", (16,)),
+        ("dock",),
+        ("set_cleaning_mode", CleaningMode.MOP),
+        ("clean_rooms", (17, 18)),
+    ]
+    assert _runs(client) == [
+        CleaningRun(CleanSource.APP, CleaningMode.VACUUM, (16,), now),
+        CleaningRun(CleanSource.APP, CleaningMode.MOP, (17, 18), now + timedelta(days=1)),
+    ]
+
+
+def test_overdue_clean_with_nothing_overdue_leaves_the_robot_alone(client, clock):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    client.post("/clean/overdue", json={"mode": "vacuum"})
+    client.post("/dock")
+    client.app.state.gateway.commands.clear()
+    assert client.post("/clean/overdue", json={"mode": "vacuum"}).json() == {
+        "ok": True,
+        "segment_ids": [],
+    }
+    assert client.app.state.gateway.commands == []
+
+
+def test_overdue_clean_requires_a_mode(client):
+    assert client.post("/clean/overdue").status_code == 422
+    assert client.post("/clean/overdue", json={"mode": "bogus"}).status_code == 422
+
+
+def test_overdue_clean_conflicts_with_a_running_two_stage_clean(client):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+    r = client.post("/clean/overdue", json={"mode": "vacuum"})
+    assert r.status_code == 409
+    assert r.json() == {"detail": "a two-stage clean is already running"}
+
+
+def test_overdue_clean_conflicts_when_the_robot_is_not_ready(client):
+    # A live status read, not the in-process two-stage flag: a different mechanism, so a
+    # different message.
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    client.app.state.gateway.set_timeline(
+        [(0.0, DeviceStatus("error", 90, in_cleaning=False, docked=True, error="brush stuck"))]
+    )
+    r = client.post("/clean/overdue", json={"mode": "vacuum"})
+    assert r.status_code == 409
+    assert r.json() == {"detail": "the robot is not ready: it must be docked, idle and error-free"}
+    assert _runs(client) == []
+
+
+def test_overdue_loop_end_to_end(client, clock):
+    """Set an Interval, watch the room go Overdue, clean it, watch the Priority drop."""
+    started = clock["now"]
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    assert client.get("/overdue").json() == [_overdue(16, days=2.0)]
+
+    assert client.post("/clean/overdue", json={"mode": "vacuum"}).json() == {
+        "ok": True,
+        "segment_ids": [16],
+    }
+    assert client.get("/overdue").json() == [
+        _overdue(16, days=2.0, cleaned_at=started, priority=0.0)
+    ]
+
+    clock["now"] = started + timedelta(days=3)
+    assert client.get("/overdue").json() == [
+        _overdue(16, days=2.0, cleaned_at=started, priority=1.5)
+    ]

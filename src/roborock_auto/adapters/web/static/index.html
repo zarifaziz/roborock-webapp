@@ -336,6 +336,16 @@
     font-size: 0.84rem; font-weight: 600; color: var(--ink-2);
   }
   #clean-stats.show { display: inline-flex; }
+  /* Which room(s) + how many passes the active clean is running. */
+  #clean-target { display: none; margin-top: 8px; font-size: 0.82rem; font-weight: 650; color: var(--accent); }
+  #clean-target.show { display: block; }
+  /* The room(s) currently being cleaned, highlighted on the map. */
+  .map-region.cleaning {
+    background: color-mix(in srgb, var(--accent) 22%, transparent);
+    box-shadow: inset 0 0 0 2px var(--accent);
+    animation: cleaning-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes cleaning-pulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
   #clean-stats svg { width: 14px; height: 14px; fill: var(--accent); flex-shrink: 0; }
   #clean-stats b { color: var(--ink); font-weight: 750; font-variant-numeric: tabular-nums; }
   .battery { margin-top: 16px; }
@@ -686,6 +696,7 @@
             <svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 0 7 7h-1.5A5.5 5.5 0 1 1 8 2.5V1zm.75 3v4.31l3 1.73-.75 1.3L7.25 9V4h1.5z"/></svg>
             <span>Cleaned <b id="cs-area">—</b> · <b id="cs-time">—</b></span>
           </div>
+          <div id="clean-target"></div>
           <div id="error-banner"></div>
           <div id="dock-banner"></div>
           <div class="battery">
@@ -1090,8 +1101,10 @@ function cleanRooms() {
   if (!ids.length) return;
   const mode = roomMode();
   if (mode === "two-stage") {
+    setActiveClean(ids, 1, false);
     startTwoStage(ids);  // switches to Clean tab + drives the 5-step progress poller
   } else {
+    setActiveClean(ids, roomPasses(), false);
     post("/clean/segments", { segment_ids: ids, mode, repeat: roomPasses() }, `cleaning ${ids.length} room${ids.length > 1 ? "s" : ""}`);
   }
 }
@@ -1108,7 +1121,41 @@ function syncCleanBtn() {
 // room mode; nothing selected runs a whole-floor two-stage clean.
 function runPrimary() {
   if (selectedRoomIds().length) { cleanRooms(); return; }
-  if (liveConfirm("Start a whole-floor two-stage clean (vacuum, then mop avoiding carpet)?")) startTwoStage();
+  if (liveConfirm("Start a whole-floor two-stage clean (vacuum, then mop avoiding carpet)?")) {
+    setActiveClean([], 1, true);
+    startTwoStage();
+  }
+}
+
+// Which room(s)/passes the active clean is running, for the map highlight + indicator.
+let activeClean = null;
+function roomLabel(id) {
+  const chip = document.querySelector(`#rooms .chip[data-id="${id}"]`);
+  return chip ? chip.textContent.trim() : `room ${id}`;
+}
+function setActiveClean(ids, passes, whole) {
+  activeClean = { ids: ids.map(String), names: ids.map(roomLabel), passes, whole, started: false };
+}
+function renderActiveClean(s) {
+  const jobActive = !!s && (s.cleaning || s.in_cleaning);
+  if (activeClean) {
+    if (jobActive) activeClean.started = true;       // it left the dock — clean is under way
+    else if (activeClean.started) activeClean = null; // was active, now home: clean finished
+    // (!started && !jobActive): just tapped, robot not moving yet — keep waiting.
+  }
+  const regions = document.querySelectorAll("#map-overlay .map-region");
+  const tgt = $("clean-target");
+  if (!activeClean) {
+    regions.forEach((r) => r.classList.remove("cleaning"));
+    tgt.classList.remove("show");
+    return;
+  }
+  const idset = new Set(activeClean.ids);
+  regions.forEach((r) => r.classList.toggle("cleaning", idset.has(r.dataset.id)));
+  const where = activeClean.whole ? "whole floor" : (activeClean.names.join(", ") || "selected rooms");
+  const passes = activeClean.passes > 1 ? ` · ${activeClean.passes} passes` : "";
+  tgt.textContent = `Cleaning ${where}${passes}`;
+  tgt.classList.add("show");
 }
 
 /* ---------- bottom action bar ---------- */
@@ -1207,6 +1254,9 @@ async function refreshStatus() {
   $("clean-stats").classList.toggle("show", jobActive && haveStats);
   $("cs-area").textContent = s.clean_area_m2 != null ? s.clean_area_m2 + " m²" : "—";
   $("cs-time").textContent = fmtCleanTime(s.clean_time_s);
+
+  // Highlight the room(s) being cleaned on the map + show "Cleaning <rooms> · N passes".
+  renderActiveClean(s);
 
   // Settings readback: reflect the device's CURRENT fan/mop setting (covers phone-app
   // changes too). Carpet is synced from its boot-time read + local clicks, not per poll.

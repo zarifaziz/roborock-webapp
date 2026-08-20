@@ -45,6 +45,20 @@ def test_commands_take_effect(client):
     assert client.get("/status").json()["in_cleaning"] is False
 
 
+def test_stop_ends_job(client):
+    assert client.post("/start").json() == {"ok": True}
+    assert client.get("/status").json()["in_cleaning"] is True
+    assert client.post("/stop").json() == {"ok": True}
+    assert client.get("/status").json()["in_cleaning"] is False
+    assert client.app.state.gateway.commands == [("connect",), ("start",), ("stop",)]
+
+
+def test_find_records_command_without_state_change(client):
+    assert client.post("/find").json() == {"ok": True}
+    assert client.get("/status").json()["in_cleaning"] is False
+    assert client.app.state.gateway.commands == [("connect",), ("find_robot",)]
+
+
 def test_carpet_roundtrip(client):
     assert client.post("/carpet", json={"mode": "rise"}).status_code == 200
     assert client.post("/carpet", json={"mode": "bogus"}).status_code == 422

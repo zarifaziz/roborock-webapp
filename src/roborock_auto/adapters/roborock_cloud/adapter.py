@@ -267,8 +267,14 @@ class RoborockCloudAdapter:
     async def pause(self) -> None:
         await self._send(RoborockCommand.APP_PAUSE)
 
+    async def stop(self) -> None:
+        await self._send(RoborockCommand.APP_STOP)
+
     async def dock(self) -> None:
         await self._send(RoborockCommand.APP_CHARGE)
+
+    async def find_robot(self) -> None:
+        await self._send(RoborockCommand.FIND_ME)
 
     async def clean_rooms(self, segment_ids: list[int]) -> None:
         # Canonical V1 format (python-roborock / HA / miio all agree): a list holding one object.

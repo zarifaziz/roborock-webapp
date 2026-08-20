@@ -134,9 +134,16 @@ class FakeRobot:
         self.commands.append(("pause",))
         self._job_start = None
 
+    async def stop(self) -> None:
+        self.commands.append(("stop",))
+        self._job_start = None
+
     async def dock(self) -> None:
         self.commands.append(("dock",))
         self._job_start = None
+
+    async def find_robot(self) -> None:
+        self.commands.append(("find_robot",))
 
     async def clean_rooms(self, segment_ids: list[int]) -> None:
         self.commands.append(("clean_rooms", tuple(segment_ids)))

@@ -138,9 +138,21 @@ async def pause(request: Request):
     return {"ok": True}
 
 
+@app.post("/stop")
+async def stop(request: Request):
+    await _gw(request).stop()
+    return {"ok": True}
+
+
 @app.post("/dock")
 async def dock(request: Request):
     await _gw(request).dock()
+    return {"ok": True}
+
+
+@app.post("/find")
+async def find(request: Request):
+    await _gw(request).find_robot()
     return {"ok": True}
 
 

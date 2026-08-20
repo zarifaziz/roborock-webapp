@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from roborock_auto.adapters.fake import FakeRobot
 from roborock_auto.application.retry import AutomationError
 from roborock_auto.application.two_stage_clean import (
     STATUS_FAULT_BUDGET,
+    RunCancelled,
     run_two_stage,
     wait_for_departure,
     wait_for_return,
@@ -458,6 +461,36 @@ async def test_two_stage_cleanup_failure_does_not_mask_the_original_error():
         await run_two_stage(
             gw, _config(), clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
+
+
+async def test_two_stage_cancel_mid_vacuum_docks_and_restores_carpet():
+    """A user cancel mid-run is a first-class outcome, not an error: the run stops at the
+    next poll, sends the robot home, restores the safe carpet Avoid (the same recovery as
+    any abort), and raises RunCancelled so the caller can report 'cancelled'. The mop stage
+    never starts."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)  # machine mode: docked -> cleaning -> docked
+    cancel = asyncio.Event()
+    stages: list[str] = []
+
+    def on_stage(stage: str) -> None:
+        stages.append(stage)
+        if stage == "vacuum_waiting":  # robot confirmed out vacuuming: cancel mid-vacuum
+            cancel.set()
+
+    with pytest.raises(RunCancelled):
+        await run_two_stage(
+            gw, _config(), clock=clock, sleep=clock.sleep, interval=5,
+            log=lambda m: None, on_stage=on_stage, cancel=cancel,
+        )
+    assert stages == ["vacuuming", "vacuum_waiting"]
+    assert gw.commands == [
+        ("set_carpet_mode", CarpetMode.RISE),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("start",),
+        ("dock",),
+        ("set_carpet_mode", CarpetMode.AVOID),
+    ]
 
 
 async def test_two_stage_happy_path_does_not_dock_or_reset():

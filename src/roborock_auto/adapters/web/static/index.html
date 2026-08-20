@@ -465,6 +465,13 @@
     background: color-mix(in srgb, var(--critical) 12%, transparent);
     color: var(--critical); font-size: 0.85rem; font-weight: 600;
   }
+  /* quiet text button: cancel the in-flight run without competing with the stage strip */
+  .stage-cancel {
+    margin-top: 10px; padding: 0; border: none; background: none; cursor: pointer;
+    font: inherit; font-size: 0.78rem; font-weight: 600; color: var(--critical);
+  }
+  .stage-cancel:hover { text-decoration: underline; }
+  .stage-cancel:active { transform: scale(0.97); }
 
   /* ---------- connect ---------- */
   .field { display: flex; flex-direction: column; gap: 6px; }
@@ -683,6 +690,8 @@
           </div>
           <div class="stage-msg" id="two-stage-message"></div>
           <div id="two-stage-error"></div>
+          <button class="stage-cancel" id="two-stage-cancel" hidden onclick="cancelTwoStage()"
+            title="Cancel the two-stage clean and send the robot home">Cancel</button>
         </div>
 
         <div class="card">
@@ -1442,6 +1451,7 @@ function renderTwoStage(st) {
     el.classList.toggle("done", done);
   });
   $("two-stage-message").textContent = st.message || "";
+  $("two-stage-cancel").hidden = !st.running;
   const err = $("two-stage-error");
   err.style.display = st.error ? "block" : "none";
   err.textContent = st.error ? "⚠ " + st.error : "";
@@ -1495,6 +1505,17 @@ async function startTwoStage(segmentIds) {
     return;
   }
   startTwoStagePoll();
+  pollTwoStage();
+}
+
+async function cancelTwoStage() {
+  try {
+    const r = await fetch("/clean/two-stage/cancel", { method: "POST" });
+    if (r.ok) toast("Cancelling two-stage clean");
+    else toast(`Cancel failed (${r.status})`, true);
+  } catch { toast("Cancel failed — no connection", true); return; }
+  // The run winds down (dock + carpet restore) within a beat; the poller resets the strip
+  // and re-enables the orb once the status flips to cancelled.
   pollTwoStage();
 }
 

@@ -18,7 +18,7 @@ from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from roborock_auto.adapters import get_auth, get_gateway
-from roborock_auto.application.two_stage_clean import run_two_stage
+from roborock_auto.application.two_stage_clean import RunCancelled, run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
 from roborock_auto.domain.models import (
@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
     app.state.map_cache = {"at": 0.0, "png": b""}
     app.state.two_stage = _idle_progress()
     app.state.two_stage_task = None
+    app.state.two_stage_cancel = None
     try:
         yield
     finally:
@@ -299,6 +300,8 @@ async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, 
     gw = _gw(request)
     config = request.app.state.config
     progress.update(running=True, stage="vacuuming", message="starting", error=None)
+    cancel = asyncio.Event()
+    request.app.state.two_stage_cancel = cancel
 
     def on_stage(stage: str) -> None:
         progress["stage"] = stage
@@ -307,14 +310,27 @@ async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, 
     async def runner() -> None:
         try:
             await run_two_stage(
-                gw, config, segment_ids=segment_ids or None, on_stage=on_stage, log=_LOGGER.info
+                gw, config, segment_ids=segment_ids or None, on_stage=on_stage,
+                log=_LOGGER.info, cancel=cancel,
             )
+        except RunCancelled:
+            # The use case has already docked the robot and restored carpet mode.
+            progress.update(stage="cancelled", message="Two-stage clean cancelled", error=None)
         except Exception as exc:  # noqa: BLE001 - surface any failure to the status endpoint
             progress.update(stage="error", message=str(exc), error=str(exc))
         finally:
             progress["running"] = False
 
     request.app.state.two_stage_task = asyncio.create_task(runner())
+    return {"ok": True}
+
+
+@app.post("/clean/two-stage/cancel")
+async def clean_two_stage_cancel(request: Request):
+    progress = request.app.state.two_stage
+    if not progress["running"]:
+        raise HTTPException(409, "no two-stage clean is running")
+    request.app.state.two_stage_cancel.set()
     return {"ok": True}
 
 

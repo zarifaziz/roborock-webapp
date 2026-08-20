@@ -22,6 +22,7 @@ from roborock import RoborockCommand
 
 from roborock_auto.adapters.roborock_cloud.codes import (
     CLEANING_MODE_NAMES,
+    CONSUMABLE_ATTRS,
     FAN_LEVELS,
     MOP_MODES,
     WATER_MODES,
@@ -40,6 +41,7 @@ from roborock_auto.config import Config
 from roborock_auto.domain.models import (
     CarpetMode,
     CleaningMode,
+    ConsumablePart,
     Consumables,
     DeviceStatus,
     FanPower,
@@ -302,9 +304,9 @@ class RoborockCloudAdapter:
     async def find_robot(self) -> None:
         await self._send(RoborockCommand.FIND_ME)
 
-    async def clean_rooms(self, segment_ids: list[int]) -> None:
+    async def clean_rooms(self, segment_ids: list[int], repeat: int = 1) -> None:
         # Canonical V1 format (python-roborock / HA / miio all agree): a list holding one object.
-        params = [{"segments": segment_ids, "repeat": 1}]
+        params = [{"segments": segment_ids, "repeat": repeat}]
         _LOGGER.info("APP_SEGMENT_CLEAN payload params=%r", params)
         await self._send(RoborockCommand.APP_SEGMENT_CLEAN, params)
 
@@ -334,6 +336,13 @@ class RoborockCloudAdapter:
         # Firmware wants a bare object; the list form is rejected with -10005 "param is
         # not an object". (APP_SEGMENT_CLEAN is the opposite — it wants the list form.)
         await self._send(RoborockCommand.SET_CARPET_CLEAN_MODE, {"carpet_clean_mode": value})
+
+    async def reset_consumable(self, part: ConsumablePart) -> None:
+        # The trait sends RESET_CONSUMABLE with params=[attribute] and refreshes the counters.
+        async def do() -> None:
+            await self._v1.consumables.reset_consumable(CONSUMABLE_ATTRS[part])
+
+        await self._locked_retry(do)
 
     async def run_routine(self, routine_id: int) -> None:
         # Web-API call: retry, but no device lock (it does not touch the device connection).

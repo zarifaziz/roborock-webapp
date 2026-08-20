@@ -5,9 +5,10 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from roborock_auto.domain.models import Consumables
+from roborock_auto.domain.models import ConsumablePart, Consumables
 
 
 @runtime_checkable
 class MaintenancePort(Protocol):
     async def get_consumables(self) -> Consumables: ...
+    async def reset_consumable(self, part: ConsumablePart) -> None: ...

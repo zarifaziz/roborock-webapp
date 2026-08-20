@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from roborock_auto.adapters.web.server import app
-from roborock_auto.domain.models import CleaningMode
+from roborock_auto.domain.models import CleaningMode, ConsumablePart
 
 
 @pytest.fixture
@@ -48,6 +48,20 @@ def test_consumables_snapshot(client):
         "strainer_pct": 88,
         "cleaning_brush_pct": 93,
     }
+
+
+@pytest.mark.parametrize("part", ["main_brush", "side_brush", "filter", "sensor"])
+def test_consumables_reset_happy(client, part):
+    assert client.post("/consumables/reset", json={"part": part}).json() == {"ok": True}
+    assert client.app.state.gateway.commands == [
+        ("connect",),
+        ("reset_consumable", ConsumablePart(part)),
+    ]
+
+
+def test_consumables_reset_bad_part_is_422(client):
+    assert client.post("/consumables/reset", json={"part": "bogus"}).status_code == 422
+    assert client.post("/consumables/reset", json={}).status_code == 422
 
 
 def test_rooms_and_routines(client):
@@ -114,6 +128,24 @@ def test_clean_segments_happy(client, mode):
         ("set_cleaning_mode", CleaningMode(mode)),
         ("clean_rooms", (16, 17)),
     ]
+
+
+def test_clean_segments_repeat_threads_through(client):
+    assert client.post(
+        "/clean/segments", json={"segment_ids": [16, 17], "mode": "vacuum", "repeat": 2}
+    ).json() == {"ok": True}
+    assert client.app.state.gateway.commands == [
+        ("connect",),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("clean_rooms", (16, 17), 2),
+    ]
+
+
+@pytest.mark.parametrize("repeat", [0, 4])
+def test_clean_segments_repeat_out_of_range_is_422(client, repeat):
+    assert client.post(
+        "/clean/segments", json={"segment_ids": [16], "mode": "vacuum", "repeat": repeat}
+    ).status_code == 422
 
 
 def test_clean_segments_empty_ids_is_422(client):

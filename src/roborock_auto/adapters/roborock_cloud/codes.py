@@ -9,8 +9,9 @@ from __future__ import annotations
 from typing import Any
 
 from roborock.data.v1 import RoborockInCleaning, RoborockStateCode
+from roborock.devices.traits.v1.consumeable import ConsumableAttribute
 
-from roborock_auto.domain.models import CleaningMode, FanPower, MopMode, WaterMode
+from roborock_auto.domain.models import CleaningMode, ConsumablePart, FanPower, MopMode, WaterMode
 
 # Docked = charger connected. Codes from roborock.data.v1.RoborockStateCode.
 DOCKED_STATES = {
@@ -56,6 +57,14 @@ CLEANING_MODE_NAMES = {
     CleaningMode.VACUUM: "vacuum",
     CleaningMode.MOP: "mop",
     CleaningMode.VAC_AND_MOP: "vac_and_mop",
+}
+
+# Our semantic consumable part -> the library's ConsumableAttribute for RESET_CONSUMABLE.
+CONSUMABLE_ATTRS = {
+    ConsumablePart.MAIN_BRUSH: ConsumableAttribute.MAIN_BRUSH_WORK_TIME,
+    ConsumablePart.SIDE_BRUSH: ConsumableAttribute.SIDE_BRUSH_WORK_TIME,
+    ConsumablePart.FILTER: ConsumableAttribute.FILTER_WORK_TIME,
+    ConsumablePart.SENSOR: ConsumableAttribute.SENSOR_DIRTY_TIME,
 }
 
 

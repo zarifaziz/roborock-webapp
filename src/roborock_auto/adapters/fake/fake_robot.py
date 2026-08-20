@@ -15,6 +15,7 @@ from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
 from roborock_auto.domain.models import (
     CarpetMode,
     CleaningMode,
+    ConsumablePart,
     Consumables,
     DeviceStatus,
     FanPower,
@@ -161,9 +162,17 @@ class FakeRobot:
     async def find_robot(self) -> None:
         self.commands.append(("find_robot",))
 
-    async def clean_rooms(self, segment_ids: list[int]) -> None:
-        self.commands.append(("clean_rooms", tuple(segment_ids)))
+    async def clean_rooms(self, segment_ids: list[int], repeat: int = 1) -> None:
+        # The default repeat is left out of the record so callers that never pass it
+        # (the two-stage clean) keep asserting the historical 2-tuple shape.
+        if repeat == 1:
+            self.commands.append(("clean_rooms", tuple(segment_ids)))
+        else:
+            self.commands.append(("clean_rooms", tuple(segment_ids), repeat))
         self._job_start = self._clock()
+
+    async def reset_consumable(self, part: ConsumablePart) -> None:
+        self.commands.append(("reset_consumable", part))
 
     async def set_fan_power(self, power: FanPower) -> None:
         self.commands.append(("set_fan_power", power))

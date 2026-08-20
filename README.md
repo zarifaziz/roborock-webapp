@@ -12,6 +12,7 @@ laptop right now. Going live is filling in `.env` and setting `GATEWAY=live`; no
 
 ```
 uv sync --extra dev
+cp .env.example .env   # fake mode needs only TIMEZONE; set it to your IANA zone
 uv run uvicorn roborock_auto.adapters.web.server:app --host 127.0.0.1 --port 8000
 # open http://127.0.0.1:8000
 ```

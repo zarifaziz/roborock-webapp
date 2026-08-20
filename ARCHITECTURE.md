@@ -91,10 +91,10 @@ that context's application layer.
 
 ## 4. Ports: split by role, one adapter implements all
 
-Today's `Gateway` protocol (13 methods) is one interface. With dock actions, schedules,
-map editing, DND, volume, and child lock coming, it becomes a god interface where every
-consumer sees every method and every fake must stub everything. We split it by consumer
-role (interface segregation), keeping **semantic values in, plain dataclasses out**:
+Today's `Gateway` protocol (13 methods) is one interface. With dock actions, map editing,
+DND, volume, and child lock coming, it becomes a god interface where every consumer sees
+every method and every fake must stub everything. We split it by consumer role (interface
+segregation), keeping **semantic values in, plain dataclasses out**:
 
 ```python
 # ports/robot.py
@@ -144,7 +144,8 @@ gymnastics for this. The win is on the consumer side:
 - `TwoStageClean` depends on `RobotStatusPort + CleaningSettingsPort + RoutinePort` and
   nothing else. Its test fake implements 3 small protocols, not 20 methods.
 - The webapp's map endpoints depend only on `MapPort`.
-- Adding `SchedulePort` later touches zero existing consumers.
+- SCHEDULING proved the pattern: `ScheduleRulePort`, `OccurrencePort`, and
+  `RoomIntervalPort` (§2) were added later and touch zero of the ports above.
 
 Rule for growing a port: a new method goes in the port whose *consumer role* needs it,
 not wherever is convenient. If no existing port fits, add a new small one.

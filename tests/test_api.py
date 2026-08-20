@@ -865,3 +865,48 @@ def test_scheduling_end_to_end_interval_to_scheduler_fire_in_fake_mode(client, c
         "next_scheduled_at": _WEEKDAY_INSTANTS[1],
         "timezone": "Australia/Sydney",
     }
+
+
+# --- PWA serving: root-scoped service worker, manifest, icons ---
+
+
+def test_service_worker_served_from_root_with_root_scope(client):
+    """The worker MUST come from /sw.js (not the static mount): a service worker only
+    controls pages at or below its own path, so root serving is what makes its scope /.
+    The Service-Worker-Allowed header pins the widened scope explicitly."""
+    r = client.get("/sw.js")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/javascript")
+    assert r.headers["service-worker-allowed"] == "/"
+    assert 'self.addEventListener("fetch"' in r.text
+
+
+def test_manifest_served_with_manifest_content_type(client):
+    r = client.get("/manifest.webmanifest")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("application/manifest+json")
+    body = r.json()
+    assert body["start_url"] == "/"
+    assert body["scope"] == "/"
+    assert body["display"] == "standalone"
+    assert [icon["src"] for icon in body["icons"]] == [
+        "/static/icons/icon-192.png",
+        "/static/icons/icon-512.png",
+        "/static/icons/icon-maskable-512.png",
+    ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/static/icons/icon-192.png",
+        "/static/icons/icon-512.png",
+        "/static/icons/icon-maskable-512.png",
+        "/static/icons/apple-touch-icon.png",
+    ],
+)
+def test_icons_served_as_png(client, path):
+    r = client.get(path)
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "image/png"
+    assert r.content[:8] == b"\x89PNG\r\n\x1a\n"

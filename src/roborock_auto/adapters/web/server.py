@@ -660,4 +660,24 @@ async def index():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/sw.js")
+async def service_worker():
+    # Served from the ROOT, not the static mount: a service worker only controls pages at
+    # or below its own path, so /static/sw.js could never control /. The header widens the
+    # allowed scope explicitly as belt-and-braces.
+    return FileResponse(
+        STATIC_DIR / "sw.js",
+        media_type="text/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/manifest.webmanifest")
+async def manifest():
+    return FileResponse(
+        STATIC_DIR / "manifest.webmanifest",
+        media_type="application/manifest+json",
+    )
+
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

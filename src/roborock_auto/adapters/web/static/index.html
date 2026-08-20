@@ -4,6 +4,15 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>roborock-webapp</title>
+<link rel="manifest" href="/manifest.webmanifest" />
+<meta name="theme-color" content="#F6F7F9" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#1B1C1F" media="(prefers-color-scheme: dark)" />
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png" />
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Roborock" />
 <script>
   // Apply the persisted theme before first paint to avoid a flash of the wrong theme.
   document.documentElement.dataset.theme = localStorage.getItem("theme") || "auto";
@@ -516,6 +525,18 @@
     background: color-mix(in srgb, var(--critical) 12%, transparent);
     color: var(--critical); font-size: 0.85rem; font-weight: 600;
   }
+  /* Narrow phones (375px): let the room/rule name take its own full line and wrap,
+     instead of being squeezed to a few characters beside the pills. */
+  @media (max-width: 480px) {
+    .sched-row .row-top b { flex-basis: 100%; white-space: normal; }
+  }
+  /* On mobile the floating action bar overlays the Schedule tab's long lists; pad the
+     panel so scrolled-to-bottom rows clear it. The bar itself must stay visible —
+     Stop and Dock are safety controls while a clean is running. Desktop's action bar
+     is inline, so it is unaffected. */
+  @media (max-width: 1099px) {
+    .panel[data-panel="schedule"] { padding-bottom: 130px; }
+  }
 
   /* ---------- connect ---------- */
   .field { display: flex; flex-direction: column; gap: 6px; }
@@ -620,6 +641,8 @@
   }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
   #toast.err { background: var(--critical); color: #fff; }
+  /* tappable toast (the "update available — reload" notice) */
+  #toast.action { pointer-events: auto; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
 </style>
 </head>
 <body>
@@ -966,6 +989,12 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
+// User-supplied text (rule names) goes through here before any innerHTML interpolation:
+// a rule named "<img onerror=...>" must render as text, not execute.
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
 
 /* ---------- tab navigation ---------- */
 function showTab(name) {
@@ -1247,13 +1276,15 @@ async function buildMapRegions() {
     return `<button class="map-region" data-id="${r.segment_id}" title="${name}"
       style="left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%;--rc:${c}"><span class="map-label">${name}</span></button>`;
   }).join("");
-  overlay.addEventListener("click", (e) => {
+  // Assignment (not addEventListener): buildMapRegions can run again after an offline
+  // boot recovers, and a duplicated listener would toggle the room twice (a no-op).
+  overlay.onclick = (e) => {
     const region = e.target.closest(".map-region");
     if (!region) return;
     // Defer so a dblclick (zoom) can cancel the paired single clicks.
     clearTimeout(pendingRoomClick);
     pendingRoomClick = setTimeout(() => toggleRoom(Number(region.dataset.id)), 250);
-  });
+  };
 }
 
 function cleanRooms() {
@@ -1381,12 +1412,27 @@ function fmtCleanTime(sec) {
   return min < 60 ? min + " min" : `${Math.floor(min / 60)} h ${min % 60} min`;
 }
 
+// The honest offline state: name the problem in the header and stop pretending the
+// robot is reachable, instead of a half-rendered page of stale placeholders.
+function setOffline(on) {
+  const el = $("offline");
+  el.style.display = on ? "inline" : "none";
+  if (on) {
+    el.textContent = navigator.onLine
+      ? "● connection lost — is the app still running?"
+      : "● offline — robot data unavailable";
+    $("hdr-batt-state").textContent = "offline";
+  }
+}
+
 async function refreshStatus() {
   let s;
   try {
     s = await (await fetch("/status")).json();
-    $("offline").style.display = "none";
-  } catch { $("offline").style.display = "inline"; return; }
+    setOffline(false);
+  } catch { setOffline(true); return; }
+  // An offline boot loaded no rooms/routines: fetch them now the connection is back.
+  if (!appDataLoaded) loadAppData().catch(() => {});
 
   const stateLabel = s.state_name.replaceAll("_", " ");
   $("s-state").textContent = stateLabel;
@@ -1680,8 +1726,14 @@ function markSeg(segId, v) {
 const DAY_SHORT = { monday: "Mon", tuesday: "Tue", wednesday: "Wed", thursday: "Thu", friday: "Fri", saturday: "Sat", sunday: "Sun" };
 const MODE_LABEL = { vacuum: "Vacuum", mop: "Mop", vac_and_mop: "Vac + Mop" };
 
+// The household's configured timezone, from /scheduler/status. Scheduled instants are
+// rendered in THIS zone, not the browser's — a schedule that says one time in the app
+// and fires at another is the confusion the timezone setting exists to prevent.
+let householdTz = null;
 function fmtWhen(iso) {
-  return new Date(iso).toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  const opts = { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" };
+  if (householdTz) opts.timeZone = householdTz;
+  return new Date(iso).toLocaleString([], opts);
 }
 function fmtAgo(iso) {
   const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -1781,7 +1833,7 @@ function renderRules(rules) {
       : r.next_fires_at ? `<span class="pill on">next ${fmtWhen(r.next_fires_at)}</span>`
       : `<span class="pill">no upcoming firing</span>`;
     return `<div class="sched-row">
-      <div class="row-top"><b>${r.name}</b>${next}</div>
+      <div class="row-top"><b>${esc(r.name)}</b>${next}</div>
       <div class="sched-sub">${days} at ${r.recurrence.at} · ${MODE_LABEL[r.action.mode]} · ${scope}</div>
       <div class="row-top" style="margin-top: 2px">
         <button class="reset-btn" title="${r.enabled ? "Pause this rule without deleting it" : "Resume this rule"}" onclick="toggleRule(${r.id})">${r.enabled ? "Disable" : "Enable"}</button>
@@ -1895,7 +1947,7 @@ function renderTimeline(list) {
       ? `<div class="sched-sub">⏸ ${o.blocked_reason}</div>` : "";
     const fired = o.fired_at ? ` · fired ${fmtAgo(o.fired_at)}` : "";
     return `<div class="sched-row">
-      <div class="row-top"><b>${o.rule_name}</b>${pill}</div>
+      <div class="row-top"><b>${esc(o.rule_name)}</b>${pill}</div>
       <div class="sched-sub">${fmtWhen(o.scheduled_for)}${fired}</div>${blocked}
     </div>`;
   };
@@ -1906,13 +1958,25 @@ function renderTimeline(list) {
 
 /* --- refresh --- */
 async function refreshSchedule() {
-  const get = (p) => fetch(p).then((r) => r.json());
+  // Check status, don't assume success: a failing endpoint must surface on the health
+  // line, not render as an innocuous empty card.
+  const get = async (p) => {
+    const r = await fetch(p);
+    if (!r.ok) throw new Error(`${p} failed (${r.status})`);
+    return r.json();
+  };
   let ov, ints, rules, occ, health;
   try {
     [ov, ints, rules, occ, health] = await Promise.all([
       get("/overdue"), get("/intervals"), get("/schedules"), get("/occurrences"), get("/scheduler/status"),
     ]);
-  } catch { return; }  // offline: the status poller already shows the banner
+  } catch (e) {
+    const why = e instanceof TypeError ? "no connection — is the app still running?" : e.message;
+    $("sched-health").innerHTML = `<span class="dot bad"></span><span></span>`;
+    $("sched-health").lastElementChild.textContent = `Scheduler — ${why}`;
+    return;
+  }
+  householdTz = health.timezone || householdTz;  // set BEFORE fmtWhen renders any instant
   renderOverdue(ov);
   renderIntervals(ints);
   renderRules(rules);
@@ -1920,12 +1984,45 @@ async function refreshSchedule() {
   renderHealth(health);
 }
 
+/* ---------- PWA: service worker + update notice ---------- */
+// Guarded twice: service worker support AND a secure context (https or localhost). Over
+// plain http on a LAN address neither branch runs, so the app behaves exactly as before
+// — no registration attempt, no console error, no broken UI.
+function initServiceWorker() {
+  if (!("serviceWorker" in navigator) || !window.isSecureContext) return;
+  navigator.serviceWorker.register("/sw.js", { scope: "/" }).then((reg) => {
+    // A newly installed worker while one already controls the page = a new version of
+    // the shell is waiting. Tell the user; never silently serve an old shell forever.
+    const watch = (w) => w && w.addEventListener("statechange", () => {
+      if (w.state === "installed" && navigator.serviceWorker.controller) showUpdateToast(reg);
+    });
+    if (reg.waiting && navigator.serviceWorker.controller) showUpdateToast(reg);
+    watch(reg.installing);
+    reg.addEventListener("updatefound", () => watch(reg.installing));
+  }).catch(() => { /* a failed registration must never break the app */ });
+}
+
+function showUpdateToast(reg) {
+  const t = $("toast");
+  t.textContent = "App updated — tap to reload";
+  t.className = "show action";
+  clearTimeout(toastTimer);  // stays up until tapped (or a later toast replaces it)
+  t.onclick = () => {
+    t.onclick = null;
+    t.className = "";
+    // Activate the waiting worker, then reload once it takes control.
+    navigator.serviceWorker.addEventListener("controllerchange", () => location.reload(), { once: true });
+    if (reg.waiting) reg.waiting.postMessage({ type: "SKIP_WAITING" });
+    else location.reload();
+  };
+}
+
 /* ---------- boot ---------- */
-async function boot() {
-  applyRot();
-  initMapZoom();
-  refreshMap();
-  window.addEventListener("resize", sizeMap);
+// Everything that needs the server. Kept out of boot()'s critical path so an OFFLINE
+// launch (shell served by the service worker) still renders the full UI and recovers:
+// refreshStatus() retries this once the connection returns.
+let appDataLoaded = false;
+async function loadAppData() {
   try {
     const caps = await (await fetch("/capabilities")).json();
     $("model").textContent = caps.model;
@@ -1935,12 +2032,43 @@ async function boot() {
   roomsCache = rooms;
   $("rooms").innerHTML = rooms.map((r) =>
     `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
+  await buildMapRegions();
+
+  // Schedule cards: rooms are picked by name everywhere, never by Segment number.
+  $("interval-room").innerHTML = rooms.map((r) =>
+    `<option value="${r.segment_id}">${r.name}</option>`).join("");
+  $("rule-rooms").innerHTML = rooms.map((r) =>
+    `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
+
+  const routines = await (await fetch("/routines")).json();
+  $("routines").innerHTML = routines.map((r) =>
+    `<button class="btn" onclick="post('/routine',{routine_id:${r.id}},'${r.name} started')">${r.name}</button>`).join("");
+
+  await loadConsumables();
+
+  // Carpet setting: one boot-time device read (not per poll — each read costs a command).
+  try {
+    syncSeg("seg-carpet", (await (await fetch("/carpet")).json()).mode);
+  } catch { /* toggle stays unmarked until the user sets it */ }
+
+  await loadAuthStatus();
+  appDataLoaded = true;
+  refreshMap();
+  refreshSchedule();
+}
+
+async function boot() {
+  applyRot();
+  initMapZoom();
+  window.addEventListener("resize", sizeMap);
+  initServiceWorker();
+
+  // Listeners attach to containers that survive an offline boot; loadAppData only
+  // (re)fills their contents, so nothing here is duplicated on recovery.
   $("rooms").addEventListener("click", (e) => {
     const chip = e.target.closest(".chip");
     if (chip) toggleRoom(Number(chip.dataset.id));
   });
-  await buildMapRegions();
-
   // Local-only pickers (no POST until the clean is started): mode + passes.
   for (const segId of ["seg-room-mode", "seg-passes", "seg-overdue-mode", "seg-rule-mode"]) {
     $(segId).addEventListener("click", (e) => {
@@ -1949,12 +2077,6 @@ async function boot() {
       [...$(segId).children].forEach((b) => b.classList.toggle("active", b === btn));
     });
   }
-
-  // Schedule cards: rooms are picked by name everywhere, never by Segment number.
-  $("interval-room").innerHTML = rooms.map((r) =>
-    `<option value="${r.segment_id}">${r.name}</option>`).join("");
-  $("rule-rooms").innerHTML = rooms.map((r) =>
-    `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
   $("rule-rooms").addEventListener("click", (e) => {
     const chip = e.target.closest(".chip");
     if (chip) chip.classList.toggle("sel");
@@ -1970,23 +2092,14 @@ async function boot() {
     $("rule-rooms").hidden = btn.dataset.v !== "rooms";
   });
 
-  const routines = await (await fetch("/routines")).json();
-  $("routines").innerHTML = routines.map((r) =>
-    `<button class="btn" onclick="post('/routine',{routine_id:${r.id}},'${r.name} started')">${r.name}</button>`).join("");
+  try { await loadAppData(); }
+  catch { setOffline(true); }  // offline launch: honest banner, shell stays usable
 
-  await loadConsumables();
-
-  // Carpet setting: one boot-time device read (not per poll — each read costs a command).
-  try {
-    syncSeg("seg-carpet", (await (await fetch("/carpet")).json()).mode);
-  } catch { /* toggle stays unmarked until the user sets it */ }
-
-  await loadAuthStatus();
   const st0 = await fetchTwoStageStatus();
   if (st0) { renderTwoStage(st0); if (st0.running) startTwoStagePoll(); }
 
   await refreshStatus();
-  refreshSchedule();
+  window.addEventListener("online", refreshStatus);
   setInterval(refreshStatus, 5000);
   setInterval(refreshMap, 15000);  // matches the server-side map TTL
   // Keep the schedule cards live (a firing shows up as it happens), but only while visible.

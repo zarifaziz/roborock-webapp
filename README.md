@@ -88,3 +88,15 @@ for triggering a Two-Stage Clean, not the only way to schedule anything — a Sc
 above covers most recurring cleans without a workflow file. It is disabled by default;
 enable the cron and add the `ROBOROCK_USER_DATA` secret plus the repo variables if you
 still want it.
+
+## Installing the app to a phone (PWA)
+
+The web app is installable: it ships a root-scoped service worker (`/sw.js`), a manifest,
+and icons, so "Add to Home Screen" opens it standalone with the shell available offline.
+Robot state and commands are never cached — offline you get the shell and an honest
+offline banner, not stale data.
+
+Service workers require a **secure context**: HTTPS, or `localhost`/`127.0.0.1`. Over a
+plain LAN address (`http://192.168.x.x:8000`) the app works exactly as before but cannot
+install or work offline — that is a browser rule, not a defect. To install on a phone,
+put the app behind HTTPS (e.g. a reverse proxy or a tailnet HTTPS cert).

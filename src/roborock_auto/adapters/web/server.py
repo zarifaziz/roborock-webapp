@@ -429,6 +429,11 @@ def _parse_recurrence(body: dict) -> WeeklyGrid:
         at = time_of_day.fromisoformat(raw_at)
     except (TypeError, ValueError):
         raise HTTPException(422, f"invalid time {raw_at!r} for recurrence.at: expected HH:MM")
+    # fromisoformat is laxer than the HH:MM contract: it accepts seconds, compact "0930",
+    # and — worst — a UTC offset that generation would discard while the response echoed
+    # it back. An offset survives the canonical round-trip, so it needs its own check.
+    if at.tzinfo is not None or raw_at != at.isoformat(timespec="minutes"):
+        raise HTTPException(422, f"invalid time {raw_at!r} for recurrence.at: expected HH:MM")
     try:
         return WeeklyGrid(days=frozenset(_parse(Weekday, day) for day in days), at=at)
     except ValueError as exc:

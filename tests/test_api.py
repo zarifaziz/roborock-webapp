@@ -584,6 +584,17 @@ def test_schedule_with_an_invalid_time_is_422(client):
     assert r.json() == {"detail": "invalid time '25:99' for recurrence.at: expected HH:MM"}
 
 
+@pytest.mark.parametrize("at", ["09:30:45+05:00", "09:30+00:00", "09:30:00", "0930"])
+def test_schedule_with_a_time_outside_the_hh_mm_contract_is_422(client, at):
+    # A UTC offset would be discarded during generation while the response echoed it
+    # back — the Rule would silently run hours off. Seconds and compact forms fail the
+    # same canonical HH:MM check.
+    r = client.post("/schedules", json=_rule_request(recurrence={"days": ["monday"], "at": at}))
+    assert r.status_code == 422
+    assert r.json() == {"detail": f"invalid time {at!r} for recurrence.at: expected HH:MM"}
+    assert client.get("/schedules").json() == []
+
+
 def test_schedule_with_an_invalid_mode_is_422(client):
     r = client.post(
         "/schedules",

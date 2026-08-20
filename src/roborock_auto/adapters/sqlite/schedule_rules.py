@@ -1,11 +1,11 @@
 """ScheduleRulePort over the schedule_rules table.
 
 Every row carries exactly one device identifier and the store only reads its own device's
-rows (docs/adr/0005). The Recurrence is stored as a comma-separated Weekday list plus an
-ISO wall-clock time; the Action as a type discriminator plus a JSON payload, parsed back
-into its typed value object on read so a malformed row fails loudly here rather than
-leaking a dictionary into the domain (docs/adr/0004). Deleting flags the row instead of
-removing it, so a Rule's history survives its deletion.
+rows (docs/adr/0005). The Recurrence and the Action are each stored as a type
+discriminator plus a JSON payload, parsed back into their typed value objects on read so
+a malformed row fails loudly here rather than leaking a dictionary into the domain
+(docs/adr/0004). Deleting flags the row instead of removing it, so a Rule's history
+survives its deletion.
 """
 
 from __future__ import annotations
@@ -18,12 +18,14 @@ from roborock_auto.domain.models import (
     Action,
     CleanAction,
     CleaningMode,
+    RecurrenceSchedule,
     ScheduleRule,
     Weekday,
     WeeklyGrid,
 )
 
 _CLEAN = "clean"
+_WEEKLY_GRID = "weekly_grid"
 
 
 def _encode_action(action: Action) -> tuple[str, str]:
@@ -42,19 +44,29 @@ def _parse_action(action_type: str, action_json: str) -> Action:
     )
 
 
-def _encode_days(days: frozenset[Weekday]) -> str:
-    return ",".join(day.value for day in Weekday if day in days)
+def _encode_recurrence(recurrence: RecurrenceSchedule) -> tuple[str, str]:
+    if not isinstance(recurrence, WeeklyGrid):
+        raise TypeError(f"unknown recurrence type {type(recurrence).__name__!r}")
+    days = [day.value for day in Weekday if day in recurrence.days]
+    return _WEEKLY_GRID, json.dumps({"days": days, "at": recurrence.at.isoformat()})
+
+
+def _parse_recurrence(recurrence_type: str, recurrence_json: str) -> RecurrenceSchedule:
+    if recurrence_type != _WEEKLY_GRID:
+        raise ValueError(f"unknown recurrence type {recurrence_type!r} in schedule_rules")
+    payload = json.loads(recurrence_json)
+    return WeeklyGrid(
+        days=frozenset(Weekday(day) for day in payload["days"]),
+        at=time.fromisoformat(payload["at"]),
+    )
 
 
 def _rule(row: sqlite3.Row | tuple) -> ScheduleRule:
-    rule_id, name, days, at_time, action_type, action_json, enabled = row
+    rule_id, name, recurrence_type, recurrence_json, action_type, action_json, enabled = row
     return ScheduleRule(
         id=rule_id,
         name=name,
-        recurrence=WeeklyGrid(
-            days=frozenset(Weekday(day) for day in days.split(",")),
-            at=time.fromisoformat(at_time),
-        ),
+        recurrence=_parse_recurrence(recurrence_type, recurrence_json),
         action=_parse_action(action_type, action_json),
         enabled=bool(enabled),
     )
@@ -66,18 +78,20 @@ class SqliteScheduleRules:
         self._device_id = device_id
 
     async def create_rule(
-        self, name: str, recurrence: WeeklyGrid, action: Action, enabled: bool
+        self, name: str, recurrence: RecurrenceSchedule, action: Action, enabled: bool
     ) -> ScheduleRule:
+        recurrence_type, recurrence_json = _encode_recurrence(recurrence)
         action_type, action_json = _encode_action(action)
         cursor = self._conn.execute(
             "INSERT INTO schedule_rules"
-            " (device_id, name, days, at_time, action_type, action_json, enabled)"
+            " (device_id, name, recurrence_type, recurrence_json,"
+            " action_type, action_json, enabled)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 self._device_id,
                 name,
-                _encode_days(recurrence.days),
-                recurrence.at.isoformat(),
+                recurrence_type,
+                recurrence_json,
                 action_type,
                 action_json,
                 int(enabled),
@@ -90,7 +104,7 @@ class SqliteScheduleRules:
 
     async def list_rules(self) -> list[ScheduleRule]:
         rows = self._conn.execute(
-            "SELECT id, name, days, at_time, action_type, action_json, enabled"
+            "SELECT id, name, recurrence_type, recurrence_json, action_type, action_json, enabled"
             " FROM schedule_rules WHERE device_id = ? AND deleted = 0 ORDER BY id",
             (self._device_id,),
         ).fetchall()
@@ -98,15 +112,17 @@ class SqliteScheduleRules:
         return [_rule(row) for row in rows]
 
     async def replace_rule(self, rule: ScheduleRule) -> bool:
+        recurrence_type, recurrence_json = _encode_recurrence(rule.recurrence)
         action_type, action_json = _encode_action(rule.action)
         cursor = self._conn.execute(
             "UPDATE schedule_rules"
-            " SET name = ?, days = ?, at_time = ?, action_type = ?, action_json = ?, enabled = ?"
+            " SET name = ?, recurrence_type = ?, recurrence_json = ?,"
+            " action_type = ?, action_json = ?, enabled = ?"
             " WHERE device_id = ? AND id = ? AND deleted = 0",
             (
                 rule.name,
-                _encode_days(rule.recurrence.days),
-                rule.recurrence.at.isoformat(),
+                recurrence_type,
+                recurrence_json,
                 action_type,
                 action_json,
                 int(rule.enabled),

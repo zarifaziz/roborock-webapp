@@ -168,6 +168,10 @@ class WeeklyGrid:
     def __post_init__(self) -> None:
         if not self.days:
             raise ValueError("a Schedule Rule needs at least one day; disable it to pause it")
+        if self.at.tzinfo is not None:
+            # Generation attaches the household zone itself; an offset here would be
+            # silently overridden, firing the Rule hours away from what it claims.
+            raise ValueError("recurrence time of day is wall-clock; it cannot carry a timezone")
 
     def occurrences_between(self, start: datetime, end: datetime, tz: tzinfo) -> list[datetime]:
         # The conversion order is fixed: convert the window to local, walk local calendar
@@ -209,7 +213,7 @@ class ScheduleRule:
 
     id: int
     name: str
-    recurrence: WeeklyGrid
+    recurrence: RecurrenceSchedule
     action: Action
     enabled: bool
 

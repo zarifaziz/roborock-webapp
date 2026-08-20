@@ -2,22 +2,22 @@
 
 Separate from the Room Interval store and the cleaning log: this store holds only Rules,
 consumed by the schedules CRUD endpoints. Persisted rows are scoped to one device
-(docs/adr/0005). The Action payload is parsed into its typed value object on read, so a
-malformed row fails loudly at this boundary instead of leaking a dictionary into the
-domain (docs/adr/0004).
+(docs/adr/0005). The Recurrence and Action payloads are parsed into their typed value
+objects on read, so a malformed row fails loudly at this boundary instead of leaking a
+dictionary into the domain (docs/adr/0004).
 """
 
 from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from roborock_auto.domain.models import Action, ScheduleRule, WeeklyGrid
+from roborock_auto.domain.models import Action, RecurrenceSchedule, ScheduleRule
 
 
 @runtime_checkable
 class ScheduleRulePort(Protocol):
     async def create_rule(
-        self, name: str, recurrence: WeeklyGrid, action: Action, enabled: bool
+        self, name: str, recurrence: RecurrenceSchedule, action: Action, enabled: bool
     ) -> ScheduleRule:
         """Store a new Rule and return it with its assigned identity."""
         ...

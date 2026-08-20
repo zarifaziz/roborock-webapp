@@ -6,7 +6,8 @@ seam structurally can: exact round-tripping of datetimes (timezone-aware, stored
 enums, durations, Segment lists, and the Rule's Recurrence and Action value objects;
 last-cleaned derived as the max started_at per requested Segment, with a whole-house run
 counting towards every one of them; device scoping of every row; soft deletion of Rules;
-the Action parsed at the persistence boundary so a malformed row fails loudly on read;
+the Recurrence and the Action parsed at the persistence boundary so a malformed row
+fails loudly on read;
 and migrations that are idempotent across a re-open and atomic under a mid-script
 failure.
 """
@@ -317,12 +318,36 @@ async def test_a_malformed_action_payload_fails_loudly_on_read(tmp_path):
     conn.close()
 
 
+async def test_a_malformed_recurrence_payload_fails_loudly_on_read(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteScheduleRules(conn, device_id="robot-1")
+    await store.create_rule(**_weekday_mornings())
+    conn.execute("UPDATE schedule_rules SET recurrence_json = '{\"days\": [\"monday\"]}'")
+    conn.commit()
+    with pytest.raises(KeyError, match="at"):
+        await store.list_rules()
+    conn.close()
+
+
 def test_an_unknown_action_type_is_blocked_by_the_schema(tmp_path):
     conn = open_database(str(tmp_path / "roborock.db"))
     with pytest.raises(sqlite3.IntegrityError, match="action_type"):
         conn.execute(
             "INSERT INTO schedule_rules"
-            " (device_id, name, days, at_time, action_type, action_json, enabled)"
-            " VALUES ('robot-1', 'r', 'monday', '09:30:00', 'mop_wash', '{}', 1)"
+            " (device_id, name, recurrence_type, recurrence_json,"
+            " action_type, action_json, enabled)"
+            " VALUES ('robot-1', 'r', 'weekly_grid', '{}', 'mop_wash', '{}', 1)"
+        )
+    conn.close()
+
+
+def test_an_unknown_recurrence_type_is_blocked_by_the_schema(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    with pytest.raises(sqlite3.IntegrityError, match="recurrence_type"):
+        conn.execute(
+            "INSERT INTO schedule_rules"
+            " (device_id, name, recurrence_type, recurrence_json,"
+            " action_type, action_json, enabled)"
+            " VALUES ('robot-1', 'r', 'rrule', '{}', 'clean', '{}', 1)"
         )
     conn.close()

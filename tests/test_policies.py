@@ -242,6 +242,13 @@ def test_a_weekly_grid_with_no_days_is_a_typo_not_a_paused_rule():
         WeeklyGrid(days=frozenset(), at=time(9, 30))
 
 
+def test_a_weekly_grid_time_of_day_is_wall_clock_so_it_cannot_carry_a_timezone():
+    # Generation attaches the household zone itself; an offset on `at` would be silently
+    # overridden and the Rule would fire hours away from what it claims.
+    with pytest.raises(ValueError, match="wall-clock"):
+        WeeklyGrid(days=EVERY_DAY, at=time(9, 30, tzinfo=UTC))
+
+
 def test_a_clean_action_with_an_empty_segment_list_is_ambiguous():
     # None means the whole house; an empty list is rejected rather than guessed at.
     CleanAction(mode=CleaningMode.VACUUM, segment_ids=None)

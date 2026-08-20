@@ -926,20 +926,40 @@ function applyRot() {
   // Labels read this to counter-rotate and stay upright (see .map-label).
   rotor.style.setProperty("--rot", `${rot}deg`);
 }
-function rotateMap() { rot = (rot + 90) % 360; localStorage.setItem("mapRot", rot); applyRot(); }
+function rotateMap() {
+  rot = (rot + 90) % 360;
+  localStorage.setItem("mapRot", rot);
+  applyRot();
+  applyZoom();  // the rotated content's pan bounds changed, so re-clamp
+}
 
 /* ---------- map zoom & pan ---------- */
 // Zoom/pan lives on #map-zoom (translate then scale, origin 0 0); rotation stays on
-// #map-rotor inside it, so the two never interact. Panning is clamped so the scaled
-// map always covers the stage — no gutters past any edge.
+// #map-rotor inside it. Panning is clamped so the scaled, rotated content covers the
+// stage wherever it can — no gutters past any edge, every part of the map reachable.
 const ZOOM_MIN = 1, ZOOM_MAX = 4;
 let zScale = 1, zTx = 0, zTy = 0;
+
+// Clamp a candidate pan against the rotated content's bounding box. #map-rotor spins
+// about the stage centre, so at 90/270 the box is the stage rect with W and H swapped
+// around that centre; at 0/180 it is the stage rect itself.
+function clampPan(tx, ty) {
+  const stage = $("map-stage");
+  const W = stage.clientWidth, H = stage.clientHeight;
+  const swap = rot % 180 !== 0;
+  const axis = (t, stageLen, boxLen) => {
+    const b0 = (stageLen - boxLen) / 2;  // bbox start in #map-zoom local coords
+    const lo = stageLen - zScale * (b0 + boxLen), hi = -zScale * b0;
+    // Content narrower than the stage on this axis (non-square at 90/270): centre it.
+    return lo > hi ? (lo + hi) / 2 : Math.min(hi, Math.max(lo, t));
+  };
+  return [axis(tx, W, swap ? H : W), axis(ty, H, swap ? W : H)];
+}
 
 function applyZoom() {
   const stage = $("map-stage");
   zScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zScale));
-  zTx = Math.min(0, Math.max(stage.clientWidth * (1 - zScale), zTx));
-  zTy = Math.min(0, Math.max(stage.clientHeight * (1 - zScale), zTy));
+  [zTx, zTy] = clampPan(zTx, zTy);
   $("map-zoom").style.transform = `translate(${zTx}px, ${zTy}px) scale(${zScale})`;
   $("map-reset").hidden = zScale === 1 && zTx === 0 && zTy === 0;
   // While zoomed the pointer pans the map, so touch scrolling must not fight it.
@@ -958,9 +978,14 @@ function zoomAt(px, py, next) {
 
 function resetZoom() {
   const el = $("map-zoom");
-  if (!window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  // Already at identity: no transform change, so transitionend would never fire and
+  // the inline transition would linger, animating every later wheel/drag frame.
+  const atIdentity = zScale === 1 && zTx === 0 && zTy === 0;
+  if (!atIdentity && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
     el.style.transition = "transform 0.3s ease";
-    el.addEventListener("transitionend", () => { el.style.transition = ""; }, { once: true });
+    const clear = () => { el.style.transition = ""; };
+    el.addEventListener("transitionend", clear, { once: true });
+    setTimeout(clear, 400);  // safety net in case transitionend is swallowed
   }
   zScale = 1; zTx = 0; zTy = 0;
   applyZoom();
@@ -984,8 +1009,7 @@ function initMapZoom() {
       return;
     }
     if (zScale === 1) return;  // unzoomed plain wheel -> page scroll
-    const nx = Math.min(0, Math.max(stage.clientWidth * (1 - zScale), zTx - e.deltaX));
-    const ny = Math.min(0, Math.max(stage.clientHeight * (1 - zScale), zTy - e.deltaY));
+    const [nx, ny] = clampPan(zTx - e.deltaX, zTy - e.deltaY);
     if (nx === zTx && ny === zTy) return;  // pinned at the clamp -> page scroll
     e.preventDefault();
     zTx = nx; zTy = ny;

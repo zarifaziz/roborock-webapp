@@ -190,7 +190,7 @@ async def run_two_stage(
         log("mop stage: robot left the dock, waiting for it to finish")
         on_stage("mop_waiting")
         await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
-    except BaseException:
+    except Exception:
         await _recover_after_abort(gw, log=log)
         raise
     log("mop stage: complete")

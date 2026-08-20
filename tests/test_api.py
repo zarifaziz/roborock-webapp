@@ -643,3 +643,131 @@ def test_overdue_loop_end_to_end(client, clock):
     assert client.get("/overdue").json() == [
         _overdue(16, days=2.0, cleaned_at=started, priority=1.5)
     ]
+
+
+def _occ_doc(id, rule_id, scheduled_for, *, rule_name="Weekday mornings", state="pending"):
+    scheduled = datetime.fromisoformat(scheduled_for)
+    return {
+        "id": id,
+        "rule_id": rule_id,
+        "rule_name": rule_name,
+        "scheduled_for": scheduled.isoformat(),
+        "deadline": (scheduled + timedelta(hours=6)).isoformat(),  # the six-hour default
+        "state": state,
+        "attempts": 0,
+        "blocked_reason": None,
+        "fired_at": None,
+    }
+
+
+# The weekday-mornings Rule (Mon/Wed/Fri 09:30 Sydney) materialised from Thu 2026-08-20
+# 19:00 Sydney over the 14-day horizon: 09:30 AEST is 23:30 UTC the previous day.
+_WEEKDAY_INSTANTS = (
+    "2026-08-20T23:30:00+00:00",  # Fri 21st
+    "2026-08-23T23:30:00+00:00",  # Mon 24th
+    "2026-08-25T23:30:00+00:00",  # Wed 26th
+    "2026-08-27T23:30:00+00:00",  # Fri 28th
+    "2026-08-30T23:30:00+00:00",  # Mon 31st
+    "2026-09-01T23:30:00+00:00",  # Wed 2nd
+)
+
+
+def test_creating_a_rule_materialises_a_fortnight_of_pending_occurrences(client, clock):
+    client.post("/schedules", json=_rule_request())
+    assert client.get("/occurrences").json() == [
+        _occ_doc(id, 1, at) for id, at in enumerate(_WEEKDAY_INSTANTS, start=1)
+    ]
+
+
+def test_materialising_again_leaves_existing_occurrences_untouched(client, clock):
+    """Creating a second Rule re-runs Materialisation over every Rule; the first Rule's
+    Occurrences keep their identities and gain no duplicates."""
+    client.post("/schedules", json=_rule_request())
+    client.post(
+        "/schedules",
+        json=_rule_request(
+            name="Weekend mop",
+            recurrence={"days": ["sunday"], "at": "11:00"},
+            action={"type": "clean", "mode": "mop", "segment_ids": None},
+        ),
+    )
+    sunday = [
+        _occ_doc(7, 2, "2026-08-23T01:00:00+00:00", rule_name="Weekend mop"),
+        _occ_doc(8, 2, "2026-08-30T01:00:00+00:00", rule_name="Weekend mop"),
+    ]
+    weekday = [_occ_doc(id, 1, at) for id, at in enumerate(_WEEKDAY_INSTANTS, start=1)]
+    assert client.get("/occurrences").json() == [
+        weekday[0], sunday[0], weekday[1], weekday[2], weekday[3],
+        sunday[1], weekday[4], weekday[5],
+    ]
+
+
+def test_a_disabled_rule_materialises_nothing(client, clock):
+    client.post("/schedules", json=_rule_request(enabled=False))
+    assert client.get("/occurrences").json() == []
+
+
+def test_disabling_a_rule_cancels_every_pending_occurrence_even_past_ones(client, clock):
+    client.post("/schedules", json=_rule_request())
+    clock["now"] += timedelta(days=2)  # the first instant is now in the past
+    client.put("/schedules/1", json=_rule_request(enabled=False))
+    assert client.get("/occurrences").json() == [
+        _occ_doc(id, 1, at, state="cancelled")
+        for id, at in enumerate(_WEEKDAY_INSTANTS, start=1)
+    ]
+
+
+def test_editing_a_rule_cancels_its_occurrences_and_materialises_the_new_ones(client, clock):
+    """Restating the intent supersedes the old one: the 09:30 firings become CANCELLED
+    rows — history, not a gap — and the 10:00 firings (00:00 UTC) appear beside them."""
+    client.post("/schedules", json=_rule_request())
+    client.put("/schedules/1", json=_rule_request(recurrence={
+        "days": ["friday", "monday", "wednesday"], "at": "10:00",
+    }))
+    replacements = (
+        "2026-08-21T00:00:00+00:00",
+        "2026-08-24T00:00:00+00:00",
+        "2026-08-26T00:00:00+00:00",
+        "2026-08-28T00:00:00+00:00",
+        "2026-08-31T00:00:00+00:00",
+        "2026-09-02T00:00:00+00:00",
+    )
+    expected = []
+    for id, (old, new) in enumerate(zip(_WEEKDAY_INSTANTS, replacements), start=1):
+        expected.append(_occ_doc(id, 1, old, state="cancelled"))
+        expected.append(_occ_doc(id + 6, 1, new))
+    assert client.get("/occurrences").json() == expected
+
+
+def test_a_rename_only_edit_still_supersedes_its_occurrences(client, clock):
+    """A cancelled row frees its (Rule, instant) key, so an edit that keeps the same
+    Recurrence re-materialises fresh PENDING rows at the very same instants."""
+    client.post("/schedules", json=_rule_request())
+    client.put("/schedules/1", json=_rule_request(name="Renamed"))
+    expected = []
+    for id, at in enumerate(_WEEKDAY_INSTANTS, start=1):
+        expected.append(_occ_doc(id, 1, at, rule_name="Renamed", state="cancelled"))
+        expected.append(_occ_doc(id + 6, 1, at, rule_name="Renamed"))
+    assert client.get("/occurrences").json() == expected
+
+
+def test_an_already_claimed_occurrence_rides_out_a_rule_change(client, clock):
+    client.post("/schedules", json=_rule_request())
+    assert asyncio.run(client.app.state.occurrences.claim(1)) is True
+    client.put("/schedules/1", json=_rule_request(enabled=False))
+    assert client.get("/occurrences").json() == [
+        _occ_doc(1, 1, _WEEKDAY_INSTANTS[0], state="claimed"),
+        *(
+            _occ_doc(id, 1, at, state="cancelled")
+            for id, at in enumerate(_WEEKDAY_INSTANTS[1:], start=2)
+        ),
+    ]
+
+
+def test_deleting_a_rule_cancels_pending_occurrences_and_keeps_the_history(client, clock):
+    client.post("/schedules", json=_rule_request())
+    assert client.delete("/schedules/1").json() == {"ok": True}
+    assert client.get("/occurrences").json() == [
+        _occ_doc(id, 1, at, state="cancelled")
+        for id, at in enumerate(_WEEKDAY_INSTANTS, start=1)
+    ]

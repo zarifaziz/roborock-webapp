@@ -13,6 +13,7 @@ from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.lifecycle import ConnectionPort
 from roborock_auto.ports.maintenance import MaintenancePort
 from roborock_auto.ports.mapping import MapPort
+from roborock_auto.ports.occurrences import OccurrencePort
 from roborock_auto.ports.robot import (
     CleaningControlPort,
     CleaningSettingsPort,
@@ -30,6 +31,7 @@ __all__ = [
     "ConnectionPort",
     "MaintenancePort",
     "MapPort",
+    "OccurrencePort",
     "RobotGateway",
     "RobotStatusPort",
     "RoomIntervalPort",

@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GATEWAY: live
+      DATABASE_PATH: roborock.db
       ROBOROCK_EMAIL: ${{ vars.ROBOROCK_EMAIL }}
       ROBOROCK_DUID: ${{ vars.ROBOROCK_DUID }}
       CARPET_RISE_VALUE: ${{ vars.CARPET_RISE_VALUE }}
@@ -24,5 +25,22 @@ jobs:
         run: printf '%s' "$ROBOROCK_USER_DATA" > user_data.json
         env:
           ROBOROCK_USER_DATA: ${{ secrets.ROBOROCK_USER_DATA }}
+      # The runner's filesystem is destroyed when the job ends, so the database of
+      # Cleaning Runs is carried between runs via the actions cache: restore the newest
+      # snapshot, run, save a fresh one. A per-run key with a prefix restore-key is the
+      # documented pattern for a cache that must be updated on every run.
+      - name: Restore cleaning-run database
+        uses: actions/cache/restore@v4
+        with:
+          path: roborock.db
+          key: roborock-db-${{ github.run_id }}
+          restore-keys: |
+            roborock-db-
       - name: Run two-stage clean
         run: uv run python -m roborock_auto.adapters.cron.run
+      - name: Save cleaning-run database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: roborock.db
+          key: roborock-db-${{ github.run_id }}

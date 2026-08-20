@@ -1228,7 +1228,7 @@ function renderActionBar(s) {
     setOrb("pause", "Pause", "cleaning…", () => post("/pause", {}, "pause sent"), "Pause the current job");
     orb.disabled = false;
   } else if (paused) {
-    setOrb("play", "Resume", "paused", () => post("/start", {}, "resuming"), "Resume the paused job");
+    setOrb("play", "Resume", "paused", () => post("/resume", {}, "resuming"), "Resume the paused job");
     orb.disabled = false;
   } else {
     setOrb("play", "Clean", scopeLabel(), runPrimary, "Clean — selected rooms, or the whole floor");

@@ -7,6 +7,7 @@ ports depends only on this module, so a library change stays quarantined in the 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from enum import Enum
 
 
@@ -45,6 +46,14 @@ class CleaningMode(Enum):
     VAC_AND_MOP = "vac_and_mop"
 
 
+class CleanSource(Enum):
+    """Which entry point started a Clean, so recorded runs can tell the user's own
+    actions apart from automated ones."""
+
+    APP = "app"
+    CRON = "cron"
+
+
 class ConsumablePart(Enum):
     """A user-serviceable consumable whose life counter can be reset after the owner
     replaces (brushes, filter) or cleans (sensors) it."""
@@ -76,6 +85,18 @@ class DeviceStatus:
     # state is False so departure fails safe. Distinct from in_cleaning, which stays true
     # through recharge and servicing.
     cleaning: bool = False
+
+
+@dataclass(frozen=True)
+class CleaningRun:
+    """The durable trace of a Clean: this app started one, from `source`, over
+    `segment_ids` (None = whole house), in `mode`, at `started_at` (timezone-aware).
+    It records a start, not a completion (docs/adr/0003)."""
+
+    source: CleanSource
+    mode: CleaningMode
+    segment_ids: tuple[int, ...] | None
+    started_at: datetime
 
 
 @dataclass(frozen=True)

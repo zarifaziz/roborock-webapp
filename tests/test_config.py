@@ -34,3 +34,15 @@ def test_live_mode_parses_when_all_present(monkeypatch):
     config = Config.from_env()
     assert config.carpet_rise_value == 2
     assert config.carpet_avoid_value == 0
+
+
+def test_database_path_defaults_beside_the_session_file(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.delenv("DATABASE_PATH", raising=False)
+    assert Config.from_env().database_path == "roborock.db"
+
+
+def test_database_path_is_configurable(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("DATABASE_PATH", "/data/cleans.db")
+    assert Config.from_env().database_path == "/data/cleans.db"

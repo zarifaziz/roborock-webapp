@@ -247,15 +247,20 @@ async def run_sequence(
                 )
             )
             if index == 0 and on_first_departure is not None:
-                await on_first_departure()
+                try:
+                    await on_first_departure()
+                except Exception as exc:  # noqa: BLE001 - bookkeeping must not abort a real clean
+                    log(f"{label}: first-departure callback failed: {exc}")
             log(f"{label}: robot left the dock, waiting for it to finish")
             on_progress(index, Phase.CLEANING)
             await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)
             log(f"{label}: complete")
             on_progress(index, Phase.DONE)
         # Plain Cleans never touch carpet mode, so a Sequence that ended at Rise would send
-        # the next plain Clean (from any app or rule) onto the carpets it must avoid.
-        await with_retry(lambda: gw.set_carpet_mode(CarpetMode.AVOID), sleep=sleep)
+        # the next plain Clean (from any app or rule) onto the carpets it must avoid. A last
+        # Step at Avoid already set and read it back, so a second write only adds a way to fail.
+        if steps[-1].carpet is not CarpetMode.AVOID:
+            await _set_carpet_verified(gw, CarpetMode.AVOID, sleep=sleep)
     except Exception:
         await _recover_after_abort(gw, log=log)
         raise

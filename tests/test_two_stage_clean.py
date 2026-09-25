@@ -635,7 +635,6 @@ async def test_sequence_runs_each_step_in_order_with_its_own_carpet_mode_and_seg
         _step_commands(BATHROOMS_RISE)
         + _step_commands(HOUSE_AVOID)
         + _step_commands(KITCHEN_MOP)
-        + END_RESET
     )
     assert progress == _phases(0) + _phases(1) + _phases(2)
     assert await log.list_runs() == [
@@ -728,7 +727,7 @@ async def test_on_first_departure_never_fires_when_the_first_step_fails_before_l
     assert fired_at == []
 
 
-async def test_two_stage_is_the_vacuum_rise_then_mop_avoid_preset_ending_at_avoid():
+async def test_two_stage_is_the_vacuum_rise_then_mop_avoid_preset_with_no_extra_writes():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)
     await run_two_stage(
@@ -737,7 +736,51 @@ async def test_two_stage_is_the_vacuum_rise_then_mop_avoid_preset_ending_at_avoi
     )
     vacuum = Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=(16, 17))
     mop = Step(mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=(16, 17))
-    assert gw.commands == _step_commands(vacuum) + _step_commands(mop) + END_RESET
+    # Its last Step already set and read back Avoid, so nothing follows the mop trigger.
+    assert gw.commands == _step_commands(vacuum) + _step_commands(mop)
+
+
+class _AvoidIgnoredRobot(FakeRobot):
+    """Machine-mode robot that accepts a carpet Avoid write but never applies it."""
+
+    async def set_carpet_mode(self, mode: CarpetMode) -> None:
+        if mode is CarpetMode.AVOID:
+            self.commands.append(("set_carpet_mode", mode))
+            return
+        await super().set_carpet_mode(mode)
+
+
+async def test_a_final_avoid_that_does_not_take_after_a_rise_step_fails_with_recovery():
+    clock = FakeClock()
+    gw = _AvoidIgnoredRobot(clock=clock)
+    gw._carpet = CarpetMode.RISE  # so the ignored Avoid reads back as Rise
+    log = _log()
+    with pytest.raises(AutomationError, match="carpet mode did not take"):
+        await _run_steps(gw, clock, (BATHROOMS_RISE,), cleaning_log=log)
+    assert gw.commands == _step_commands(BATHROOMS_RISE) + END_RESET + ABORT_RECOVERY
+    assert await log.list_runs() == [_run_of(BATHROOMS_RISE, departed_at=10)]
+
+
+async def test_a_raising_on_first_departure_never_aborts_the_clean():
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    log = _log()
+    calls: list[float] = []
+
+    async def on_first_departure() -> None:
+        calls.append(clock.now)
+        raise RuntimeError("occurrence store unavailable")
+
+    await _run_steps(
+        gw, clock, (BATHROOMS_RISE, HOUSE_AVOID),
+        cleaning_log=log, on_first_departure=on_first_departure,
+    )
+    assert calls == [10.0]
+    assert gw.commands == _step_commands(BATHROOMS_RISE) + _step_commands(HOUSE_AVOID)
+    assert await log.list_runs() == [
+        _run_of(BATHROOMS_RISE, departed_at=10),
+        _run_of(HOUSE_AVOID, departed_at=45),
+    ]
 
 
 # --- RunSlot ------------------------------------------------------------------------

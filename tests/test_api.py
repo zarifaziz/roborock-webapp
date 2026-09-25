@@ -340,6 +340,36 @@ def test_two_stage_cancel_stops_the_run(client):
     assert ("dock",) in client.app.state.gateway.commands
 
 
+def _wait_until_idle(client) -> dict:
+    deadline = time.monotonic() + 5.0
+    status = client.get("/clean/two-stage/status").json()
+    while status["running"] and time.monotonic() < deadline:
+        time.sleep(0.02)
+        status = client.get("/clean/two-stage/status").json()
+    return status
+
+
+def test_a_failed_two_stage_run_releases_the_slot_for_the_next_run(client):
+    client.app.state.gateway.set_timeline(
+        [(0.0, DeviceStatus("cleaning", 90, in_cleaning=True, docked=False, cleaning=True))]
+    )
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+    assert _wait_until_idle(client) == {
+        "running": False,
+        "stage": "error",
+        "message": "robot not docked/idle at start (state=cleaning); aborting",
+        "error": "robot not docked/idle at start (state=cleaning); aborting",
+    }
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+
+
+def test_a_cancelled_two_stage_run_releases_the_slot_for_the_next_run(client):
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+    assert client.post("/clean/two-stage/cancel").json() == {"ok": True}
+    assert _wait_until_idle(client)["stage"] == "cancelled"
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+
+
 def test_two_stage_cancel_when_not_running_is_409(client):
     r = client.post("/clean/two-stage/cancel")
     assert r.status_code == 409

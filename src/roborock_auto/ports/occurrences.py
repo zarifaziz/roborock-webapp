@@ -61,6 +61,11 @@ class OccurrencePort(Protocol):
         PENDING, or to FAILED when `exhausted` says this was the last allowed attempt."""
         ...
 
+    async def fail_claimed(self, *, at: datetime, reason: str) -> None:
+        """Move every CLAIMED Occurrence to FAILED, counting one attempt at `at` with
+        `reason`. For startup, when no claim from the previous process can resolve."""
+        ...
+
     async def list_occurrences(self) -> list[Occurrence]:
         """Every Occurrence ever recorded, earliest scheduled first — the timeline."""
         ...

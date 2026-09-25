@@ -159,7 +159,7 @@ async def test_a_due_occurrence_fires_the_shared_clean_and_is_recorded():
 def test_the_readiness_gate_reuses_ready_to_start_and_names_the_leg_that_failed():
     assert readiness_block(DOCKED_IDLE, run_in_flight=False) is None
     assert (
-        readiness_block(DOCKED_IDLE, run_in_flight=True) == "a two-stage clean is in flight"
+        readiness_block(DOCKED_IDLE, run_in_flight=True) == "another run is in flight"
     )
     assert readiness_block(BUSY, run_in_flight=False) == "the robot is mid-job"
     errored = DeviceStatus("error", 50, in_cleaning=False, docked=True, error="brush stuck")
@@ -203,7 +203,7 @@ async def test_a_two_stage_clean_in_flight_blocks_firing_without_an_attempt():
     await h.scheduler.tick()
     assert h.robot.commands == []
     assert await h.occurrences.list_occurrences() == [
-        _occ(1, blocked_reason="a two-stage clean is in flight"),
+        _occ(1, blocked_reason="another run is in flight"),
         _occ(2, scheduled_for=NEXT_WEEK),
     ]
     h.run_slot.release()
@@ -421,13 +421,18 @@ class SequenceHarness(Harness):
     """The Harness plus a Sequence store and a launcher whose runner sleeps on the same
     fake clock, so a whole Sequence runs in milliseconds."""
 
-    def __init__(self, robot_cls=FakeRobot, occurrences_cls=SqliteOccurrences):
+    def __init__(
+        self,
+        robot_cls=FakeRobot,
+        occurrences_cls=SqliteOccurrences,
+        cleaning_log_cls=SqliteCleaningLog,
+    ):
         self.clock = Clock()
         conn = open_database(":memory:")
         self.robot = robot_cls(clock=self.clock.monotonic)
         self.rules = SqliteScheduleRules(conn, device_id="fake")
         self.occurrences = occurrences_cls(conn, device_id="fake")
-        self.cleaning_log = SqliteCleaningLog(conn, device_id="fake")
+        self.cleaning_log = cleaning_log_cls(conn, device_id="fake")
         self.sequences = SqliteSequences(conn, device_id="fake")
         self.run_slot = RunSlot()
         self.launcher = SequenceLauncher(
@@ -574,7 +579,7 @@ async def test_a_second_due_occurrence_in_the_same_tick_is_blocked_while_the_slo
     assert h.robot.commands == []
     assert await h.occurrences.list_occurrences() == [
         _occ(1, rule_name="Saturday deep clean", state=OccurrenceState.CLAIMED),
-        _occ(3, blocked_reason="a two-stage clean is in flight", **mop),
+        _occ(3, blocked_reason="another run is in flight", **mop),
         _occ(2, rule_name="Saturday deep clean", scheduled_for=NEXT_WEEK),
         _occ(4, scheduled_for=NEXT_WEEK, **mop),
     ]
@@ -678,3 +683,57 @@ async def test_a_rule_whose_sequence_is_gone_records_a_failed_attempt():
         ),
         _occ(2, rule_name="Orphan", scheduled_for=NEXT_WEEK),
     ]
+
+
+async def test_starting_the_scheduler_fails_an_occurrence_a_restart_left_claimed():
+    h = Harness()
+    await h.rule()
+    await h.scheduler.tick()
+    assert await h.occurrences.claim(1) is True  # the process died before it resolved
+    restarted = h.new_scheduler()
+    restarted._sleep = SleepRecorder(limit=1)
+    with pytest.raises(asyncio.CancelledError):
+        await restarted.run()
+    interrupted = _occ(
+        1, state=OccurrenceState.FAILED, attempts=1, last_attempt_at=START,
+        blocked_reason="interrupted by a restart",
+    )
+    assert await h.occurrences.list_occurrences() == [
+        interrupted,
+        _occ(2, scheduled_for=NEXT_WEEK),
+    ]
+    h.clock.now = FIRST
+    await restarted.tick()
+    assert h.robot.commands == []
+    assert (await h.occurrences.list_occurrences())[0] == interrupted
+
+
+class RecordRunFails(SqliteCleaningLog):
+    async def record_run(self, run) -> None:
+        raise RuntimeError("disk full")
+
+
+async def test_a_failed_cleaning_run_write_after_departure_still_fires_and_never_retries():
+    h = SequenceHarness(cleaning_log_cls=RecordRunFails)
+    await h.sequence_rule()
+    h.clock.now = FIRST
+    await h.scheduler.tick()
+    await h.run_slot.task
+    step_one_then_recovery = [
+        ("set_carpet_mode", CarpetMode.RISE),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("clean_rooms", (16, 17)),
+        ("dock",),
+        ("set_carpet_mode", CarpetMode.AVOID),
+    ]
+    assert h.robot.commands == step_one_then_recovery
+    assert await h.occurrences.list_occurrences() == [
+        _occ(
+            1, rule_name="Saturday deep clean", state=OccurrenceState.FIRED,
+            fired_at=FIRST + timedelta(seconds=10),
+        ),
+        _occ(2, rule_name="Saturday deep clean", scheduled_for=NEXT_WEEK),
+    ]
+    h.clock.now = FIRST + timedelta(minutes=30)
+    await h.scheduler.tick()
+    assert h.robot.commands == step_one_then_recovery

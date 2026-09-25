@@ -238,6 +238,13 @@ async def run_sequence(
             await _depart_and_confirm(
                 gw, _depart_for(gw, step), clock=clock, sleep=sleep, interval=poll, log=log
             )
+            # Before the Cleaning Run write: if that write fails, the caller must already
+            # know the robot left, or it would treat the run as never started and retry it.
+            if index == 0 and on_first_departure is not None:
+                try:
+                    await on_first_departure()
+                except Exception as exc:  # noqa: BLE001 - bookkeeping must not abort a real clean
+                    log(f"{label}: first-departure callback failed: {exc}")
             # One Cleaning Run per Step, written here rather than by the caller, so a later
             # Step's failure still leaves an honest record of the Steps that happened.
             await cleaning_log.record_run(
@@ -246,11 +253,6 @@ async def run_sequence(
                     started_at=now(),
                 )
             )
-            if index == 0 and on_first_departure is not None:
-                try:
-                    await on_first_departure()
-                except Exception as exc:  # noqa: BLE001 - bookkeeping must not abort a real clean
-                    log(f"{label}: first-departure callback failed: {exc}")
             log(f"{label}: robot left the dock, waiting for it to finish")
             on_progress(index, Phase.CLEANING)
             await wait_for_return(gw, clock=clock, sleep=sleep, interval=poll)

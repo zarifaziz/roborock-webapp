@@ -321,7 +321,7 @@ def test_two_stage_conflict_when_running(client):
     assert client.post("/clean/two-stage").json() == {"ok": True}
     r = client.post("/clean/two-stage")
     assert r.status_code == 409
-    assert r.json() == {"detail": "a two-stage clean is already running"}
+    assert r.json() == {"detail": "another run is already in progress"}
 
 
 def test_two_stage_cancel_stops_the_run(client):
@@ -498,7 +498,7 @@ def test_overdue_clean_conflicts_with_a_running_two_stage_clean(client):
     assert client.post("/clean/two-stage").json() == {"ok": True}
     r = client.post("/clean/overdue", json={"mode": "vacuum"})
     assert r.status_code == 409
-    assert r.json() == {"detail": "a two-stage clean is already running"}
+    assert r.json() == {"detail": "another run is already in progress"}
 
 
 def test_overdue_clean_conflicts_when_the_robot_is_not_ready(client):
@@ -1086,14 +1086,14 @@ def test_a_sequence_run_is_refused_while_any_run_holds_the_slot(client):
     assert client.post("/clean/two-stage").json() == {"ok": True}
     r = client.post("/sequences/1/run")
     assert (r.status_code, r.json()) == (
-        409, {"detail": "a Sequence or Two-Stage Clean is already running"}
+        409, {"detail": "another run is already in progress"}
     )
     client.post("/sequences/cancel")
     _wait_for_progress_idle(client)
     assert client.post("/sequences/1/run").json() == {"ok": True}
     # Both entry points share one slot, so the Two-Stage Clean is refused in turn.
     r = client.post("/clean/two-stage")
-    assert (r.status_code, r.json()) == (409, {"detail": "a two-stage clean is already running"})
+    assert (r.status_code, r.json()) == (409, {"detail": "another run is already in progress"})
 
 
 def test_a_sequence_run_is_refused_when_the_robot_is_not_ready_and_frees_the_slot(client):
@@ -1215,3 +1215,44 @@ def test_a_readiness_check_that_raises_still_frees_the_slot(client):
     with pytest.raises(RuntimeError, match="lost contact"):
         client.post("/sequences/1/run")
     assert client.app.state.run_slot.running is False
+
+
+def test_overdue_clean_holds_the_run_slot_across_check_and_start_then_frees_it(client, clock):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    gw, slot = client.app.state.gateway, client.app.state.run_slot
+    held: list[tuple[str, bool]] = []
+    get_status, clean_rooms = gw.get_status, gw.clean_rooms
+
+    async def witness_status():
+        held.append(("get_status", slot.running))
+        return await get_status()
+
+    async def witness_clean(segment_ids, repeat=1):
+        held.append(("clean_rooms", slot.running))
+        await clean_rooms(segment_ids, repeat)
+
+    gw.get_status, gw.clean_rooms = witness_status, witness_clean
+    assert client.post("/clean/overdue", json={"mode": "vacuum"}).json() == {
+        "ok": True, "segment_ids": [16]
+    }
+    assert held == [("get_status", True), ("clean_rooms", True)]
+    assert slot.running is False
+
+
+def test_overdue_clean_frees_the_run_slot_when_the_robot_is_not_ready(client):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    client.app.state.gateway.set_timeline(
+        [(0.0, DeviceStatus("cleaning", 90, in_cleaning=True, docked=False, cleaning=True))]
+    )
+    assert client.post("/clean/overdue", json={"mode": "vacuum"}).status_code == 409
+    assert client.app.state.run_slot.running is False
+
+
+def test_overdue_clean_is_409_while_any_run_holds_the_slot_and_leaves_it_held(client):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    slot = client.app.state.run_slot
+    assert slot.acquire() is True
+    r = client.post("/clean/overdue", json={"mode": "vacuum"})
+    assert (r.status_code, r.json()) == (409, {"detail": "another run is already in progress"})
+    assert slot.running is True
+    assert client.app.state.gateway.commands == [("connect",)]

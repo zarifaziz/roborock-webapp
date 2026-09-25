@@ -912,3 +912,37 @@ async def test_migration_5_keeps_every_version_4_rule_and_occurrence_with_its_id
         id=1, name="Two-stage", steps=TWO_STAGE
     )
     conn.close()
+
+
+async def test_failing_claimed_occurrences_fails_only_this_devices_claimed_ones(
+    open_rules, open_occurrences
+):
+    await open_rules().create_rule(**_weekday_mornings())
+    await open_rules("robot-2").create_rule(**_weekday_mornings(name="Other robot"))
+    ours, theirs = open_occurrences("robot-1"), open_occurrences("robot-2")
+    later = SCHEDULED + timedelta(days=2)
+    latest = SCHEDULED + timedelta(days=4)
+    for instant in (SCHEDULED, later, latest):
+        await ours.add_pending(1, scheduled_for=instant, deadline=instant + timedelta(hours=6))
+    await theirs.add_pending(2, scheduled_for=SCHEDULED, deadline=SCHEDULED + timedelta(hours=6))
+    assert await ours.claim(1) is True
+    assert await ours.claim(3) is True
+    await ours.mark_fired(3, FIRED_AT)
+    assert await theirs.claim(4) is True
+
+    await ours.fail_claimed(at=FIRED_AT, reason="interrupted by a restart")
+
+    assert await ours.list_occurrences() == [
+        _occurrence(
+            1, state=OccurrenceState.FAILED, attempts=1, last_attempt_at=FIRED_AT,
+            blocked_reason="interrupted by a restart",
+        ),
+        _occurrence(2, scheduled_for=later, deadline=later + timedelta(hours=6)),
+        _occurrence(
+            3, scheduled_for=latest, deadline=latest + timedelta(hours=6),
+            state=OccurrenceState.FIRED, fired_at=FIRED_AT,
+        ),
+    ]
+    assert await theirs.list_occurrences() == [
+        _occurrence(4, rule_id=2, rule_name="Other robot", state=OccurrenceState.CLAIMED)
+    ]

@@ -432,21 +432,27 @@ async def overdue(request: Request):
 
 @app.post("/clean/overdue")
 async def clean_overdue_now(request: Request, mode: str = Body(..., embed=True)):
-    # Two distinct mechanisms, so two distinct conflicts: an in-process flag, then a live
-    # status read.
-    if request.app.state.run_slot.running:
-        raise HTTPException(409, "a two-stage clean is already running")
-    gw = _gw(request)
-    if not ready_to_start(await gw.get_status()):
-        raise HTTPException(409, "the robot is not ready: it must be docked, idle and error-free")
-    cleaned = await clean_overdue(
-        gw,
-        intervals=request.app.state.room_intervals,
-        cleaning_log=request.app.state.cleaning_log,
-        source=CleanSource.APP,
-        mode=_parse(CleaningMode, mode),
-        now=request.app.state.now,
-    )
+    # Two distinct mechanisms, so two distinct conflicts: the in-process RunSlot, then a
+    # live status read. The slot is held across both so no run starts in between.
+    slot = request.app.state.run_slot
+    if not slot.acquire():
+        raise HTTPException(409, "another run is already in progress")
+    try:
+        gw = _gw(request)
+        if not ready_to_start(await gw.get_status()):
+            raise HTTPException(
+                409, "the robot is not ready: it must be docked, idle and error-free"
+            )
+        cleaned = await clean_overdue(
+            gw,
+            intervals=request.app.state.room_intervals,
+            cleaning_log=request.app.state.cleaning_log,
+            source=CleanSource.APP,
+            mode=_parse(CleaningMode, mode),
+            now=request.app.state.now,
+        )
+    finally:
+        slot.release()
     return {"ok": True, "segment_ids": cleaned}
 
 
@@ -642,7 +648,7 @@ async def scheduler_status(request: Request):
 async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, embed=True)):
     slot = request.app.state.run_slot
     if not slot.acquire():
-        raise HTTPException(409, "a two-stage clean is already running")
+        raise HTTPException(409, "another run is already in progress")
     gw = _gw(request)
     config = request.app.state.config
     progress = slot.progress
@@ -812,7 +818,7 @@ async def sequences_run(request: Request, sequence_id: int):
     sequence = await _sequence_or_404(request, sequence_id)
     slot = request.app.state.run_slot
     if not slot.acquire():
-        raise HTTPException(409, "a Sequence or Two-Stage Clean is already running")
+        raise HTTPException(409, "another run is already in progress")
     # Held across the readiness check and the launch, so nothing can start in between.
     try:
         reason = readiness_block(await _gw(request).get_status(), run_in_flight=False)

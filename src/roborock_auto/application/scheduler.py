@@ -59,7 +59,7 @@ def readiness_block(status: DeviceStatus, *, run_in_flight: bool) -> str | None:
     plus the one condition status cannot see — a run holding the RunSlot in this
     process, which sits docked and idle between its Steps."""
     if run_in_flight:
-        return "a two-stage clean is in flight"
+        return "another run is in flight"
     if ready_to_start(status):
         return None
     if status.error is not None:
@@ -175,11 +175,19 @@ class Scheduler:
         return min(TICK_INTERVAL_SEC * 2 ** min(self.consecutive_errors, 4), MAX_BACKOFF_SEC)
 
     async def run(self) -> None:
+        await self._fail_interrupted()
         _LOGGER.info("scheduler started timezone=%s tick_interval_sec=%s", self._tz,
                      TICK_INTERVAL_SEC)
         while True:
             await self._sleep(self.backoff_sec())
             await self.tick_safely()
+
+    async def _fail_interrupted(self) -> None:
+        # A claim held when the last process died can never resolve: its run died with
+        # the process. Failing it outright, not retrying, because the robot may already
+        # have started it before the restart.
+        await self._occurrences.fail_claimed(at=self._now(), reason="interrupted by a restart")
+        _LOGGER.info("claimed occurrences left by the previous process marked failed")
 
     async def tick_safely(self) -> None:
         try:

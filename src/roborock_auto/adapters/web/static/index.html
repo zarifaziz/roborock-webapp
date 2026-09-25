@@ -891,6 +891,7 @@
       <section class="panel" data-panel="rooms">
         <div class="card">
           <h2>Rooms</h2>
+          <p class="seg-help" id="rooms-loading" role="status">Loading rooms…</p>
           <div class="chips" id="rooms"></div>
           <div class="seg-label" style="margin-top: 16px">Mode</div>
           <div class="seg" id="seg-room-mode">
@@ -1517,13 +1518,12 @@ async function refreshRobotPosition() {
 }
 
 async function buildMapRegions() {
-  let data, names = {};
+  let data;
+  const names = Object.fromEntries(roomsCache.map(room => [room.segment_id, room.name]));
   try {
-    // /map-data carries geometry with only generic "Room N" names; /rooms carries the
-    // friendly names. Join them by segment id so the map labels match the chips.
-    const [md, rl] = await Promise.all([fetch("/map-data"), fetch("/rooms")]);
-    data = await md.json();
-    for (const r of await rl.json()) names[r.segment_id] = r.name;
+    const response = await fetch('/map-data');
+    if (!response.ok) throw new Error('Map geometry unavailable');
+    data = await response.json();
   } catch { return; }  // no map geometry — chips still drive selection
   setRobotMapData(data);
   renderMapRegions(data, names);
@@ -1859,7 +1859,12 @@ function setOffline(on) {
   }
 }
 
-async function refreshStatus() {
+let statusLoading = null;
+function refreshStatus() {
+  if (!statusLoading) statusLoading = refreshStatusOnce().finally(() => { statusLoading = null; });
+  return statusLoading;
+}
+async function refreshStatusOnce() {
   let s;
   try {
     const response = await fetch("/status");
@@ -2834,7 +2839,11 @@ function showUpdateToast(reg) {
 let appDataLoaded = false, appDataLoading = null;
 function loadAppData() {
   if (!appDataLoading) {
-    appDataLoading = loadAppDataOnce().finally(() => { appDataLoading = null; });
+    appDataLoading = loadAppDataOnce().catch(error => {
+      $('rooms-loading').hidden = false;
+      $('rooms-loading').textContent = 'Rooms temporarily unavailable — retrying.';
+      throw error;
+    }).finally(() => { appDataLoading = null; });
   }
   return appDataLoading;
 }
@@ -2847,12 +2856,15 @@ async function loadAppDataOnce() {
     renderCleaningDraft();
   } catch { /* unsupported settings stay disabled until capabilities load */ }
 
-  const rooms = await (await fetch("/rooms")).json();
+  const response = await fetch('/rooms');
+  if (!response.ok) throw new Error('Rooms unavailable');
+  const rooms = await response.json();
+  if (!Array.isArray(rooms)) throw new Error('Rooms unavailable');
   roomsCache = rooms;
+  $('rooms-loading').hidden = true;
   $("rooms").innerHTML = rooms.map((r) =>
     `<button class="chip" data-id="${r.segment_id}" aria-pressed="false">${esc(r.name)}</button>`).join("");
   syncRoomColors();
-  await buildMapRegions();
 
   // Schedule cards: rooms are picked by name everywhere, never by Segment number.
   $("interval-room").innerHTML = rooms.map((r) =>
@@ -2860,21 +2872,26 @@ async function loadAppDataOnce() {
   $("rule-rooms").innerHTML = rooms.map((r) =>
     `<button class="chip" data-id="${r.segment_id}" aria-pressed="false">${esc(r.name)}</button>`).join("");
 
-  const routines = await (await fetch("/routines")).json();
-  $("routines").innerHTML = routines.map((r) =>
-    `<button class="btn" onclick="post('/routine',{routine_id:${r.id}},'${r.name} started')">${r.name}</button>`).join("");
-
-  await loadConsumables();
-
   await refreshCarpetReadback();
-
-  await loadAuthStatus();
   appDataLoaded = true;
-  refreshRecentCleaning();
   loadAssistantStatus();
   refreshMap();
   refreshSchedule();
   refreshSequences();
+  loadOptionalAppData();
+}
+
+async function loadOptionalAppData() {
+  await buildMapRegions();
+  try {
+    const response = await fetch('/routines');
+    if (!response.ok) throw new Error('Routines unavailable');
+    const routines = await response.json();
+    $('routines').innerHTML = routines.map(r =>
+      `<button class="btn" onclick="post('/routine',{routine_id:${r.id}},'${r.name} started')">${r.name}</button>`).join('');
+  } catch { $('routines').textContent = 'Routines temporarily unavailable.'; }
+  await loadConsumables();
+  await refreshRecentCleaning();
 }
 
 async function boot() {
@@ -2926,12 +2943,10 @@ async function boot() {
     $("rule-rooms").hidden = btn.dataset.v !== "rooms";
   });
 
-  try { await loadAppData(); }
-  catch { setOffline(true); }  // offline launch: honest banner, shell stays usable
-
-  await pollRun();
-
-  await refreshStatus();
+  loadAuthStatus();
+  loadAppData().catch(() => {});
+  pollRun();
+  refreshStatus();
   window.addEventListener("online", refreshStatus);
   setInterval(refreshStatus, 5000);
   setInterval(() => { if (!runTimer) pollRun(); }, 5000);

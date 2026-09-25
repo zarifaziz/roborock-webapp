@@ -1305,3 +1305,28 @@ def test_unconfirmed_mode_returns_actionable_conflict_and_does_not_start(client)
         {"detail": "Cleaning mode not confirmed: requested vacuum, robot reported vac_and_mop. Clean not started."},
         [("connect",), ("set_cleaning_mode", CleaningMode.VACUUM)], [],
     )
+
+
+def test_start_verification_does_not_use_cached_display_status(client):
+    from unittest.mock import AsyncMock
+
+    gateway = client.app.state.gateway
+    assert client.get('/status').json()['cleaning_mode'] == 'vac_and_mop'
+    gateway.get_status = AsyncMock(return_value=DeviceStatus(
+        'charging', 100, False, True, cleaning_mode='vac_and_mop',
+    ))
+    response = client.post('/start', json={'mode': 'vacuum'})
+    assert (response.status_code, response.json(), gateway.get_status.await_count, gateway.commands) == (
+        409,
+        {'detail': 'Cleaning mode not confirmed: requested vacuum, robot reported vac_and_mop. Clean not started.'},
+        2, [('connect',), ('set_cleaning_mode', CleaningMode.VACUUM)],
+    )
+
+
+def test_control_invalidates_status_even_within_display_cache_ttl(client):
+    states = [client.get('/status').json()['in_cleaning']]
+    assert client.post('/start', json={'mode': 'vacuum'}).status_code == 200
+    states.append(client.get('/status').json()['in_cleaning'])
+    assert client.post('/stop').status_code == 200
+    states.append(client.get('/status').json()['in_cleaning'])
+    assert states == [False, True, False]

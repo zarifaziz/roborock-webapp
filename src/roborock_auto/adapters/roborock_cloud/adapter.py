@@ -205,7 +205,8 @@ class RoborockCloudAdapter:
                     self._map_snapshot = snapshot
                 return png
 
-            png = await self._locked_retry(read)
+            # The next map poll retries; do not hold up control/status for a second timeout.
+            png = await self._locked_retry(read, attempts=1)
             self._map_ok = bool(png)
         except Exception:
             _LOGGER.warning("live map fetch failed; retaining last real map", exc_info=True)

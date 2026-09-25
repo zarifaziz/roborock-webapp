@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
 from fastapi import Request
 
 from roborock_auto.adapters.web import server
@@ -125,3 +126,42 @@ async def test_unavailable_initial_map_is_coalesced_and_retried_after_ttl(monkey
     recovered = await server.map_png(request)
     assert (recovered.status_code, recovered.body, recovered.headers["x-map-stale"],
             gateway.get_map_png.await_count) == (200, b"recovered", "false", 2)
+
+
+
+@pytest.mark.parametrize('first_route', ['png', 'metadata'])
+async def test_first_image_and_metadata_share_the_same_initial_map_fetch(first_route):
+    from roborock_auto.domain.models import MapData
+
+    entered, release = asyncio.Event(), asyncio.Event()
+    snapshot = None
+
+    async def read_png():
+        nonlocal snapshot
+        entered.set()
+        await release.wait()
+        snapshot = MapData(image_width=100, image_height=80)
+        return b'initial-map'
+
+    async def read_data():
+        if snapshot is None:
+            await gateway.get_map_png()
+        return snapshot
+
+    gateway = SimpleNamespace(get_map_png=AsyncMock(side_effect=read_png),
+                              get_map_data=AsyncMock(side_effect=read_data), map_ok=lambda: True)
+    request = _request(gateway)
+    handlers = [server.map_png, server.map_data]
+    if first_route == 'metadata':
+        handlers.reverse()
+    first = asyncio.create_task(handlers[0](request))
+    await entered.wait()
+    second = asyncio.create_task(handlers[1](request))
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(first, second)
+    if first_route == 'metadata':
+        results.reverse()
+    assert (results[0].body, results[1], gateway.get_map_png.await_count) == (
+        b'initial-map', {'rooms': [], 'robot': None, 'image_width': 100, 'image_height': 80}, 1,
+    )

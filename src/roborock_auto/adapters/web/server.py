@@ -107,6 +107,8 @@ async def lifespan(app: FastAPI):
     app.state.now = utc_now
     app.state.map_cache = {"at": 0.0, "png": b""}
     app.state.map_lock = asyncio.Lock()
+    app.state.status_lock = asyncio.Lock()
+    app.state.status_cache = {"at": None, "status": None, "error": None}
     app.state.run_slot = RunSlot()
     app.state.run_slot.progress.update(_idle_progress())
     app.state.sequence_launcher = SequenceLauncher(
@@ -161,18 +163,44 @@ async def capabilities():
     return caps
 
 
+_STATUS_TTL_SEC = 1.0
+
+
+@app.middleware("http")
+async def invalidate_status_after_control(request: Request, call_next):
+    try:
+        return await call_next(request)
+    finally:
+        # A cached charging/cleaning state must not outlive a control request.
+        if request.method == "POST":
+            request.app.state.status_cache["at"] = None
+
+
 @app.get("/status")
 async def status(request: Request):
     gw = _gw(request)
-    body = dataclasses.asdict(await gw.get_status())
-    # Piggybacked on the status poll so a placeholder map is visible in the UI without
-    # an extra device call (map_ok reads adapter state, no I/O).
+    cache = request.app.state.status_cache
+    async with request.app.state.status_lock:
+        if cache["at"] is None or time.monotonic() - cache["at"] >= _STATUS_TTL_SEC:
+            try:
+                cache["status"] = await gw.get_status()
+                cache["error"] = None
+            except Exception:
+                _LOGGER.warning("robot status fetch failed", exc_info=True)
+                cache["error"] = "Robot status temporarily unavailable"
+            cache["at"] = time.monotonic()
+        if cache["error"]:
+            raise HTTPException(503, cache["error"])
+        body = dataclasses.asdict(cache["status"])
     body["map_ok"] = gw.map_ok()
     return body
 
 
 @app.get("/map-data")
 async def map_data(request: Request):
+    # Cold metadata and image requests must share the same initial device fetch.
+    if "stale" not in request.app.state.map_cache:
+        await map_png(request)
     return dataclasses.asdict(await _gw(request).get_map_data())
 
 

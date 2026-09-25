@@ -272,6 +272,29 @@ class MapInteractions(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.page.locator("#map-overlay .map-region").evaluate_all("els => els.map(el => ({id:el.dataset.id,text:el.textContent,left:el.style.left,top:el.style.top}))"),
                          [{"id": "16", "text": "Study", "left": "10%", "top": "20%"}])
 
+    async def test_slow_status_polls_share_request_and_retry_after_failure(self):
+        result = await self.page.evaluate("""async () => {
+          const original=window.fetch; let release, calls=0, active=0, peak=0;
+          const pending=new Promise(resolve => release=resolve);
+          appDataLoaded=true;
+          window.fetch=async path => {
+            if(path !== '/status') return original(path);
+            calls++; active++; peak=Math.max(peak,active);
+            const first=calls===1;
+            if(first) await pending;
+            active--;
+            return {ok:!first,json:async()=>({state_name:'charging',battery:100,docked:true,in_cleaning:false,cleaning:false,error:null})};
+          };
+          try {
+            const polls=[refreshStatus(),refreshStatus(),refreshStatus()];
+            await Promise.resolve(); const pendingCalls=calls;
+            release(); await Promise.all(polls);
+            await refreshStatus();
+            return {pendingCalls,total:calls,peak,offline:document.getElementById('offline').style.display};
+          } finally {window.fetch=original;}
+        }""")
+        self.assertEqual(result,{"pendingCalls":1,"total":2,"peak":1,"offline":"none"})
+
     async def test_initialization_requests_share_pending_load(self):
         result = await self.page.evaluate("""async () => {
           let release, calls=0; const original=window.fetch;

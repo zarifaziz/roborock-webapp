@@ -260,6 +260,51 @@ class CleaningConfidence(unittest.IsolatedAsyncioTestCase):
             {"chip":"#9ccaff","map":"#9ccaff","cached":"#9ccaff","selected":[True,True],"sameNode":True},
         ])
 
+    async def test_optional_routines_do_not_block_essential_boot_data(self):
+        await self.load_controls()
+        await self.page.evaluate("""() => {
+          window.bootFetch=window.fetch;window.routinesWaiting=false;window.carpetRequests=0;
+          const pending=new Promise(resolve=>window.releaseRoutines=resolve);
+          window.fetch=async path=>{
+            if(path==='/routines'){window.routinesWaiting=true;await pending;return {json:async()=>[]};}
+            if(path==='/carpet')window.carpetRequests++;
+            return window.bootFetch(path);
+          };
+          appDataLoaded=false;
+          window.pendingBoot=loadAppData();
+        }""")
+        try:
+            await self.page.wait_for_function('window.routinesWaiting')
+            self.assertEqual(await self.page.evaluate("({loaded:appDataLoaded,carpetReads:window.carpetRequests,rooms:document.querySelectorAll('#rooms .chip').length})"),
+                             {"loaded":True,"carpetReads":1,"rooms":2})
+        finally:
+            await self.page.evaluate('window.releaseRoutines(); window.fetch=window.bootFetch; window.pendingBoot')
+
+    async def test_map_regions_reuse_loaded_room_names_without_another_room_read(self):
+        await self.load_controls()
+        result = await self.page.evaluate("""async () => {
+          const original=window.fetch;let reads=0;
+          window.fetch=async path=>{
+            if(path==='/rooms')reads++;
+            if(path==='/map-data')return {ok:true,json:async()=>({rooms:[{segment_id:16,name:'Room 16',bbox:[0,0,.5,.5]}]})};
+            return original(path);
+          };
+          try {await buildMapRegions();return {reads,label:document.querySelector('#map-overlay .map-label').textContent};}
+          finally{window.fetch=original;}
+        }""")
+        self.assertEqual(result,{"reads":0,"label":"Study"})
+
+    async def test_room_failure_does_not_block_live_status_or_map(self):
+        await self.page.route('**/rooms',lambda route:route.fulfill(status=503,content_type='text/plain',body='rooms unavailable'))
+        status={"state_name":"charging","battery":81,"docked":True,"cleaning":False,"in_cleaning":False,"error":None}
+        await self.page.route('**/status',lambda route:route.fulfill(content_type='application/json',body=json.dumps(status)))
+        await self.page.reload()
+        await self.page.wait_for_function("document.getElementById('s-battery').textContent === '81%' && document.getElementById('map').naturalWidth === 600 && document.getElementById('rooms-loading').textContent.includes('unavailable')")
+        self.assertEqual(await self.page.evaluate("""() => ({battery:document.getElementById('s-battery').textContent,
+          offline:document.getElementById('offline').style.display,rooms:document.querySelectorAll('#rooms .chip').length,
+          message:document.getElementById('rooms-loading').textContent})"""),
+                         {"battery":"81%","offline":"none","rooms":0,"message":"Rooms temporarily unavailable — retrying."})
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

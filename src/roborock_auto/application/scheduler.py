@@ -20,6 +20,7 @@ from datetime import datetime, tzinfo
 from typing import Protocol
 
 from roborock_auto.application.materialise import materialise
+from roborock_auto.application.run_slot import RunSlot
 from roborock_auto.application.start_clean import CleanPorts, start_clean, utc_now
 from roborock_auto.domain.models import CleanAction, CleanSource, DeviceStatus, Occurrence
 from roborock_auto.domain.policies import (
@@ -43,12 +44,12 @@ class SchedulerPorts(RobotStatusPort, CleanPorts, Protocol):
     """Everything the scheduler needs from the robot — and nothing more."""
 
 
-def readiness_block(status: DeviceStatus, *, two_stage_running: bool) -> str | None:
+def readiness_block(status: DeviceStatus, *, run_in_flight: bool) -> str | None:
     """The readiness gate: the reason firing must wait, or None to proceed. The verdict
     is the ready_to_start policy unchanged; the branches only name which leg failed,
-    plus the one condition status cannot see — a Two-Stage Clean in flight in this
-    process."""
-    if two_stage_running:
+    plus the one condition status cannot see — a run holding the RunSlot in this
+    process, which sits docked and idle between its Steps."""
+    if run_in_flight:
         return "a two-stage clean is in flight"
     if ready_to_start(status):
         return None
@@ -130,7 +131,7 @@ class Scheduler:
         tz: tzinfo,
         now: Callable[[], datetime] = utc_now,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-        two_stage_running: Callable[[], bool] = lambda: False,
+        run_slot: RunSlot | None = None,
     ) -> None:
         self._robot = robot
         self._rules = rules
@@ -139,7 +140,7 @@ class Scheduler:
         self._tz = tz
         self._now = now
         self._sleep = sleep
-        self._two_stage_running = two_stage_running
+        self._run_slot = run_slot if run_slot is not None else RunSlot()
         self._recorder = OutcomeRecorder(occurrences)
         self.last_tick_at: datetime | None = None
         self.consecutive_errors = 0
@@ -184,7 +185,7 @@ class Scheduler:
             # Gated per Occurrence, not per tick: the first firing makes the robot busy,
             # so the second of two simultaneous ones waits and fires on a later tick.
             reason = readiness_block(
-                await self._robot.get_status(), two_stage_running=self._two_stage_running()
+                await self._robot.get_status(), run_in_flight=self._run_slot.running
             )
             if reason is not None:
                 await self._recorder.blocked(occurrence, reason)

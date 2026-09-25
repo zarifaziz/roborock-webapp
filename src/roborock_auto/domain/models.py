@@ -203,6 +203,38 @@ class CleanAction:
             raise ValueError("an empty Segment list is ambiguous; use null for the whole house")
 
 
+@dataclass(frozen=True)
+class Step:
+    """One Clean inside a Sequence: clean `segment_ids` (None = whole house) in `mode`,
+    with carpet mode `carpet` set and read back before the robot leaves."""
+
+    mode: CleaningMode
+    carpet: CarpetMode
+    segment_ids: tuple[int, ...] | None
+
+    def __post_init__(self) -> None:
+        if self.carpet not in (CarpetMode.RISE, CarpetMode.AVOID):
+            raise ValueError("a Step's carpet mode must be rise or avoid")
+        if self.segment_ids is not None and not self.segment_ids:
+            raise ValueError("an empty Segment list is ambiguous; use null for the whole house")
+
+
+@dataclass(frozen=True)
+class Sequence:
+    """A named, ordered list of Steps, run one after another, each starting only once
+    the robot is home and idle from the one before."""
+
+    id: int
+    name: str
+    steps: tuple[Step, ...]
+
+    def __post_init__(self) -> None:
+        if not self.name.strip():
+            raise ValueError("a Sequence needs a name")
+        if not self.steps:
+            raise ValueError("a Sequence needs at least one Step")
+
+
 # The discriminated union of Actions, with exactly one member today.
 Action = CleanAction
 

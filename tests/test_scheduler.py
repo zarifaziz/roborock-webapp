@@ -17,6 +17,7 @@ from roborock_auto.adapters.sqlite import (
     SqliteScheduleRules,
     open_database,
 )
+from roborock_auto.application.run_slot import RunSlot
 from roborock_auto.application.scheduler import Scheduler, readiness_block
 from roborock_auto.domain.models import (
     CleanAction,
@@ -64,7 +65,7 @@ class Harness:
         self.rules = SqliteScheduleRules(conn, device_id="fake")
         self.occurrences = SqliteOccurrences(conn, device_id="fake")
         self.cleaning_log = SqliteCleaningLog(conn, device_id="fake")
-        self.two_stage_running = False
+        self.run_slot = RunSlot()
         self.scheduler = self.new_scheduler()
 
     def new_scheduler(self) -> Scheduler:
@@ -76,7 +77,7 @@ class Harness:
             cleaning_log=self.cleaning_log,
             tz=SYDNEY,
             now=self.clock,
-            two_stage_running=lambda: self.two_stage_running,
+            run_slot=self.run_slot,
         )
 
     async def rule(self, *, name="Evening vacuum", at=time(19, 30), action=None):
@@ -149,18 +150,18 @@ async def test_a_due_occurrence_fires_the_shared_clean_and_is_recorded():
 
 
 def test_the_readiness_gate_reuses_ready_to_start_and_names_the_leg_that_failed():
-    assert readiness_block(DOCKED_IDLE, two_stage_running=False) is None
+    assert readiness_block(DOCKED_IDLE, run_in_flight=False) is None
     assert (
-        readiness_block(DOCKED_IDLE, two_stage_running=True) == "a two-stage clean is in flight"
+        readiness_block(DOCKED_IDLE, run_in_flight=True) == "a two-stage clean is in flight"
     )
-    assert readiness_block(BUSY, two_stage_running=False) == "the robot is mid-job"
+    assert readiness_block(BUSY, run_in_flight=False) == "the robot is mid-job"
     errored = DeviceStatus("error", 50, in_cleaning=False, docked=True, error="brush stuck")
     assert (
-        readiness_block(errored, two_stage_running=False)
+        readiness_block(errored, run_in_flight=False)
         == "the robot reports an error: brush stuck"
     )
     stranded = DeviceStatus("idle", 80, in_cleaning=False, docked=False)
-    assert readiness_block(stranded, two_stage_running=False) == "the robot is not docked"
+    assert readiness_block(stranded, run_in_flight=False) == "the robot is not docked"
 
 
 async def test_a_busy_robot_leaves_the_occurrence_pending_without_an_attempt_then_fires():
@@ -190,7 +191,7 @@ async def test_a_busy_robot_leaves_the_occurrence_pending_without_an_attempt_the
 async def test_a_two_stage_clean_in_flight_blocks_firing_without_an_attempt():
     h = Harness()
     await h.rule()
-    h.two_stage_running = True
+    assert h.run_slot.acquire() is True
     h.clock.now = FIRST
     await h.scheduler.tick()
     assert h.robot.commands == []
@@ -198,7 +199,7 @@ async def test_a_two_stage_clean_in_flight_blocks_firing_without_an_attempt():
         _occ(1, blocked_reason="a two-stage clean is in flight"),
         _occ(2, scheduled_for=NEXT_WEEK),
     ]
-    h.two_stage_running = False
+    h.run_slot.release()
     await h.scheduler.tick()
     assert await h.occurrences.list_occurrences() == [
         _occ(1, state=OccurrenceState.FIRED, fired_at=FIRST),

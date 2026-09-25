@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from roborock_auto.domain.models import (
+    CarpetMode,
     CleanAction,
     CleaningMode,
     DeviceStatus,
@@ -16,6 +17,8 @@ from roborock_auto.domain.models import (
     OccurrenceState,
     RoomInterval,
     SegmentOverdue,
+    Sequence,
+    Step,
     Weekday,
     WeeklyGrid,
 )
@@ -258,6 +261,29 @@ def test_a_clean_action_with_an_empty_segment_list_is_ambiguous():
     CleanAction(mode=CleaningMode.VACUUM, segment_ids=None)
     with pytest.raises(ValueError, match="ambiguous"):
         CleanAction(mode=CleaningMode.VACUUM, segment_ids=())
+
+
+
+def test_a_step_cleans_named_segments_or_the_whole_house_never_an_empty_list():
+    Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=(3, 5))
+    Step(mode=CleaningMode.VAC_AND_MOP, carpet=CarpetMode.AVOID, segment_ids=None)
+    with pytest.raises(ValueError, match="ambiguous"):
+        Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=())
+
+
+def test_a_step_carpet_mode_is_rise_or_avoid_never_unknown():
+    # Unknown is what the device can report, not an instruction the runner can send.
+    with pytest.raises(ValueError, match="carpet mode must be rise or avoid"):
+        Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.UNKNOWN, segment_ids=None)
+
+
+def test_a_sequence_needs_a_name_and_at_least_one_step():
+    step = Step(mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=None)
+    assert Sequence(id=1, name="Bathrooms then house", steps=(step,)).steps == (step,)
+    with pytest.raises(ValueError, match="at least one Step"):
+        Sequence(id=1, name="Nothing", steps=())
+    with pytest.raises(ValueError, match="needs a name"):
+        Sequence(id=1, name="  ", steps=(step,))
 
 
 SCHEDULED = datetime(2026, 8, 20, 23, 30, tzinfo=UTC)

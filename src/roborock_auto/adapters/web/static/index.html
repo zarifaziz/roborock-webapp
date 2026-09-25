@@ -271,21 +271,50 @@
   .map-region {
     position: absolute; padding: 0; border: 0; background: transparent;
     border-radius: 10px; cursor: pointer;
-    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    display: flex; align-items: center; justify-content: center; overflow: visible;
     transition: background 0.18s ease, box-shadow 0.18s ease;
   }
   .map-region:hover { background: rgb(255 255 255 / 0.06); box-shadow: inset 0 0 0 1.5px rgb(255 255 255 / 0.35); }
   .map-label {
-    max-width: 92%; padding: 2px 8px; border-radius: 999px;
-    font-size: 11px; font-weight: 600; letter-spacing: 0.01em; line-height: 1.4; white-space: nowrap;
-    overflow: hidden; text-overflow: ellipsis; pointer-events: none;
-    color: #2B3340; background: rgb(255 255 255 / 0.55);
-    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
-    box-shadow: 0 0 0 0.5px rgb(20 22 26 / 0.16);
-    /* Counter-rotate so labels stay upright while the floor plan rotates. */
+    padding: 2px 4px; font-size: clamp(10px, 1.1vw, 13px); font-weight: 700;
+    letter-spacing: -0.02em; line-height: 1.25; white-space: nowrap;
+    pointer-events: none; color: #24516e;
+    text-shadow: 0 1px 3px #ffffffed, 0 0 5px #ffffffb0;
     transform: rotate(calc(var(--rot, 0deg) * -1));
-    transition: transform 0.18s ease;
+    transition: transform 0.35s ease;
   }
+  .robot-activity {
+    position: absolute; width: 0; height: 0; z-index: 5; pointer-events: none;
+    --activity-color: #36b99a;
+  }
+  .robot-activity[hidden] { display: none; }
+  .robot-activity-upright {
+    transform: rotate(calc(var(--rot, 0deg) * -1)) scale(calc(1 / var(--map-scale, 1)));
+    transition: transform 0.35s ease;
+  }
+  .robot-activity-bubble {
+    position: absolute; bottom: 19px; left: 0; transform: translateX(calc(-50% + var(--bubble-shift, 0px)));
+    display: flex; align-items: center; gap: 6px; padding: 6px 10px 6px 6px;
+    color: #254651; background: #fffffff5; border: 1.5px solid #fff;
+    border-radius: 999px; box-shadow: 0 3px 12px #26465025;
+    font-size: 11px; line-height: 1.1; font-weight: 700; white-space: nowrap;
+  }
+  .robot-activity-bubble::after {
+    content: ''; position: absolute; bottom: -5px; left: calc(50% - 4px);
+    width: 8px; height: 8px; transform: rotate(45deg); background: #fff;
+  }
+  .robot-activity[data-placement="below"] .robot-activity-bubble { bottom: auto; top: 19px; }
+  .robot-activity[data-placement="below"] .robot-activity-bubble::after { bottom: auto; top: -5px; }
+  .robot-activity-icon {
+    display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%;
+    color: white; background: var(--activity-color);
+  }
+  .robot-activity-icon svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  .robot-activity[data-kind="drying"] { --activity-color: #e8a05b; }
+  .robot-activity[data-kind="washing"], .robot-activity[data-kind="mopping"] { --activity-color: #62a8ee; }
+  .robot-activity[data-kind="returning"], .robot-activity[data-kind="charging"] { --activity-color: #8f8be0; }
+  .robot-activity[data-kind="paused"], .robot-activity[data-kind="idle"] { --activity-color: #8e9ba7; }
+  .robot-activity[data-kind="error"] { --activity-color: #e47472; }
   .map-region.sel {
     background: color-mix(in srgb, var(--rc, var(--accent)) 26%, transparent);
     box-shadow: inset 0 0 0 2px var(--rc, var(--accent));
@@ -328,6 +357,7 @@
     font-size: 0.72rem; font-weight: 650; padding: 4px 11px; border-radius: 999px;
     background: var(--track); color: var(--ink-2);
   }
+  .pill[hidden] { display: none; }
   .pill.on { background: var(--accent-soft); color: var(--accent); }
   #error-banner {
     display: none; margin-top: 14px; padding: 10px 13px; border-radius: 12px;
@@ -649,6 +679,7 @@
   }
   .scrim.show { opacity: 1; pointer-events: auto; }
   .sheet {
+    visibility: hidden; pointer-events: none;
     position: fixed; left: 50%; bottom: 0; transform: translate(-50%, 100%);
     width: 100%; max-width: 500px; z-index: 60;
     background: var(--card-solid); border: 1px solid var(--border);
@@ -657,7 +688,7 @@
     transition: transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
     max-height: 88vh; overflow-y: auto;
   }
-  .sheet.show { transform: translate(-50%, 0); }
+  .sheet.show { transform: translate(-50%, 0); visibility: visible; pointer-events: auto; }
   .sheet-grip { width: 42px; height: 5px; border-radius: 999px; background: var(--track); margin: 4px auto 12px; }
   .sheet-head { display: flex; align-items: center; margin-bottom: 12px; }
   .sheet-head h2 { font-size: 1.05rem; font-weight: 750; margin: 0; }
@@ -752,6 +783,12 @@
             <div class="map-rotor" id="map-rotor">
               <img id="map" alt="live map" />
               <div class="map-overlay" id="map-overlay"></div>
+              <div class="robot-activity" id="robot-activity" hidden role="status" aria-live="polite">
+                <div class="robot-activity-upright"><div class="robot-activity-bubble">
+                  <span class="robot-activity-icon" id="robot-activity-icon" aria-hidden="true"></span>
+                  <span id="robot-activity-label"></span>
+                </div></div>
+              </div>
             </div>
           </div>
         </div>
@@ -807,8 +844,8 @@
           <h2>Status</h2>
           <div class="state-row">
             <span class="state-badge"><span class="dot" id="s-dot"></span><span id="s-state">—</span></span>
-            <span class="pill" id="p-cleaning">cleaning</span>
-            <span class="pill" id="p-docked">docked</span>
+            <span class="pill" id="p-cleaning" hidden>cleaning</span>
+            <span class="pill" id="p-docked" hidden>docked</span>
           </div>
           <div id="clean-stats">
             <svg viewBox="0 0 16 16"><path d="M8 1a7 7 0 1 0 7 7h-1.5A5.5 5.5 0 1 1 8 2.5V1zm.75 3v4.31l3 1.73-.75 1.3L7.25 9V4h1.5z"/></svg>
@@ -1192,6 +1229,7 @@ function rotateMap() {
   localStorage.setItem("mapRot", rot);
   applyRot();
   applyZoom();  // the rotated content's pan bounds changed, so re-clamp
+  setTimeout(positionActivityBubble, 360);
 }
 
 /* ---------- map zoom & pan ---------- */
@@ -1223,8 +1261,10 @@ function applyZoom() {
   [zTx, zTy] = clampPan(zTx, zTy);
   $("map-zoom").style.transform = `translate(${zTx}px, ${zTy}px) scale(${zScale})`;
   // While zoomed the pointer pans the map, so touch scrolling must not fight it.
+  stage.style.setProperty("--map-scale", zScale);
   stage.style.touchAction = zScale > 1 ? "none" : "";
   stage.style.cursor = zScale > 1 ? "grab" : "";
+  requestAnimationFrame(positionActivityBubble);
 }
 
 // Rescale about a stage-local point so whatever is under it stays put.
@@ -1263,7 +1303,8 @@ function initMapZoom() {
     e.preventDefault();
     const [px, py] = local(e);
     const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? stage.clientHeight : 1;
-    zoomAt(px, py, zScale * Math.exp(-e.deltaY * unit * 0.01));
+    const step = Math.max(-0.15, Math.min(0.15, -e.deltaY * unit * 0.001));
+    zoomAt(px, py, zScale * Math.exp(step));
   }, { passive: false });
 
   stage.addEventListener("dblclick", (e) => {
@@ -1342,6 +1383,79 @@ function roomPasses() {
   return b ? Number(b.dataset.v) : 1;
 }
 
+let robotMapData = null, robotActivity = null;
+const ACTIVITY_ICONS = {
+  drying: '<path d="M6 19c-4-5 4-6 0-11m6 11c-4-5 4-6 0-11m6 11c-4-5 4-6 0-11"/>',
+  washing: '<path d="M12 3c-2 4-6 7-6 11a6 6 0 0 0 12 0c0-4-4-7-6-11Z"/><path d="M9 15c0 2 1 3 3 3"/>',
+  returning: '<path d="m3 11 9-8 9 8M6 9v11h12V9m-8 11v-7h4v7"/>',
+  emptying: '<path d="M5 7h14M9 4h6m-8 3 1 13h8l1-13m-7 4v5m4-5v5"/>',
+  vacuuming: '<path d="M12 12C3 4 3 17 9 17m3-5c9-8-4-10-4-4m4 4c0 12 10 3 5 0"/>',
+  mopping: '<path d="M12 3c-2 4-6 7-6 11a6 6 0 0 0 12 0c0-4-4-7-6-11Z"/><path d="m9 14 2 2 4-4"/>',
+  charging: '<path d="m13 2-8 12h6l-1 8 9-13h-7Z"/>',
+  paused: '<path d="M8 5v14m8-14v14"/>',
+  error: '<path d="M12 7v6m0 4h.01"/><circle cx="12" cy="12" r="9"/>',
+  idle: '<path d="M7 10h.01M17 10h.01M8 15q4 4 8 0"/><circle cx="12" cy="12" r="9"/>',
+};
+function activityForStatus(s) {
+  const state = s.state_name || '';
+  if (s.error || s.dock_error || ['error', 'charging_problem'].includes(state)) return {kind: 'error', label: 'Needs attention'};
+  if (state === 'device_offline') return {kind: 'error', label: 'Robot offline'};
+  if (state === 'paused') return {kind: 'paused', label: 'Paused'};
+  if (['back_to_dock_washing_duster', 'going_to_wash_the_mop'].includes(state)) return {kind: 'returning', label: 'Returning to wash'};
+  if (['returning_home', 'docking'].includes(state)) return {kind: 'returning', label: 'Heading home'};
+  if (state.startsWith('washing_the_mop')) return {kind: 'washing', label: 'Washing mop'};
+  if (state === 'emptying_the_bin') return {kind: 'emptying', label: 'Emptying dustbin'};
+  if (s.cleaning) {
+    if (s.cleaning_mode === 'mop') return {kind: 'mopping', label: 'Mopping'};
+    if (s.cleaning_mode === 'vac_and_mop') return {kind: 'vacuuming', label: 'Vacuuming & mopping'};
+    return {kind: 'vacuuming', label: s.cleaning_mode === 'vacuum' ? 'Vacuuming' : 'Cleaning'};
+  }
+  if (state === 'attaching_the_mop') return {kind: 'washing', label: 'Attaching mop'};
+  if (state === 'detaching_the_mop') return {kind: 'washing', label: 'Removing mop'};
+  if (s.drying_mop === true) return {kind: 'drying', label: 'Drying mop'};
+  if (state === 'charging') return {kind: 'charging', label: 'Charging'};
+  return {kind: 'idle', label: s.docked ? 'Ready to clean' : ['idle', 'waiting', 'sleeping'].includes(state) ? 'Standing by' : 'Status unavailable'};
+}
+function setRobotActivity(activity) {
+  robotActivity = activity;
+  const el = $('robot-activity');
+  el.dataset.kind = activity.kind;
+  $('robot-activity-label').textContent = activity.label;
+  $('robot-activity-icon').innerHTML = `<svg viewBox="0 0 24 24">${ACTIVITY_ICONS[activity.kind] || ACTIVITY_ICONS.idle}</svg>`;
+  setRobotMapData(robotMapData);
+}
+function setRobotMapData(data) {
+  robotMapData = data;
+  const el = $('robot-activity'), p = data?.robot;
+  const valid = p && data.image_width > 0 && data.image_height > 0 &&
+    Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.y >= 0 &&
+    p.x <= data.image_width && p.y <= data.image_height;
+  el.hidden = !valid || !robotActivity;
+  if (!valid) return;
+  el.style.left = `${p.x / data.image_width * 100}%`;
+  el.style.top = `${p.y / data.image_height * 100}%`;
+  requestAnimationFrame(positionActivityBubble);
+}
+function positionActivityBubble() {
+  const el = $('robot-activity');
+  if (el.hidden) return;
+  const stage = $('map-stage').getBoundingClientRect();
+  const anchor = el.getBoundingClientRect();
+  const bubble = el.querySelector('.robot-activity-bubble');
+  const half = bubble.offsetWidth / 2;
+  const shift = Math.max(stage.left + 6 - anchor.left + half,
+    Math.min(0, stage.right - 6 - anchor.left - half));
+  el.style.setProperty('--bubble-shift', `${shift}px`);
+  el.dataset.placement = anchor.top - stage.top < bubble.offsetHeight + 25 ? 'below' : 'above';
+}
+async function refreshRobotPosition() {
+  try {
+    const response = await fetch('/map-data');
+    if (!response.ok) throw new Error('Map unavailable');
+    setRobotMapData(await response.json());
+  } catch { setRobotMapData(null); }
+}
+
 async function buildMapRegions() {
   let data, names = {};
   try {
@@ -1351,13 +1465,14 @@ async function buildMapRegions() {
     data = await md.json();
     for (const r of await rl.json()) names[r.segment_id] = r.name;
   } catch { return; }  // no map geometry — chips still drive selection
+  setRobotMapData(data);
   const overlay = $("map-overlay");
   // Index over the full room list (not the filtered one) so region accents line up with chips.
   overlay.innerHTML = (data.rooms || []).map((r, i) => {
     if (!r.bbox) return "";
     const [x0, y0, x1, y1] = r.bbox;
     const c = ROOM_COLORS[i % ROOM_COLORS.length];
-    const name = names[r.segment_id] || r.name;
+    const name = esc(names[r.segment_id] || r.name);
     return `<button class="map-region" data-id="${r.segment_id}" title="${name}"
       style="left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%;--rc:${c}"><span class="map-label">${name}</span></button>`;
   }).join("");
@@ -1507,13 +1622,18 @@ function setOffline(on) {
       ? "● connection lost — is the app still running?"
       : "● offline — robot data unavailable";
     $("hdr-batt-state").textContent = "offline";
+    robotActivity = null;
+    $("robot-activity").hidden = true;
   }
 }
 
 async function refreshStatus() {
   let s;
   try {
-    s = await (await fetch("/status")).json();
+    const response = await fetch("/status");
+    if (!response.ok) throw new Error("Status unavailable");
+    s = await response.json();
+    if (!s || typeof s.state_name !== "string") throw new Error("Status unavailable");
     setOffline(false);
   } catch { setOffline(true); return; }
   // An offline boot loaded no rooms/routines: fetch them now the connection is back.
@@ -1522,7 +1642,9 @@ async function refreshStatus() {
   const stateLabel = s.state_name.replaceAll("_", " ");
   $("s-state").textContent = stateLabel;
   $("s-dot").className = "dot " + stateDot(s);
-  $("p-cleaning").classList.toggle("on", s.in_cleaning);
+  $("p-cleaning").hidden = !s.cleaning;
+  $("p-cleaning").classList.toggle("on", s.cleaning);
+  $("p-docked").hidden = !s.docked;
   $("p-docked").classList.toggle("on", s.docked);
   $("s-battery").textContent = s.battery + "%";
   $("battery-bar").style.width = s.battery + "%";
@@ -1532,6 +1654,7 @@ async function refreshStatus() {
   eb.textContent = s.error ? "⚠ " + s.error : "";
 
   lastStatus = s;
+  setRobotActivity(activityForStatus(s));
   renderActionBar(s);
 
   // Dock/tank problems (empty clean-water tank, full waste-water tank, ...).
@@ -1555,7 +1678,7 @@ async function refreshStatus() {
   syncSeg("seg-mop", s.mop_route);
   syncSeg("seg-water", s.water_mode);
   // Explicit false only: a server that predates map_ok omits the field, which is not a failure.
-  $("map-badge").style.display = s.map_ok === false ? "inline-block" : "none";
+  renderMapBadge();
 
   // header battery ring mirror
   const charging = s.state_name === "charging" || s.state_name === "charging_complete";
@@ -1591,19 +1714,44 @@ function sizeMap() {
   applyZoom();  // stage size changed, so the pan clamp bounds did too
 }
 
-let mapLoading = false, mapRefreshTimer = null;
-function refreshMap() {
+let mapLoading = false, mapRefreshTimer = null, mapObjectUrl = null, mapRefreshFailed = false;
+function renderMapBadge() {
+  const badge = $('map-badge');
+  badge.textContent = mapRefreshFailed ? 'Map update unavailable — retrying' : '⚠ placeholder — live map unavailable';
+  badge.style.display = mapRefreshFailed || lastStatus?.map_ok === false ? 'inline-block' : 'none';
+}
+async function refreshMap() {
   if (mapLoading) return;
   clearTimeout(mapRefreshTimer);
   mapLoading = true;
-  const img = $("map");
-  const settled = () => {
+  let nextUrl;
+  try {
+    const response = await fetch('/map.png?t=' + Date.now());
+    if (!response.ok) throw new Error('Map unavailable');
+    nextUrl = URL.createObjectURL(await response.blob());
+    const nextImage = new Image();
+    nextImage.src = nextUrl;
+    await nextImage.decode();
+    const previousUrl = mapObjectUrl;
+    $('map').src = nextUrl;
+    await $('map').decode();
+    mapObjectUrl = nextUrl;
+    nextUrl = null;
+    mapRefreshFailed = false;
+    renderMapBadge();
+    if (previousUrl) URL.revokeObjectURL(previousUrl);
+    sizeMap();
+    await refreshRobotPosition();
+  } catch {
+    setRobotMapData(null);
+    mapRefreshFailed = true;
+    renderMapBadge();
+  }
+  finally {
+    if (nextUrl) URL.revokeObjectURL(nextUrl);
     mapLoading = false;
     mapRefreshTimer = setTimeout(refreshMap, 3000);
-  };
-  img.onload = () => { sizeMap(); settled(); };
-  img.onerror = settled;
-  img.src = "/map.png?t=" + Date.now();
+  }
 }
 
 /* ---------- connect ---------- */

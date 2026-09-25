@@ -253,7 +253,7 @@ async def test_map_ok_survives_map_data_failure(gw):
     )
     assert await gw.get_map_png() == b"\x89PNG\r\n\x1a\nreal"
     assert gw.map_ok() is True
-    # No map_data on the mocked map_content -> get_map_data raises internally, returns empty.
+    # No map_data on the mocked map_content -> the geometry snapshot is empty.
     assert (await gw.get_map_data()).rooms == []
     assert gw.map_ok() is True
 
@@ -342,3 +342,57 @@ async def test_get_status_tolerates_missing_enrichment_fields(gw):
         fan_power=None, mop_route=None, water_mode=None, clean_area_m2=None, clean_time_s=None,
         dock_error=None, cleaning=False,
     )
+
+
+@pytest.mark.parametrize("dry_status,expected", [(1, True), (0, False), (None, None), (2, None)])
+@pytest.mark.parametrize("mode", ["vacuum", "mop", "vac_and_mop", None])
+async def test_status_exposes_independent_drying_and_cleaning_mode(gw, dry_status, expected, mode):
+    from dataclasses import asdict
+
+    gw._device.v1_properties.status = SimpleNamespace(
+        refresh=AsyncMock(), state=RoborockStateCode.charging, battery=85,
+        in_cleaning=RoborockInCleaning.complete, error_code=None,
+        dry_status=dry_status, current_cleaning_mode_name=mode,
+    )
+    assert asdict(await gw.get_status()) == {
+        **asdict(DeviceStatus("charging", 85, False, True)),
+        "drying_mop": expected, "cleaning_mode": mode,
+    }
+
+
+async def test_map_geometry_matches_png_snapshot_without_second_refresh(gw):
+    from roborock_auto.domain.models import MapData, Point
+
+    dims = SimpleNamespace(width=100, height=80, scale=2,
+                           to_img=lambda p: SimpleNamespace(x=2 * p.x, y=160 - 2 * p.y))
+    mc = SimpleNamespace(refresh=AsyncMock(), image_content=b"png",
+                         map_data=SimpleNamespace(image=SimpleNamespace(dimensions=dims),
+                                                  rooms={}, vacuum_position=Point(30, 20)))
+    gw._device.v1_properties.map_content = mc
+    assert await gw.get_map_png() == b"png"
+    mc.map_data.vacuum_position = Point(60, 40)
+    assert await gw.get_map_data() == MapData(robot=Point(60, 120), image_width=200, image_height=160)
+    assert mc.refresh.await_count == 1
+    mc.image_content = b""
+    await gw.get_map_png()
+    assert await gw.get_map_data() == MapData()
+    assert mc.refresh.await_count == 2
+
+
+async def test_geometry_bootstraps_once_and_clears_after_failed_png(gw):
+    from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
+    from roborock_auto.domain.models import MapData, Point
+
+    dims = SimpleNamespace(width=100, height=80, scale=1, to_img=lambda p: p)
+    mc = SimpleNamespace(refresh=AsyncMock(), image_content=b"png",
+                         map_data=SimpleNamespace(image=SimpleNamespace(dimensions=dims),
+                                                  rooms={}, vacuum_position=Point(30, 20)))
+    gw._device.v1_properties.map_content = mc
+    expected = MapData(robot=Point(30, 20), image_width=100, image_height=80)
+    assert await gw.get_map_data() == expected
+    assert await gw.get_map_data() == expected
+    assert mc.refresh.await_count == 1
+    gw._locked_retry = AsyncMock(side_effect=RuntimeError("offline"))
+    assert await gw.get_map_png() == SAMPLE_MAP_PNG
+    assert await gw.get_map_data() == MapData()
+    assert gw.map_ok() is False

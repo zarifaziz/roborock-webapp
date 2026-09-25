@@ -46,6 +46,7 @@ async def test_idle_when_no_job():
         "charging", 100, in_cleaning=False, docked=True,
         # defaults, readable before any set_*
         fan_power="balanced", mop_route="standard", water_mode="standard",
+        cleaning_mode="vac_and_mop", drying_mop=False,
     )
 
 
@@ -67,6 +68,7 @@ async def test_cleaning_status_carries_telemetry():
     assert await gw.get_status() == DeviceStatus(
         "cleaning", 100, in_cleaning=True, docked=False, cleaning=True,
         fan_power="balanced", mop_route="standard", water_mode="standard",
+        cleaning_mode="vac_and_mop", drying_mop=False,
         clean_area_m2=6.0, clean_time_s=10,
     )
 

@@ -29,6 +29,7 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     WATER_MODES,
     derive_in_cleaning,
     dock_error_str,
+    drying_mop_value,
     error_str,
     extract_carpet_value,
     is_cleaning,
@@ -67,6 +68,7 @@ class RoborockCloudAdapter:
         self._web: Any = None
         self._user_data: Any = None
         self._map_ok = True
+        self._map_snapshot: MapData | None = None
 
     # --- lifecycle --------------------------------------------------------
     async def connect(self) -> None:
@@ -95,12 +97,11 @@ class RoborockCloudAdapter:
             # dark blue, so the app's own map background shows through (no empty blue frame).
             show_background=False,
             drawables=[
+                # Draw the mop coverage below the fine vacuum trace and device markers.
+                Drawable.MOP_PATH,
+                Drawable.PATH,
                 Drawable.CHARGER,
                 Drawable.VACUUM_POSITION,
-                Drawable.PATH,
-                # Translucent white overlay of where the robot mopped (the mobile app's mop
-                # annotation), so a mop clean is visible and not just the vacuum path line.
-                Drawable.MOP_PATH,
                 # ROOM_NAMES is intentionally omitted: the parser only knows generic
                 # "Room N" labels. The UI overlays the friendly names (from list_rooms).
                 Drawable.OBSTACLES,
@@ -175,6 +176,8 @@ class RoborockCloudAdapter:
                 clean_time_s=_opt(st, "clean_time"),
                 dock_error=dock_error_str(_opt(st, "dock_error_status")),
                 cleaning=is_cleaning(st.state),
+                cleaning_mode=_opt(st, "current_cleaning_mode_name"),
+                drying_mop=drying_mop_value(_opt(st, "dry_status")),
             )
 
         return await self._locked_retry(read)
@@ -186,7 +189,9 @@ class RoborockCloudAdapter:
             async def read() -> bytes:
                 mc = self._v1.map_content
                 await mc.refresh()
-                return mc.image_content
+                png = mc.image_content
+                self._map_snapshot = _map_data(_opt(mc, "map_data")) if png else MapData()
+                return png
 
             png = await self._locked_retry(read)
             if png:
@@ -195,47 +200,16 @@ class RoborockCloudAdapter:
             self._map_ok = False
             return SAMPLE_MAP_PNG
         except Exception:
+            self._map_snapshot = MapData()
             _LOGGER.warning("live map fetch failed; serving placeholder", exc_info=True)
             self._map_ok = False
             return SAMPLE_MAP_PNG
 
     async def get_map_data(self) -> MapData:
-        try:
-            async def read() -> MapData:
-                mc = self._v1.map_content
-                await mc.refresh()
-                data = mc.map_data
-                # map_data.rooms is dict[segment_id -> Room(x0,y0,x1,y1,...)]; image.dimensions
-                # carries the scale/trim/rotation used to render the PNG.
-                dims = getattr(getattr(data, "image", None), "dimensions", None)
-                width = int(dims.width * dims.scale) if dims else 0
-                height = int(dims.height * dims.scale) if dims else 0
-                raw = getattr(data, "rooms", None) or {}
-                items = raw.items() if hasattr(raw, "items") else enumerate(raw)
-                rooms = [
-                    Room(
-                        int(seg_id),
-                        getattr(r, "name", None) or f"Room {seg_id}",
-                        bbox=_room_bbox(r, dims, width, height),
-                    )
-                    for seg_id, r in items
-                ]
-                robot = None
-                pos = getattr(data, "vacuum_position", None)
-                if pos is not None and dims is not None:
-                    try:
-                        rp = dims.to_img(pos)
-                        robot = Point(int(rp.x), int(rp.y))
-                    except Exception:  # noqa: BLE001 - robot marker is cosmetic
-                        robot = None
-                return MapData(rooms=rooms, robot=robot, image_width=width, image_height=height)
-
-            return await self._locked_retry(read)
-        except Exception:
-            # map_ok tracks the PNG the user sees, not this geometry read. A hiccup here
-            # (bboxes/robot marker) must not flip the "placeholder" badge over a real map.
-            _LOGGER.warning("live map data fetch failed", exc_info=True)
-            return MapData()
+        # Geometry belongs to the displayed PNG, not to a second independently fetched map.
+        if self._map_snapshot is None:
+            await self.get_map_png()
+        return self._map_snapshot or MapData()
 
     async def get_map_text(self) -> str:
         try:
@@ -453,3 +427,34 @@ def _pick_device(devices: list, duid: str) -> Any:
             f"set ROBOROCK_DUID; found {len(v1)} V1 devices: {[d.duid for d in v1]}"
         )
     return v1[0]
+
+
+def _map_data(data: Any) -> MapData:
+    try:
+        # map_data.rooms is dict[segment_id -> Room(x0,y0,x1,y1,...)]; image.dimensions
+        # carries the scale/trim/rotation used to render the PNG.
+        dims = getattr(getattr(data, "image", None), "dimensions", None)
+        width = int(dims.width * dims.scale) if dims else 0
+        height = int(dims.height * dims.scale) if dims else 0
+        raw = getattr(data, "rooms", None) or {}
+        items = raw.items() if hasattr(raw, "items") else enumerate(raw)
+        rooms = [
+            Room(
+                int(seg_id),
+                getattr(r, "name", None) or f"Room {seg_id}",
+                bbox=_room_bbox(r, dims, width, height),
+            )
+            for seg_id, r in items
+        ]
+        robot = None
+        pos = getattr(data, "vacuum_position", None)
+        if pos is not None and dims is not None:
+            try:
+                rp = dims.to_img(pos)
+                robot = Point(int(rp.x), int(rp.y))
+            except Exception:  # noqa: BLE001 - robot marker is cosmetic
+                robot = None
+        return MapData(rooms=rooms, robot=robot, image_width=width, image_height=height)
+    except Exception:
+        _LOGGER.warning("live map geometry unavailable", exc_info=True)
+        return MapData()

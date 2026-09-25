@@ -98,7 +98,8 @@ class FakeRobot:
     def _machine_status(self) -> DeviceStatus:
         # Settings readback mirrors the last set_* call, like the real status poll does.
         settings = dict(
-            fan_power=self._fan.value, mop_route=self._mop.value, water_mode=self._water.value
+            fan_power=self._fan.value, mop_route=self._mop.value, water_mode=self._water.value,
+            cleaning_mode=self._cleaning.value, drying_mop=False
         )
         if self._paused_elapsed is not None:
             return DeviceStatus("paused", self._battery, in_cleaning=True, docked=False,

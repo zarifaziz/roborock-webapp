@@ -807,7 +807,10 @@ async def sequences_delete(request: Request, sequence_id: int):
     ]
     if users:
         names = ", ".join(repr(name) for name in users)
-        raise HTTPException(409, f"Sequence {sequence_id} is fired by Schedule Rule {names}")
+        which = "that rule" if len(users) == 1 else "those rules"
+        raise HTTPException(
+            409, f"Schedule Rule {names} runs this Sequence. Change or delete {which} first."
+        )
     if not await request.app.state.sequences.delete_sequence(sequence_id):
         raise HTTPException(404, f"no Sequence {sequence_id}")
     return {"ok": True}

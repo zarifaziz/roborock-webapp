@@ -15,13 +15,15 @@ state is still ruled out:
   state lives in firmware.
 - **No domain events / event sourcing** — one user, one device, no downstream consumers.
 - **What we DO take from DDD:** ubiquitous language, value objects, domain policies
-  (pure functions encoding rules), one long-running domain process (the two-stage clean),
+  (pure functions encoding rules), one long-running domain process (a Sequence run, of
+  which the two-stage clean is the built-in preset),
   bounded contexts as *module boundaries*, and an anti-corruption layer at the vendor edge.
 
 SCHEDULING is the exception this section used to predict: Room Intervals, Schedule Rules,
 Occurrences, and the Cleaning Run log are real owned state, the firmware has no memory of
 any of it, so that context does earn repository-shaped ports (`OccurrencePort`,
 `ScheduleRulePort`, `RoomIntervalPort`, `CleaningLogPort`) backed by SQLite (§4, §7).
+Saved Sequences are the same kind of owned state in CONTROL, behind `SequencePort`.
 
 ## 2. The dependency rule
 
@@ -77,7 +79,8 @@ value-object vocabulary but grow independently:
  room/zone clean,   robot position,      (dust collect,       Schedule Rules,
  fan/mop/carpet,    (later: no-go        mop wash, dry)       Occurrences, the
  routines,          zones, virtual                            in-process scheduler
- two-stage clean    walls, split/merge)
+ Sequences (two-    walls, split/merge)
+ stage = preset)
 ```
 
 The Cleaning Run log stays in CONTROL, not SCHEDULING, even though the Overdue view
@@ -180,13 +183,19 @@ fields of `DeviceStatus`. The *interpretation* of those fields lives in policies
 policy needs richer input later (e.g. distinguishing `returning_home`), we extend
 `DeviceStatus`, never leak state codes.
 
-**The cleaning process** — the two-stage clean is our one real domain process. It stays
-what it is today (`automation.py`): a deterministic procedure over ports with injected
-`clock`/`sleep`, tested without real waits. It moves to
-`application/two_stage_clean.py` and its wait predicates become calls to the policies
-above. No state-machine framework; the linear procedure with depart/return phases *is*
-the correct expression of this process at its current complexity. If we later add
-pause/resume/abort mid-process, we revisit.
+**The cleaning process** — running a Sequence is our one real domain process:
+`application/sequence_runner.py` runs an ordered list of Steps, each one a Clean with its
+own carpet mode, starting the next only once the robot has departed, cleaned, and come
+home idle. It is a deterministic procedure over ports with injected `clock`/`sleep`,
+tested without real waits, and its wait predicates are calls to the policies above. The
+Two-Stage Clean is not a second process: `application/two_stage_clean.py` builds its two
+Steps (vacuum with Rise, then mop with Avoid) and calls the runner (ADR 0007). No
+state-machine framework; the linear procedure with depart/return phases *is* the correct
+expression of this process at its current complexity.
+
+At most one run drives the robot at a time. `application/run_slot.py` holds it: the web
+process creates one RunSlot and hands the same instance to every endpoint and to the
+scheduler, so a run started anywhere is visible, and cancellable, from everywhere.
 
 **Capabilities** — one value object pins us to the Qrevo L Pro without pretending to be
 model-generic:
@@ -219,14 +228,17 @@ commands. HTTP knows nothing about retries; adapters know nothing about sequenci
 
 ```
 application/
-  two_stage_clean.py  # the PLAN.md automation; waits expressed over domain policies
+  sequence_runner.py  # runs N Steps; waits expressed over domain policies
+  sequence_launch.py  # starts a saved Sequence as a background run in the RunSlot
+  run_slot.py         # the one-run-at-a-time slot, with progress and cancel
+  two_stage_clean.py  # the two-Step preset over the runner
   retry.py            # workflow-level retry helper + AutomationError
 ```
 
 A use case exists where there is real orchestration. Trivial one-command endpoints
 (start, pause, fan power) go straight from the driving adapter to the port — a use-case
 function that only forwards a call is ceremony, and we skip it until a guard or sequence
-gives it a job. `two_stage_clean` is the template for when one does.
+gives it a job. `sequence_runner` is the template for when one does.
 
 The retry split: **transport-level** retry stays in the adapter, which owns the
 connection (and deliberately does not reconnect per failure — the cloud login endpoint is
@@ -282,8 +294,13 @@ src/roborock_auto/
     occurrences.py      # OccurrencePort (SCHEDULING: the scheduler's store)
     room_intervals.py   # RoomIntervalPort (SCHEDULING: the Overdue view's store)
     schedule_rules.py   # ScheduleRulePort (SCHEDULING: the schedules CRUD's store)
+    sequences.py        # SequencePort (CONTROL: saved Sequences)
   application/
-    two_stage_clean.py  retry.py
+    sequence_runner.py   # an ordered list of Steps, one Clean each, with depart/return waits
+    sequence_launch.py   # a saved Sequence as a background run in the RunSlot
+    run_slot.py          # at most one run drives the robot; shared by web and scheduler
+    two_stage_clean.py   # the two-Step preset
+    retry.py
     start_clean.py       # the shared clean use case, every entry point routes through it
     materialise.py       # Schedule Rule -> forward Occurrence rows over the 14-day horizon
     overdue.py           # Priority scoring + the Overdue report
@@ -293,7 +310,7 @@ src/roborock_auto/
     sample_map.py       # placeholder PNG shared by fake and the live map fallback
     roborock_cloud/     # adapter.py  codes.py  session.py
     fake/               # fake_robot.py (FakeRobot)
-    sqlite/             # database.py  cleaning_log.py  occurrences.py  room_intervals.py  schedule_rules.py
+    sqlite/             # database.py  cleaning_log.py  occurrences.py  room_intervals.py  schedule_rules.py  sequences.py
     web/                # server.py  static/
     cron/               # run.py
     cli/                # login.py  discover.py
@@ -306,7 +323,8 @@ Entrypoints: `uvicorn roborock_auto.adapters.web.server:app`,
 ## 9. Test layout
 
 - `test_policies.py` — domain rules stated as documentation
-- `test_two_stage_clean.py` — the process over `FakeRobot` with an injected clock
+- `test_two_stage_clean.py` — the Sequence runner and its two-stage preset over `FakeRobot`
+  with an injected clock
 - `test_fake_robot.py` — FakeRobot honors the full RobotGateway contract
 - `test_cloud_adapter_mapping.py` — pins each command/param the live adapter sends
 - `test_api.py` — HTTP endpoints over the fake, via TestClient

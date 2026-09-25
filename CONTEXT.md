@@ -29,7 +29,8 @@ _Avoid_: Clean history, clean log
 **Two-Stage Clean**:
 The house-specific procedure that never wets carpet: a vacuum pass with carpet mode
 Rise, then a mop pass with carpet mode Avoid, waiting for the robot to genuinely return
-between them.
+between them. It is the built-in two-Step Sequence, defined in code rather than saved,
+because it follows whichever Rooms are selected at the time.
 _Avoid_: Deep clean, full clean
 
 **Step**:
@@ -59,8 +60,8 @@ days plus a time of day is the only shape the app understands today.
 _Avoid_: Frequency, pattern, cron expression
 
 **Action**:
-The "what" half of a Schedule Rule: cleaning a set of segments in a given mode today, and
-in principle any other standing instruction to the robot.
+The "what" half of a Schedule Rule: a single Clean of a set of segments in a given mode, or
+running a saved Sequence. In principle any other standing instruction to the robot.
 _Avoid_: Job, command, task, payload
 
 **Occurrence**:

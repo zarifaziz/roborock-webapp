@@ -58,8 +58,9 @@ depart/clean/return on a fake clock, which is what makes `test_two_stage_clean.p
 demo UI run in milliseconds. Every new port method lands in the fake in the same change
 that adds it to the live adapter.
 
-**Use cases exist only where there is real orchestration.** `application/two_stage_clean.py`
-is the one long-running process; trivial one-command endpoints go straight from the web
+**Use cases exist only where there is real orchestration.** `application/sequence_runner.py`
+is the one long-running process (the Two-Stage Clean is a two-Step preset over it, and one
+`RunSlot` keeps every run, web or scheduled, to one at a time); trivial one-command endpoints go straight from the web
 adapter to the port. Transport retry lives in the adapter (it deliberately does not
 reconnect per failure, the cloud login endpoint is rate limited); workflow retry lives in
 `application/retry.py`.

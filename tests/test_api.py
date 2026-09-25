@@ -1169,7 +1169,7 @@ def test_deleting_a_sequence_a_rule_fires_is_409_naming_the_rule(client):
     client.post("/schedules", json=_sequence_rule())
     r = client.delete("/sequences/1")
     assert (r.status_code, r.json()) == (
-        409, {"detail": "Sequence 1 is fired by Schedule Rule 'Saturday deep clean'"}
+        409, {"detail": "Schedule Rule 'Saturday deep clean' runs this Sequence. Change or delete that rule first."}
     )
     assert client.get("/sequences").json() == [_sequence_doc(1, _TWO_STAGE)]
     client.delete("/schedules/1")  # a deleted Rule no longer holds the Sequence

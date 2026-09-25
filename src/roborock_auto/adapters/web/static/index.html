@@ -246,10 +246,8 @@
   .rotate-btn svg { width: 13px; height: 13px; fill: currentColor; }
   .map-stage {
     position: relative; margin-inline: auto;
-    /* Width/height are set in px by sizeMap() (JS) to match the map image's natural
-       aspect ratio while fitting the viewport, so the stage never overflows and the
-       img (object-fit: fill) stays perfectly aligned with the click regions. */
-    width: 100%; aspect-ratio: var(--map-ar, 1);
+    /* Stay inside the column even before the resize handler recalculates its fit. */
+    width: 100%; max-width: 100%; aspect-ratio: var(--map-ar, 1);
     border-radius: 16px; overflow: hidden;
     background: var(--map-bg);
     box-shadow: var(--map-ring);
@@ -1395,10 +1393,16 @@ function initMapZoom() {
 /* ---------- rooms ---------- */
 const mapRoomColors = new Map();
 function roomColor(id) {
-  return mapRoomColors.get(Number(id)) || roomsCache.find(room => room.segment_id === Number(id))?.color || '#9DBFE3';
+  return mapRoomColors.get(Number(id)) || roomsCache.find(room => room.segment_id === Number(id))?.color || '#aab4bc';
 }
-function syncRoomColors() {
-  document.querySelectorAll('#rooms .chip').forEach(chip => chip.style.setProperty('--rc', roomColor(chip.dataset.id)));
+function syncRoomColors(rooms = []) {
+  for (const room of rooms) {
+    if (!room.color) continue;
+    mapRoomColors.set(room.segment_id, room.color);
+    const cached = roomsCache.find(candidate => candidate.segment_id === room.segment_id);
+    if (cached) cached.color = room.color;
+  }
+  document.querySelectorAll('#rooms .chip, #map-overlay .map-region').forEach(room => room.style.setProperty('--rc', roomColor(room.dataset.id)));
 }
 
 // Map-region clicks are deferred so a dblclick zoom can cancel them.
@@ -1505,6 +1509,7 @@ async function refreshRobotPosition() {
     if (!response.ok) throw new Error('Map unavailable');
     const data = await response.json();
     setRobotMapData(data);
+    syncRoomColors(data.rooms);
     if (!mapRefreshFailed && !$('map-overlay').childElementCount && data.rooms?.length) {
       renderMapRegions(data, Object.fromEntries(roomsCache.map(r => [r.segment_id, r.name])));
     }
@@ -1526,8 +1531,7 @@ async function buildMapRegions() {
 function renderMapRegions(data, names) {
   const overlay = $("map-overlay");
   // Use the renderer's actual room colour, independent of API list ordering.
-  (data.rooms || []).forEach(room => { if (room.color) mapRoomColors.set(room.segment_id, room.color); });
-  syncRoomColors();
+  syncRoomColors(data.rooms);
   overlay.innerHTML = (data.rooms || []).map(r => {
     if (!r.bbox) return "";
     const [x0, y0, x1, y1] = r.bbox;
@@ -1943,7 +1947,6 @@ function sizeMap() {
   let w = avail, h = w / ar;
   if (h > maxH) { h = maxH; w = h * ar; }
   stage.style.width = w + "px";
-  stage.style.height = h + "px";
   applyZoom();  // stage size changed, so the pan clamp bounds did too
 }
 

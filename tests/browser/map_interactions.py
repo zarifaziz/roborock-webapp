@@ -186,6 +186,18 @@ class MapInteractions(unittest.IsolatedAsyncioTestCase):
         await self.page.route("**/status", lambda route: route.fulfill(content_type="application/json", body=json.dumps(status)))
         await self.page.evaluate("appDataLoaded = true; refreshStatus()")
 
+    async def test_map_fits_mobile_before_resize_handler_runs(self):
+        await self.page.evaluate("window.removeEventListener('resize', sizeMap)")
+        await self.page.set_viewport_size({"width":393,"height":852})
+        self.map_error = True
+        await self.page.evaluate('refreshMap()')
+        self.assertEqual(await self.page.evaluate("""() => {
+          const stage=document.getElementById('map-stage').getBoundingClientRect();
+          return {overflow:document.documentElement.scrollWidth>innerWidth,
+            contained:stage.left>=0 && stage.right<=innerWidth,
+            preservesAspect:Math.abs(stage.width/stage.height - 1.5)<.01};
+        }"""), {"overflow":False,"contained":True,"preservesAspect":True})
+
     async def test_failed_map_badge_does_not_overflow_mobile(self):
         await self.page.set_viewport_size({"width": 393, "height": 852})
         self.map_error = True

@@ -240,6 +240,26 @@ class CleaningConfidence(unittest.IsolatedAsyncioTestCase):
         await self.page.wait_for_function("!document.getElementById('assistant-ask').disabled")
         self.assertEqual(await self.page.locator('#assistant-response').inner_text(),'Assistant temporarily unavailable. You can use the room controls.')
 
+    async def test_authoritative_map_colors_refresh_existing_rooms_and_preserve_selection(self):
+        await self.load_controls()
+        await self.page.evaluate("renderMapRegions({rooms:[{segment_id:16,name:'Study',bbox:[.1,.1,.5,.5]}]}, {16:'Study'}); window.originalRoomNode=document.querySelector('#map-overlay [data-id=\"16\"]')")
+        await self.page.locator('#rooms .chip[data-id="16"]').click()
+        async def snapshot():
+            return await self.page.evaluate("""() => {const chip=document.querySelector('#rooms [data-id="16"]'),map=document.querySelector('#map-overlay [data-id="16"]');return {chip:chip.style.getPropertyValue('--rc'),map:map.style.getPropertyValue('--rc'),cached:roomsCache.find(room=>room.segment_id===16).color??null,selected:[chip.classList.contains('sel'),map.classList.contains('sel')],sameNode:map===window.originalRoomNode}}""")
+        states = [await snapshot()]
+        geometry = {"rooms":[{"segment_id":16,"name":"Study","bbox":[.1,.1,.5,.5],"color":"#16d5cb"}]}
+        await self.page.route('**/map-data',lambda route:route.fulfill(content_type='application/json',body=json.dumps(geometry)))
+        await self.page.evaluate('refreshRobotPosition()')
+        states.append(await snapshot())
+        geometry['rooms'][0]['color'] = '#9ccaff'
+        await self.page.evaluate('refreshRobotPosition()')
+        states.append(await snapshot())
+        self.assertEqual(states, [
+            {"chip":"#aab4bc","map":"#aab4bc","cached":None,"selected":[True,True],"sameNode":True},
+            {"chip":"#16d5cb","map":"#16d5cb","cached":"#16d5cb","selected":[True,True],"sameNode":True},
+            {"chip":"#9ccaff","map":"#9ccaff","cached":"#9ccaff","selected":[True,True],"sameNode":True},
+        ])
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

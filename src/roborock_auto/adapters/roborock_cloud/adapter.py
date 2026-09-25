@@ -200,7 +200,7 @@ class RoborockCloudAdapter:
                 await mc.refresh()
                 png = mc.image_content
                 if png:
-                    snapshot = _map_data(_opt(mc, "map_data"))
+                    snapshot = _map_data(_opt(mc, "map_data"), _rendered_room_colors(mc))
                     self._map_png = png
                     self._map_snapshot = snapshot
                 return png
@@ -279,9 +279,10 @@ class RoborockCloudAdapter:
         async def read() -> list[Room]:
             rooms = self._v1.rooms
             await rooms.refresh()
+            colors = {room.segment_id: room.color for room in self._map_snapshot.rooms} if self._map_snapshot else {}
             return [
                 Room(int(m.segment_id), m.name or f"Room {m.segment_id}",
-                     color=_room_color(int(m.segment_id)))
+                     color=colors.get(int(m.segment_id)))
                 for m in (rooms.rooms or [])
             ]
 
@@ -463,14 +464,20 @@ def _pick_device(devices: list, duid: str) -> Any:
     return v1[0]
 
 
-def _room_color(segment_id: int) -> str:
-    from roborock_auto.adapters.roborock_cloud.palette import build_palette
+def _rendered_room_colors(content: Any) -> dict[int, str]:
+    # The SDK changes its palette after resolving adjacent room colour conflicts.
+    # Capture that instance with the PNG; a fresh palette only has the preferences.
+    converter = _opt(content, "converter")
+    parser = _opt(_opt(converter, "_map_parser"), "_map_parser")
+    palette = _opt(parser, "_palette")
+    colors = _opt(palette, "cached_room_colors") or {}
+    return {
+        key: "#" + "".join(f"{channel:02x}" for channel in color[:3])
+        for key, color in colors.items() if isinstance(key, int)
+    }
 
-    color = build_palette().get_room_color(segment_id)
-    return "#" + "".join(f"{channel:02x}" for channel in color[:3])
 
-
-def _map_data(data: Any) -> MapData:
+def _map_data(data: Any, room_colors: dict[int, str] | None = None) -> MapData:
     try:
         # map_data.rooms is dict[segment_id -> Room(x0,y0,x1,y1,...)]; image.dimensions
         # carries the scale/trim/rotation used to render the PNG.
@@ -484,7 +491,7 @@ def _map_data(data: Any) -> MapData:
                 int(seg_id),
                 getattr(r, "name", None) or f"Room {seg_id}",
                 bbox=_room_bbox(r, dims, width, height),
-                color=_room_color(int(seg_id)),
+                color=(room_colors or {}).get(int(seg_id)),
             )
             for seg_id, r in items
         ]

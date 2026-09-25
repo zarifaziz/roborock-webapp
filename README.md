@@ -1,6 +1,7 @@
 # roborock-webapp
 
-Local control app and unattended carpet-aware two-stage clean for a Roborock Qrevo L Pro.
+Local control app, user-built multi-step Sequences, and an unattended carpet-aware
+two-stage clean for a Roborock Qrevo L Pro.
 
 The whole thing runs against a `FakeGateway` with no account, so you can try it on your
 laptop right now. Going live is filling in `.env` and setting `GATEWAY=live`; no code change.
@@ -22,6 +23,12 @@ start/pause/dock, room selection, fan/mop/carpet controls, saved routines, and t
 one-click **"Vacuum, then mop avoiding carpet"** two-stage clean with live stage progress. The
 fake robot advances on a clock (docked -> cleaning -> docked) so the UI actually moves; the
 two-stage run takes about a minute in fake mode.
+
+The Sequences tab builds your own multi-step cleans. A Sequence is a named, ordered list of
+Steps, each a Clean with its own rooms, mode, and carpet setting, and each starting only once
+the robot is home from the last. For example: vacuum the two bathrooms with carpet Rise so the
+bath mats get vacuumed, then vacuum and mop the whole house with carpet Avoid so the robot stays
+off the big carpets. The Two-Stage Clean is the built-in two-Step preset of the same runner.
 
 The app also schedules itself in-process: set Room Intervals to see an Overdue view, or
 create a weekly Schedule Rule, and a background scheduler tick fires due Occurrences with
@@ -73,10 +80,16 @@ Recurring cleans no longer need the GitHub Actions cron below; the app can sched
   scores each interval segment's Priority; `GET /overdue` lists them worst-first, and
   `POST /clean/overdue` cleans everything currently Overdue in one call.
 - **Schedule Rules**: `POST /schedules` names a weekly grid of days plus a time of day, and
-  an Action (clean the whole house or chosen segments, in a chosen mode). A background
+  an Action: a single clean (the whole house or chosen segments, in a chosen mode), or a
+  saved Sequence. A background
   scheduler task, running in the same FastAPI process, Materialises each Rule into
   Occurrences and fires them through the identical code path the UI button uses. No
   external trigger, no workflow file to edit.
+- **Sequences**: `/sequences` saves, edits, and deletes them; `POST /sequences/{id}/run`
+  starts one and `GET /sequences/progress` reports whichever run holds the robot (a
+  Sequence, the Two-Stage Clean, or a run the scheduler started); `POST /sequences/cancel`
+  stops it and sends the robot home with carpet Avoid. Only one run drives the robot at a
+  time.
 - `GET /scheduler/status` reports the last tick, the resolved timezone, and whether the
   scheduler is erroring; `GET /occurrences` is the firing timeline.
 

@@ -20,23 +20,29 @@ from roborock_auto.domain.models import (
     CleaningMode,
     RecurrenceSchedule,
     ScheduleRule,
+    SequenceAction,
     Weekday,
     WeeklyGrid,
 )
 
 _CLEAN = "clean"
+_SEQUENCE = "sequence"
 _WEEKLY_GRID = "weekly_grid"
 
 
 def _encode_action(action: Action) -> tuple[str, str]:
+    if isinstance(action, SequenceAction):
+        return _SEQUENCE, json.dumps({"sequence_id": action.sequence_id})
     segments = None if action.segment_ids is None else list(action.segment_ids)
     return _CLEAN, json.dumps({"mode": action.mode.value, "segment_ids": segments})
 
 
 def _parse_action(action_type: str, action_json: str) -> Action:
+    payload = json.loads(action_json)
+    if action_type == _SEQUENCE:
+        return SequenceAction(sequence_id=payload["sequence_id"])
     if action_type != _CLEAN:
         raise ValueError(f"unknown action type {action_type!r} in schedule_rules")
-    payload = json.loads(action_json)
     segments = payload["segment_ids"]
     return CleanAction(
         mode=CleaningMode(payload["mode"]),

@@ -535,7 +535,45 @@
      Stop and Dock are safety controls while a clean is running. Desktop's action bar
      is inline, so it is unaffected. */
   @media (max-width: 1099px) {
-    .panel[data-panel="schedule"] { padding-bottom: 130px; }
+    .panel[data-panel="schedule"], .panel[data-panel="sequences"] { padding-bottom: 130px; }
+  }
+
+  /* ---------- sequences ---------- */
+  .reset-btn.go { color: var(--accent); border-color: var(--accent); }
+  .reset-btn:disabled { opacity: 0.45; cursor: default; transform: none; }
+  .seq-templates { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .seq-templates .btn { flex-direction: column; gap: 2px; }
+  .seq-templates .btn span { font-size: 0.74rem; font-weight: 600; color: var(--ink-3); }
+  .seq-step {
+    padding: 12px 13px; border: 1px solid var(--border); border-radius: 14px;
+    background: var(--card-solid); box-shadow: var(--shadow-sm); margin-top: 12px;
+  }
+  .seq-step-head { display: flex; align-items: center; gap: 6px; }
+  .seq-step-head b { flex: 1; font-size: 0.86rem; font-weight: 700; }
+  .seq-step-head .reset-btn { margin-left: 0; }
+  .seq-step .chips { margin-top: 10px; }
+  /* carpet labels carry their effect, so they wrap rather than truncate on a phone */
+  .seg.seq-carpet button { white-space: normal; line-height: 1.3; padding: 8px 6px; }
+  .seq-warn {
+    margin-top: 10px; padding: 9px 12px; border-radius: 12px;
+    background: color-mix(in srgb, var(--warning) 16%, transparent);
+    color: var(--warning); font-size: 0.8rem; font-weight: 600; line-height: 1.4;
+  }
+  .run-steps { display: flex; flex-direction: column; gap: 7px; margin-top: 10px; }
+  .run-step { display: flex; align-items: flex-start; gap: 9px; font-size: 0.82rem; font-weight: 600; color: var(--ink-3); }
+  .run-step .dot { margin-top: 4px; flex-shrink: 0; }
+  .run-step.done { color: var(--ink-2); }
+  .run-step.running { color: var(--ink); }
+  .run-step.failed { color: var(--critical); }
+  .run-step small { display: block; font-size: 0.74rem; font-weight: 600; color: var(--accent); }
+  .run-step.failed small { color: var(--critical); }
+  #rule-sequence-fields[hidden], #rule-sequence-field[hidden], #rule-clean-fields[hidden], #seq-new-btn[hidden] { display: none; }
+  /* Six tabs do not fit a phone width at full size: shrink them and let the strip scroll
+     sideways, so every tab stays one tap away without truncating its label. */
+  @media (max-width: 480px) {
+    .tabs { overflow-x: auto; scrollbar-width: none; }
+    .tabs::-webkit-scrollbar { display: none; }
+    .tab { flex: 1 0 auto; font-size: 0.78rem; padding: 9px 8px; }
   }
 
   /* ---------- connect ---------- */
@@ -739,6 +777,7 @@
       <div class="tabs">
         <button class="tab active" data-tab="clean" onclick="showTab('clean')">Clean</button>
         <button class="tab" data-tab="rooms" onclick="showTab('rooms')">Rooms</button>
+        <button class="tab" data-tab="sequences" onclick="showTab('sequences')">Sequences</button>
         <button class="tab" data-tab="schedule" onclick="showTab('schedule')">Schedule</button>
         <button class="tab" data-tab="routines" onclick="showTab('routines')">Routines</button>
         <button class="tab" data-tab="setup" onclick="showTab('setup')">Setup</button>
@@ -760,6 +799,8 @@
           <div id="two-stage-error"></div>
           <button class="stage-cancel" id="two-stage-cancel" hidden onclick="cancelTwoStage()"
             title="Cancel the two-stage clean and send the robot home">Cancel</button>
+          <button class="stage-cancel" id="two-stage-see-seq" hidden style="color: var(--accent)"
+            onclick="showTab('sequences')">Open Sequences</button>
         </div>
 
         <div class="card">
@@ -804,6 +845,46 @@
           </div>
           <p class="seg-help">Two-stage sets carpet automatically — Rise while vacuuming, then Avoid while mopping (overrides the Setup carpet setting for this run). The Setup carpet setting applies to the Vacuum / Mop modes. Passes applies to the Vacuum / Mop / Vac + Mop modes.</p>
           <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
+        </div>
+      </section>
+
+      <!-- SEQUENCES -->
+      <section class="panel" data-panel="sequences">
+        <div class="card" id="seq-run-card" hidden>
+          <h2 id="seq-run-heading">Running now</h2>
+          <div class="state-row">
+            <span class="state-badge" style="font-size: 1rem; text-transform: none" id="seq-run-title"></span>
+            <span class="pill" id="seq-run-pill"></span>
+          </div>
+          <div class="sched-sub" id="seq-run-source" hidden>Started by a Schedule Rule</div>
+          <div class="run-steps" id="seq-run-steps"></div>
+          <div class="stage-msg" id="seq-run-message"></div>
+          <div class="form-error" id="seq-run-error"></div>
+          <button class="stage-cancel" id="seq-run-cancel" hidden onclick="cancelRun()"
+            title="Cancel the run and send the robot home with carpet set to Avoid">Cancel</button>
+        </div>
+
+        <div class="card">
+          <h2>Sequences</h2>
+          <p class="note">A Sequence is a saved list of Cleans the robot runs in order, each starting only once it is back home from the last.</p>
+          <div class="sched-list" id="seq-list"><div class="sched-empty">Loading…</div></div>
+          <div class="form-error" id="seq-list-error"></div>
+          <button class="btn" id="seq-new-btn" style="margin-top: 14px" onclick="openSequenceEditor()">New sequence</button>
+        </div>
+
+        <div class="card" id="seq-editor" hidden>
+          <h2 id="seq-editor-title">New sequence</h2>
+          <div class="field">
+            <label for="seq-name">Name</label>
+            <input class="input" id="seq-name" type="text" placeholder="Bathrooms first, then whole house" />
+          </div>
+          <div id="seq-steps"></div>
+          <button class="btn" style="margin-top: 12px" onclick="addStep()">Add step</button>
+          <div class="form-error" id="seq-error"></div>
+          <div class="form-row" style="margin-top: 14px">
+            <button class="btn primary" style="flex: 1" onclick="saveSequence()">Save sequence</button>
+            <button class="btn" style="flex: 1" onclick="closeSequenceEditor()">Cancel</button>
+          </div>
         </div>
       </section>
 
@@ -861,17 +942,31 @@
               <label for="rule-time">Time</label>
               <input class="input" id="rule-time" type="time" value="09:30" />
             </div>
-            <div class="seg-label">Rooms</div>
-            <div class="seg" id="seg-rule-scope">
-              <button data-v="whole" class="active" title="Clean the whole house">Whole house</button>
-              <button data-v="rooms" title="Clean chosen rooms only">Chosen rooms</button>
+            <div class="seg-label">Action</div>
+            <div class="seg" id="seg-rule-action">
+              <button data-v="clean" class="active" title="One Clean: rooms and a mode">Single clean</button>
+              <button data-v="sequence" title="Run a saved Sequence">Sequence</button>
             </div>
-            <div class="chips" id="rule-rooms" style="margin-top: 10px" hidden></div>
-            <div class="seg-label">Mode</div>
-            <div class="seg" id="seg-rule-mode">
-              <button data-v="vacuum" class="active" title="Vacuum only">Vacuum</button>
-              <button data-v="mop" title="Mop only">Mop</button>
-              <button data-v="vac_and_mop" title="Vacuum and mop together">Vac + Mop</button>
+            <div id="rule-clean-fields">
+              <div class="seg-label" style="margin-top: 16px">Rooms</div>
+              <div class="seg" id="seg-rule-scope">
+                <button data-v="whole" class="active" title="Clean the whole house">Whole house</button>
+                <button data-v="rooms" title="Clean chosen rooms only">Chosen rooms</button>
+              </div>
+              <div class="chips" id="rule-rooms" style="margin-top: 10px" hidden></div>
+              <div class="seg-label">Mode</div>
+              <div class="seg" id="seg-rule-mode">
+                <button data-v="vacuum" class="active" title="Vacuum only">Vacuum</button>
+                <button data-v="mop" title="Mop only">Mop</button>
+                <button data-v="vac_and_mop" title="Vacuum and mop together">Vac + Mop</button>
+              </div>
+            </div>
+            <div id="rule-sequence-fields" hidden>
+              <div class="field" id="rule-sequence-field" style="margin-top: 14px">
+                <label for="rule-sequence">Sequence</label>
+                <select class="input" id="rule-sequence"></select>
+              </div>
+              <p class="seg-help" id="rule-sequence-empty" hidden>No Sequences yet. Build one on the Sequences tab first.</p>
             </div>
             <div class="form-error" id="rule-error"></div>
             <div class="form-row" style="margin-top: 14px">
@@ -1001,6 +1096,7 @@ function showTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("active", p.dataset.panel === name));
   if (name === "schedule") refreshSchedule();
+  if (name === "sequences") refreshSequences();
 }
 
 /* ---------- connect sheet ---------- */
@@ -1608,52 +1704,75 @@ async function resetConsumable(part, name) {
 
 /* ---------- two-stage clean ---------- */
 const TWO_STAGE_ORDER = { vacuuming: 0, vacuum_waiting: 1, mopping: 2, mop_waiting: 3, done: 4 };
-let twoStageTimer = null;
-let lastTwoStageError = null;
+let runTimer = null;
+let lastRunError = null;
+let lastRun = null;  // latest RunSlot progress, shared by the Clean and Sequences tabs
+
+// One RunSlot serves both the Two-Stage Clean and Sequences, and both status endpoints
+// read the same progress. Only a Sequence run writes sequence_id, so that key alone
+// decides which card owns the progress; the other card stands aside.
+const isSequenceRun = (st) => !!st && st.sequence_id != null;
 
 function renderTwoStage(st) {
-  twoStageRunning = !!st.running;
-  renderActionBar(lastStatus);
-  const idx = st.stage in TWO_STAGE_ORDER ? TWO_STAGE_ORDER[st.stage] : -1;
+  const seq = isSequenceRun(st);
+  const own = seq ? { stage: "idle", message: "", error: null, running: false } : st;
+  const idx = own.stage in TWO_STAGE_ORDER ? TWO_STAGE_ORDER[own.stage] : -1;
   const steps = document.querySelectorAll("#two-stage-track .stage-step");
   steps.forEach((el, i) => {
-    const done = st.stage === "done" || (idx >= 0 && i < idx);
-    el.classList.toggle("active", st.stage !== "done" && i === idx);
+    const done = own.stage === "done" || (idx >= 0 && i < idx);
+    el.classList.toggle("active", own.stage !== "done" && i === idx);
     el.classList.toggle("done", done);
   });
-  $("two-stage-message").textContent = st.message || "";
-  $("two-stage-cancel").hidden = !st.running;
+  $("two-stage-message").textContent = seq && st.running
+    ? `Sequence "${st.sequence_name}" is running · ${st.message}` : own.message || "";
+  $("two-stage-see-seq").hidden = !(seq && st.running);
+  $("two-stage-cancel").hidden = !own.running;
   const err = $("two-stage-error");
-  err.style.display = st.error ? "block" : "none";
-  err.textContent = st.error ? "⚠ " + st.error : "";
-  if (st.error && st.error !== lastTwoStageError) toast(st.error, true);
-  lastTwoStageError = st.error || null;
+  err.style.display = own.error ? "block" : "none";
+  err.textContent = own.error ? "⚠ " + own.error : "";
 }
 
-async function fetchTwoStageStatus() {
-  try { return await (await fetch("/clean/two-stage/status")).json(); }
+function renderRun(st) {
+  // A plain Clean briefly holds the slot without rewriting progress, so the finished
+  // Sequence's record would otherwise read as running again for a poll or two.
+  if (isSequenceRun(st) && st.stage !== "running") st = { ...st, running: false };
+  lastRun = st;
+  // Any run in the slot blocks another start, so the orb and Run buttons wait for it.
+  twoStageRunning = !!st.running;
+  renderActionBar(lastStatus);
+  document.querySelectorAll(".seq-run-btn").forEach((b) => (b.disabled = twoStageRunning));
+  renderTwoStage(st);
+  renderSequenceRun(st);
+  if (st.error && st.error !== lastRunError) toast(st.error, true);
+  lastRunError = st.error || null;
+}
+
+async function fetchRunProgress() {
+  try { return await (await fetch("/sequences/progress")).json(); }
   catch { return null; }
 }
 
-async function pollTwoStage() {
-  const st = await fetchTwoStageStatus();
+// Polled fast only while a run holds the slot; the 5s status loop also calls it, which is
+// how a run the scheduler started shows up without the user doing anything.
+async function pollRun() {
+  const st = await fetchRunProgress();
   if (!st) return;
-  renderTwoStage(st);
-  if (!st.running) stopTwoStagePoll();
+  renderRun(st);
+  if (st.running) startRunPoll(); else stopRunPoll();
 }
 
-function startTwoStagePoll() {
-  if (!twoStageTimer) twoStageTimer = setInterval(pollTwoStage, 2000);
+function startRunPoll() {
+  if (!runTimer) runTimer = setInterval(pollRun, 2000);
 }
-function stopTwoStagePoll() {
-  clearInterval(twoStageTimer);
-  twoStageTimer = null;
+function stopRunPoll() {
+  clearInterval(runTimer);
+  runTimer = null;
 }
 
 async function startTwoStage(segmentIds) {
   twoStageRunning = true;
   renderActionBar(lastStatus);
-  lastTwoStageError = null;
+  lastRunError = null;
   showTab("clean");
   // segmentIds present -> scoped two-stage; absent (whole-house orb) -> empty body = whole house.
   const body = Array.isArray(segmentIds) && segmentIds.length ? JSON.stringify({ segment_ids: segmentIds }) : "{}";
@@ -1661,7 +1780,7 @@ async function startTwoStage(segmentIds) {
     const r = await fetch("/clean/two-stage", {
       method: "POST", headers: { "content-type": "application/json" }, body,
     });
-    if (r.status === 409) { toast("A two-stage clean is already running", true); }
+    if (r.status === 409) { toast("Another run is already in progress", true); }
     else if (!r.ok) {
       toast(`Two-stage start failed (${r.status})`, true);
       twoStageRunning = false;
@@ -1675,8 +1794,7 @@ async function startTwoStage(segmentIds) {
     renderActionBar(lastStatus);
     return;
   }
-  startTwoStagePoll();
-  pollTwoStage();
+  pollRun();
 }
 
 async function cancelTwoStage() {
@@ -1687,7 +1805,7 @@ async function cancelTwoStage() {
   } catch { toast("Cancel failed — no connection", true); return; }
   // The run winds down (dock + carpet restore) within a beat; the poller resets the strip
   // and re-enables the orb once the status flips to cancelled.
-  pollTwoStage();
+  pollRun();
 }
 
 /* ---------- schedule ---------- */
@@ -1826,13 +1944,15 @@ function renderRules(rules) {
   if (!rules.length) { el.innerHTML = `<div class="sched-empty">No rules yet.</div>`; return; }
   el.innerHTML = rules.map((r) => {
     const days = r.recurrence.days.map((d) => DAY_SHORT[d]).join(" ");
-    const scope = r.action.segment_ids == null ? "whole house" : r.action.segment_ids.map(roomName).join(", ");
+    const what = r.action.type === "sequence"
+      ? `Sequence · ${esc(sequenceName(r.action.sequence_id))}`
+      : `${MODE_LABEL[r.action.mode]} · ${r.action.segment_ids == null ? "whole house" : r.action.segment_ids.map(roomName).join(", ")}`;
     const next = !r.enabled ? `<span class="pill">disabled</span>`
       : r.next_fires_at ? `<span class="pill on">next ${fmtWhen(r.next_fires_at)}</span>`
       : `<span class="pill">no upcoming firing</span>`;
     return `<div class="sched-row">
       <div class="row-top"><b>${esc(r.name)}</b>${next}</div>
-      <div class="sched-sub">${days} at ${r.recurrence.at} · ${MODE_LABEL[r.action.mode]} · ${scope}</div>
+      <div class="sched-sub">${days} at ${r.recurrence.at} · ${what}</div>
       <div class="row-top" style="margin-top: 2px">
         <button class="reset-btn" title="${r.enabled ? "Pause this rule without deleting it" : "Resume this rule"}" onclick="toggleRule(${r.id})">${r.enabled ? "Disable" : "Enable"}</button>
         <button class="reset-btn" title="Edit this rule" onclick="editRule(${r.id})">Edit</button>
@@ -1852,11 +1972,27 @@ function openRuleForm(rule) {
   const days = rule ? rule.recurrence.days : [];
   [...$("rule-days").children].forEach((b) => b.classList.toggle("sel", days.includes(b.dataset.v)));
   $("rule-time").value = rule ? rule.recurrence.at : "09:30";
-  const ids = rule ? rule.action.segment_ids : null;
+  const action = rule ? rule.action : { type: "clean", mode: "vacuum", segment_ids: null };
+  const clean = action.type === "clean";
+  const ids = clean ? action.segment_ids : null;
   markSeg("seg-rule-scope", ids == null ? "whole" : "rooms");
   $("rule-rooms").hidden = ids == null;
   [...$("rule-rooms").children].forEach((c) => c.classList.toggle("sel", !!ids && ids.includes(Number(c.dataset.id))));
-  markSeg("seg-rule-mode", rule ? rule.action.mode : "vacuum");
+  markSeg("seg-rule-mode", clean ? action.mode : "vacuum");
+  fillRuleSequences(clean ? null : action.sequence_id);
+  setRuleAction(action.type);
+}
+function setRuleAction(type) {
+  markSeg("seg-rule-action", type);
+  $("rule-clean-fields").hidden = type !== "clean";
+  $("rule-sequence-fields").hidden = type !== "sequence";
+}
+function fillRuleSequences(selectedId) {
+  $("rule-sequence").innerHTML = sequencesCache.map((q) =>
+    `<option value="${q.id}">${esc(q.name)}</option>`).join("");
+  if (selectedId != null) $("rule-sequence").value = String(selectedId);
+  $("rule-sequence-field").hidden = !sequencesCache.length;
+  $("rule-sequence-empty").hidden = sequencesCache.length > 0;
 }
 function editRule(id) {
   const rule = rulesCache.find((r) => r.id === id);
@@ -1880,14 +2016,19 @@ async function saveRule() {
   const at = $("rule-time").value;
   const whole = segValue("seg-rule-scope") === "whole";
   const ids = [...$("rule-rooms").children].filter((c) => c.classList.contains("sel")).map((c) => Number(c.dataset.id));
+  const bySequence = segValue("seg-rule-action") === "sequence";
+  const sequenceId = Number($("rule-sequence").value);
   if (!name) return ruleError("Give the rule a name");
   if (!days.length) return ruleError("Pick at least one day");
   if (!at) return ruleError("Pick a time");
-  if (!whole && !ids.length) return ruleError("Pick at least one room, or switch to whole house");
+  if (bySequence && !sequenceId) return ruleError("Pick a Sequence, or build one on the Sequences tab first");
+  if (!bySequence && !whole && !ids.length) return ruleError("Pick at least one room, or switch to whole house");
   const body = {
     name,
     recurrence: { days, at },
-    action: { type: "clean", mode: segValue("seg-rule-mode"), segment_ids: whole ? null : ids },
+    action: bySequence
+      ? { type: "sequence", sequence_id: sequenceId }
+      : { type: "clean", mode: segValue("seg-rule-mode"), segment_ids: whole ? null : ids },
     enabled: editingEnabled,
   };
   const res = editingRuleId == null
@@ -1965,8 +2106,9 @@ async function refreshSchedule() {
   };
   let ov, ints, rules, occ, health;
   try {
-    [ov, ints, rules, occ, health] = await Promise.all([
+    [ov, ints, rules, occ, health, sequencesCache] = await Promise.all([
       get("/overdue"), get("/intervals"), get("/schedules"), get("/occurrences"), get("/scheduler/status"),
+      get("/sequences"),
     ]);
   } catch (e) {
     const why = e instanceof TypeError ? "no connection — is the app still running?" : e.message;
@@ -1980,6 +2122,299 @@ async function refreshSchedule() {
   renderRules(rules);
   renderTimeline(occ);
   renderHealth(health);
+}
+
+/* ---------- sequences ---------- */
+let sequencesCache = [];
+let seqDraft = null;
+let seqFetchedFor = null;  // the editor's working copy: { id, name, steps: [{ mode, carpet, scope, ids }] }
+
+const STEP_MODE_WORDS = { vacuum: "Vacuum", mop: "Mop", vac_and_mop: "Vacuum + mop" };
+const CARPET_WORDS = { rise: "Rise", avoid: "Avoid" };
+const mopsWithRise = (step) => step.carpet === "rise" && step.mode !== "vacuum";
+
+function sequenceName(id) {
+  const q = sequencesCache.find((x) => x.id === id);
+  return q ? q.name : `Sequence ${id}`;
+}
+
+// "Vacuum · Bathroom, Bathroom1 · carpet Rise" — segment_ids null means the whole house.
+function stepSummary(step) {
+  const where = step.segment_ids == null ? "Whole house" : step.segment_ids.map(roomName).join(", ");
+  return `${STEP_MODE_WORDS[step.mode] || step.mode} · ${where} · carpet ${CARPET_WORDS[step.carpet] || step.carpet}`;
+}
+
+async function refreshSequences() {
+  const res = await api("/sequences");
+  if (!res.ok) { $("seq-list").innerHTML = `<div class="sched-empty">${esc(res.detail)}</div>`; return; }
+  sequencesCache = res.data;
+  renderSequences();
+  if (lastRun) renderSequenceRun(lastRun);
+}
+
+function renderSequences() {
+  const el = $("seq-list");
+  if (!sequencesCache.length) {
+    el.innerHTML = `<div class="sched-empty">No Sequences yet. Start from a template, or build one from scratch.</div>
+      <div class="seq-templates">
+        <button class="btn" onclick="openSequenceEditor(templateVacuumThenMop())">Vacuum then mop
+          <span>Vacuum the whole house with carpet Rise, then mop it with carpet Avoid</span></button>
+        <button class="btn" onclick="openSequenceEditor(templateBathroomsFirst())">Bathrooms first, then whole house
+          <span>Vacuum the bathroom mats with carpet Rise, then vacuum and mop everywhere with carpet Avoid</span></button>
+      </div>`;
+    return;
+  }
+  const busy = !!(lastRun && lastRun.running);
+  el.innerHTML = sequencesCache.map((q) => `<div class="sched-row">
+      <div class="row-top"><b>${esc(q.name)}</b><span class="pill">${plural(q.steps.length, "step")}</span></div>
+      ${q.steps.map((step, i) => `<div class="sched-sub">${i + 1}. ${esc(stepSummary(step))}</div>`).join("")}
+      <div class="row-top" style="margin-top: 2px">
+        <button class="reset-btn go seq-run-btn" title="Run this Sequence now" onclick="runSequence(${q.id})" ${busy ? "disabled" : ""}>Run</button>
+        <button class="reset-btn" title="Edit this Sequence" onclick="editSequence(${q.id})">Edit</button>
+        <button class="reset-btn" title="Delete this Sequence" onclick="deleteSequence(${q.id})">Delete</button>
+      </div>
+    </div>`).join("");
+}
+
+function listError(msg) {
+  const el = $("seq-list-error");
+  el.textContent = msg ? "⚠ " + msg : "";
+  el.style.display = msg ? "block" : "none";
+}
+
+/* --- templates, filled on the client; nothing is saved until the user taps Save --- */
+const draftStep = (mode, carpet, ids) => ({ mode, carpet, scope: ids ? "rooms" : "whole", ids: ids || [] });
+
+function templateVacuumThenMop() {
+  return { id: null, name: "Vacuum then mop", steps: [draftStep("vacuum", "rise"), draftStep("mop", "avoid")] };
+}
+
+// Resolved by Room name, not Segment number: Segment numbers belong to one robot's map.
+function templateBathroomsFirst() {
+  const wanted = ["bathroom", "bathroom1"];
+  const ids = roomsCache.filter((r) => wanted.includes(r.name.trim().toLowerCase())).map((r) => r.segment_id);
+  return {
+    id: null,
+    name: "Bathrooms first, then whole house",
+    steps: [draftStep("vacuum", "rise", ids), draftStep("vac_and_mop", "avoid")],
+    notice: ids.length ? null : "No rooms named Bathroom or Bathroom1 on this map. Pick Step 1's rooms yourself.",
+  };
+}
+
+/* --- editor --- */
+function openSequenceEditor(draft) {
+  listError(null);
+  seqDraft = draft || { id: null, name: "", steps: [draftStep("vacuum", "avoid")] };
+  $("seq-editor-title").textContent = seqDraft.id == null ? "New sequence" : "Edit sequence";
+  $("seq-name").value = seqDraft.name;
+  $("seq-editor").hidden = false;
+  $("seq-new-btn").hidden = true;
+  seqError(seqDraft.notice || null);
+  renderDraftSteps();
+  $("seq-editor").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function editSequence(id) {
+  const q = sequencesCache.find((x) => x.id === id);
+  if (!q) return;
+  openSequenceEditor({
+    id: q.id,
+    name: q.name,
+    steps: q.steps.map((step) => draftStep(step.mode, step.carpet, step.segment_ids)),
+  });
+}
+function closeSequenceEditor() {
+  seqDraft = null;
+  $("seq-editor").hidden = true;
+  $("seq-new-btn").hidden = false;
+}
+function seqError(msg) {
+  const el = $("seq-error");
+  el.textContent = msg ? "⚠ " + msg : "";
+  el.style.display = msg ? "block" : "none";
+}
+
+function segButtons(field, value, options) {
+  return `<div class="seg${field === "carpet" ? " seq-carpet" : ""}" data-field="${field}">${options.map(([v, label, title]) =>
+    `<button data-v="${v}" class="${v === value ? "active" : ""}" title="${title}">${label}</button>`).join("")}</div>`;
+}
+
+function renderDraftSteps() {
+  const n = seqDraft.steps.length;
+  $("seq-steps").innerHTML = seqDraft.steps.map((step, i) => {
+    const chips = roomsCache.map((r) =>
+      `<button class="chip${step.ids.includes(r.segment_id) ? " sel" : ""}" data-id="${r.segment_id}">${esc(r.name)}</button>`).join("");
+    const summary = step.scope === "rooms" && !step.ids.length ? "Pick at least one room"
+      : stepSummary({ ...step, segment_ids: step.scope === "whole" ? null : step.ids });
+    return `<div class="seq-step" data-i="${i}">
+      <div class="seq-step-head">
+        <b>Step ${i + 1}</b>
+        <button class="reset-btn" data-act="up" title="Move this Step earlier" aria-label="Move Step ${i + 1} up" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="reset-btn" data-act="down" title="Move this Step later" aria-label="Move Step ${i + 1} down" ${i === n - 1 ? "disabled" : ""}>↓</button>
+        <button class="reset-btn" data-act="remove" title="Remove this Step">Remove</button>
+      </div>
+      <div class="sched-sub">${esc(summary)}</div>
+      <div class="seg-label" style="margin-top: 12px">Where</div>
+      ${segButtons("scope", step.scope, [["whole", "Whole house", "Clean the whole house"], ["rooms", "Chosen rooms", "Clean chosen rooms only"]])}
+      ${step.scope === "rooms" ? `<div class="chips">${chips}</div>` : ""}
+      <div class="seg-label">Mode</div>
+      ${segButtons("mode", step.mode, [["vacuum", "Vacuum", "Vacuum only"], ["mop", "Mop", "Mop only"], ["vac_and_mop", "Vacuum + mop", "Vacuum and mop together"]])}
+      <div class="seg-label">Carpet</div>
+      ${segButtons("carpet", step.carpet, [
+        ["rise", "Rise — vacuum carpet, lift mop", "Drive onto carpet and vacuum it; the mop lifts over it"],
+        ["avoid", "Avoid — skip carpet", "Stay off carpet entirely"],
+      ])}
+      ${mopsWithRise(step) ? `<div class="seq-warn">This Step mops with carpet Rise. Rise lifts the mop over carpet, so it is allowed, but the robot will drive onto every carpet while mopping.</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function onStepClick(e) {
+  const card = e.target.closest(".seq-step");
+  const btn = e.target.closest("button");
+  if (!card || !btn || btn.disabled || !seqDraft) return;
+  const i = Number(card.dataset.i);
+  const steps = seqDraft.steps;
+  const step = steps[i];
+  const act = btn.dataset.act;
+  if (act === "up") [steps[i - 1], steps[i]] = [steps[i], steps[i - 1]];
+  else if (act === "down") [steps[i + 1], steps[i]] = [steps[i], steps[i + 1]];
+  else if (act === "remove") steps.splice(i, 1);
+  else if (btn.classList.contains("chip")) {
+    const id = Number(btn.dataset.id);
+    const picked = step.ids.includes(id) ? step.ids.filter((x) => x !== id) : [...step.ids, id];
+    // Map order, not tap order, so the summary reads the same before and after saving.
+    step.ids = roomsCache.map((r) => r.segment_id).filter((x) => picked.includes(x));
+  } else {
+    const seg = btn.closest("[data-field]");
+    if (!seg) return;
+    step[seg.dataset.field] = btn.dataset.v;
+  }
+  renderDraftSteps();
+}
+
+function addStep() {
+  seqDraft.steps.push(draftStep("vacuum", "avoid"));
+  renderDraftSteps();
+}
+
+// Mirrors the server's rules so most mistakes are caught before a round trip; the
+// server's 422 message still lands in the same box for anything this misses.
+function validateDraft(name) {
+  if (!name) return "A Sequence needs a name";
+  if (!seqDraft.steps.length) return "A Sequence needs at least one Step";
+  const empty = seqDraft.steps.findIndex((step) => step.scope === "rooms" && !step.ids.length);
+  if (empty >= 0) return `Step ${empty + 1}: pick at least one room, or switch to Whole house`;
+  return null;
+}
+
+async function saveSequence() {
+  const name = $("seq-name").value.trim();
+  const problem = validateDraft(name);
+  if (problem) return seqError(problem);
+  seqError(null);
+  const body = {
+    name,
+    steps: seqDraft.steps.map((step) => ({
+      mode: step.mode,
+      carpet: step.carpet,
+      segment_ids: step.scope === "whole" ? null : step.ids,
+    })),
+  };
+  const creating = seqDraft.id == null;
+  const res = creating ? await api("/sequences", "POST", body) : await api(`/sequences/${seqDraft.id}`, "PUT", body);
+  if (!res.ok) return seqError(res.detail);
+  toast(creating ? `Sequence "${name}" saved` : `Sequence "${name}" updated`);
+  closeSequenceEditor();
+  refreshSequences();
+}
+
+async function deleteSequence(id) {
+  listError(null);
+  if (!window.confirm(`Delete the Sequence "${sequenceName(id)}"?`)) return;
+  const res = await api(`/sequences/${id}`, "DELETE");
+  if (!res.ok) { listError(res.detail); toast(res.detail, true); return; }
+  toast("Sequence deleted");
+  if (seqDraft && seqDraft.id === id) closeSequenceEditor();
+  refreshSequences();
+}
+
+async function runSequence(id) {
+  listError(null);
+  if (!liveConfirm(`Run the Sequence "${sequenceName(id)}" now?`)) return;
+  const res = await api(`/sequences/${id}/run`, "POST");
+  if (!res.ok) { listError(res.detail); toast(res.detail, true); return; }
+  toast(`Sequence "${sequenceName(id)}" started`);
+  lastRunError = null;
+  await pollRun();
+  $("seq-run-card").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function cancelRun() {
+  const res = await api("/sequences/cancel", "POST");
+  if (!res.ok) toast(res.detail, true);
+  else toast("Cancelling. The robot is heading home");
+  pollRun();
+}
+
+/* --- live progress of whatever holds the RunSlot --- */
+const RUN_PILL = { running: ["on", "running"], done: ["good", "done"], cancelled: ["", "cancelled"], error: ["bad", "failed"] };
+
+function renderSequenceRun(st) {
+  const card = $("seq-run-card");
+  const seq = isSequenceRun(st);
+  // A Two-Stage Clean owns the Clean tab's card; here it only needs to be visible and
+  // cancellable, since it holds the same slot every Sequence waits on.
+  if (!seq) {
+    card.hidden = !st.running;
+    if (!st.running) return;
+    $("seq-run-heading").textContent = "Running now";
+    $("seq-run-title").textContent = "Two-stage clean";
+    $("seq-run-source").hidden = true;
+    $("seq-run-pill").className = "pill on";
+    $("seq-run-pill").textContent = "running";
+    $("seq-run-steps").innerHTML = "";
+    $("seq-run-message").textContent = st.message || "";
+    $("seq-run-error").style.display = "none";
+    $("seq-run-cancel").hidden = false;
+    return;
+  }
+  card.hidden = false;
+  const stage = st.running ? "running" : st.stage;
+  const [pillClass, pillText] = RUN_PILL[stage] || ["", stage];
+  $("seq-run-heading").textContent = st.running ? "Running now" : "Last run";
+  $("seq-run-title").textContent = st.sequence_name;
+  $("seq-run-source").hidden = st.source !== "scheduler";
+  $("seq-run-pill").className = "pill " + pillClass;
+  $("seq-run-pill").textContent = pillText;
+  const known = sequencesCache.find((q) => q.id === st.sequence_id);
+  // The saved Sequence may have been edited since this run started; fall back to plain
+  // step numbers rather than describing Steps the run is not running.
+  const steps = known && known.steps.length === st.step_count ? known.steps : null;
+  const rows = [];
+  for (let i = 0; i < st.step_count; i++) {
+    const current = i === st.step;
+    let cls, note = "";
+    if (stage === "done" || i < st.step || (current && st.phase === "done")) cls = "done";
+    else if (current && stage === "running") { cls = "running"; note = st.message.replace(/^Step \d+ of \d+: /, ""); }
+    else if (current && stage === "error") { cls = "failed"; note = "failed here"; }
+    else if (current && stage === "cancelled") { cls = "failed"; note = "cancelled here"; }
+    else cls = "todo";
+    const dot = { done: "good", running: "active", failed: "bad", todo: "" }[cls];
+    const label = steps ? stepSummary(steps[i]) : `Step ${i + 1}`;
+    const state = { done: "done", running: "running", failed: "", todo: stage === "running" ? "to come" : "not run" }[cls];
+    rows.push(`<div class="run-step ${cls}"><span class="dot ${dot}"></span><div>${i + 1}. ${esc(label)}${state ? ` · ${state}` : ""}${note ? `<small>${esc(note)}</small>` : ""}</div></div>`);
+  }
+  $("seq-run-steps").innerHTML = rows.join("");
+  $("seq-run-message").textContent = stage === "done" || stage === "cancelled" ? st.message : "";
+  const err = $("seq-run-error");
+  err.style.display = st.error ? "block" : "none";
+  err.textContent = st.error ? `⚠ Step ${st.step + 1}: ${st.error}` : "";
+  $("seq-run-cancel").hidden = !st.running;
+  // A run the scheduler started may name a Sequence this page has not loaded yet.
+  if (!known && seqFetchedFor !== st.sequence_id) {
+    seqFetchedFor = st.sequence_id;
+    refreshSequences();
+  }
 }
 
 /* ---------- PWA: service worker + update notice ---------- */
@@ -2053,6 +2488,7 @@ async function loadAppData() {
   appDataLoaded = true;
   refreshMap();
   refreshSchedule();
+  refreshSequences();
 }
 
 async function boot() {
@@ -2083,6 +2519,11 @@ async function boot() {
     const btn = e.target.closest("button");
     if (btn) btn.classList.toggle("sel");
   });
+  $("seg-rule-action").addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (btn) setRuleAction(btn.dataset.v);
+  });
+  $("seq-steps").addEventListener("click", onStepClick);
   $("seg-rule-scope").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
@@ -2093,12 +2534,12 @@ async function boot() {
   try { await loadAppData(); }
   catch { setOffline(true); }  // offline launch: honest banner, shell stays usable
 
-  const st0 = await fetchTwoStageStatus();
-  if (st0) { renderTwoStage(st0); if (st0.running) startTwoStagePoll(); }
+  await pollRun();
 
   await refreshStatus();
   window.addEventListener("online", refreshStatus);
   setInterval(refreshStatus, 5000);
+  setInterval(() => { if (!runTimer) pollRun(); }, 5000);
   refreshMap();
   // Keep the schedule cards live (a firing shows up as it happens), but only while visible.
   setInterval(() => {

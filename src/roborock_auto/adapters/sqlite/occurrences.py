@@ -127,6 +127,21 @@ class SqliteOccurrences:
         )
         self._conn.commit()
 
+    async def fail_claimed(self, *, at: datetime, reason: str) -> None:
+        self._conn.execute(
+            "UPDATE occurrences SET state = ?, attempts = attempts + 1,"
+            " last_attempt_at = ?, blocked_reason = ?"
+            " WHERE device_id = ? AND state = ?",
+            (
+                OccurrenceState.FAILED.value,
+                _utc_text("last_attempt_at", at),
+                reason,
+                self._device_id,
+                OccurrenceState.CLAIMED.value,
+            ),
+        )
+        self._conn.commit()
+
     async def list_occurrences(self) -> list[Occurrence]:
         rows = self._conn.execute(
             "SELECT o.id, o.rule_id, r.name, o.scheduled_for, o.deadline, o.state,"

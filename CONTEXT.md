@@ -32,6 +32,16 @@ Rise, then a mop pass with carpet mode Avoid, waiting for the robot to genuinely
 between them.
 _Avoid_: Deep clean, full clean
 
+**Step**:
+One Clean inside a Sequence: whole-house or a chosen set of segments, a cleaning mode,
+and a carpet mode (Rise or Avoid).
+
+**Sequence**:
+A named, ordered list of Steps, each starting only once the robot is home and idle from
+the one before. Every Sequence ends with carpet mode Avoid. The Two-Stage Clean is the
+two-Step preset: vacuum with Rise, then mop with Avoid.
+_Avoid_: Routine (the official app's saved routines), Recipe, Program, Chain
+
 **Departure**:
 The robot having actually left the dock for the current job, as distinct from the dock
 servicing itself after the previous one.

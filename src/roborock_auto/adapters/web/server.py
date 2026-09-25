@@ -30,9 +30,11 @@ from roborock_auto.adapters.sqlite import (
 )
 from roborock_auto.application.materialise import MATERIALISATION_HORIZON, materialise
 from roborock_auto.application.overdue import clean_overdue, overdue_view
+from roborock_auto.application.run_slot import RunSlot
 from roborock_auto.application.scheduler import Scheduler
+from roborock_auto.application.sequence_runner import RunCancelled
 from roborock_auto.application.start_clean import start_clean, utc_now
-from roborock_auto.application.two_stage_clean import RunCancelled, run_two_stage
+from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
 from roborock_auto.domain.models import (
@@ -70,7 +72,7 @@ _STAGE_MESSAGES = {
 
 
 def _idle_progress() -> dict:
-    return {"running": False, "stage": "idle", "message": "", "error": None}
+    return {"stage": "idle", "message": "", "error": None}
 
 
 @asynccontextmanager
@@ -90,9 +92,8 @@ async def lifespan(app: FastAPI):
     # One injected clock for everything that reads or writes a time, so a test can freeze it.
     app.state.now = utc_now
     app.state.map_cache = {"at": 0.0, "png": b""}
-    app.state.two_stage = _idle_progress()
-    app.state.two_stage_task = None
-    app.state.two_stage_cancel = None
+    app.state.run_slot = RunSlot()
+    app.state.run_slot.progress.update(_idle_progress())
     app.state.scheduler = Scheduler(
         gw,
         rules=app.state.schedule_rules,
@@ -101,14 +102,14 @@ async def lifespan(app: FastAPI):
         tz=app.state.timezone,
         # Read through app.state on every call, so the test clock reaches the scheduler.
         now=lambda: app.state.now(),
-        two_stage_running=lambda: app.state.two_stage["running"],
+        run_slot=app.state.run_slot,
     )
     app.state.scheduler_task = asyncio.create_task(app.state.scheduler.run())
     try:
         yield
     finally:
         app.state.scheduler_task.cancel()
-        task = app.state.two_stage_task
+        task = app.state.run_slot.task
         if task is not None:
             task.cancel()
         await gw.close()
@@ -417,7 +418,7 @@ async def overdue(request: Request):
 async def clean_overdue_now(request: Request, mode: str = Body(..., embed=True)):
     # Two distinct mechanisms, so two distinct conflicts: an in-process flag, then a live
     # status read.
-    if request.app.state.two_stage["running"]:
+    if request.app.state.run_slot.running:
         raise HTTPException(409, "a two-stage clean is already running")
     gw = _gw(request)
     if not ready_to_start(await gw.get_status()):
@@ -608,14 +609,13 @@ async def scheduler_status(request: Request):
 
 @app.post("/clean/two-stage")
 async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, embed=True)):
-    progress = request.app.state.two_stage
-    if progress["running"]:
+    slot = request.app.state.run_slot
+    if not slot.acquire():
         raise HTTPException(409, "a two-stage clean is already running")
     gw = _gw(request)
     config = request.app.state.config
-    progress.update(running=True, stage="vacuuming", message="starting", error=None)
-    cancel = asyncio.Event()
-    request.app.state.two_stage_cancel = cancel
+    progress = slot.progress
+    progress.update(stage="vacuuming", message="starting", error=None)
 
     def on_stage(stage: str) -> None:
         progress["stage"] = stage
@@ -627,7 +627,7 @@ async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, 
                 gw, config,
                 cleaning_log=request.app.state.cleaning_log, source=CleanSource.APP,
                 segment_ids=segment_ids or None, on_stage=on_stage,
-                log=_LOGGER.info, cancel=cancel,
+                log=_LOGGER.info, cancel=slot.cancel,
             )
         except RunCancelled:
             # The use case has already docked the robot and restored carpet mode.
@@ -635,24 +635,25 @@ async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, 
         except Exception as exc:  # noqa: BLE001 - surface any failure to the status endpoint
             progress.update(stage="error", message=str(exc), error=str(exc))
         finally:
-            progress["running"] = False
+            slot.release()
 
-    request.app.state.two_stage_task = asyncio.create_task(runner())
+    slot.task = asyncio.create_task(runner())
     return {"ok": True}
 
 
 @app.post("/clean/two-stage/cancel")
 async def clean_two_stage_cancel(request: Request):
-    progress = request.app.state.two_stage
-    if not progress["running"]:
+    slot = request.app.state.run_slot
+    if not slot.running:
         raise HTTPException(409, "no two-stage clean is running")
-    request.app.state.two_stage_cancel.set()
+    slot.cancel.set()
     return {"ok": True}
 
 
 @app.get("/clean/two-stage/status")
 async def clean_two_stage_status(request: Request):
-    return dict(request.app.state.two_stage)
+    slot = request.app.state.run_slot
+    return {"running": slot.running, **slot.progress}
 
 
 @app.get("/")

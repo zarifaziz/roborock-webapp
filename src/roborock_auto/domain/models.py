@@ -87,6 +87,8 @@ class DeviceStatus:
     # state is False so departure fails safe. Distinct from in_cleaning, which stays true
     # through recharge and servicing.
     cleaning: bool = False
+    cleaning_mode: str | None = None
+    drying_mop: bool | None = None
 
 
 @dataclass(frozen=True)

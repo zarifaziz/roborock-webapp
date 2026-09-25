@@ -140,3 +140,8 @@ def life_pct(work_time_seconds: Any, max_hours: float) -> int:
     """Percent of life remaining from seconds of use against a standard lifetime."""
     used_hours = (work_time_seconds or 0) / 3600
     return max(0, min(100, round(100 - used_hours / max_hours * 100)))
+
+
+def drying_mop_value(code: Any) -> bool | None:
+    """The dock reports drying independently of the robot's charging state."""
+    return bool(code) if code in (0, 1) else None

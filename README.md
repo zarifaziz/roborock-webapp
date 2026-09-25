@@ -24,6 +24,11 @@ one-click **"Vacuum, then mop avoiding carpet"** two-stage clean with live stage
 fake robot advances on a clock (docked -> cleaning -> docked) so the UI actually moves; the
 two-stage run takes about a minute in fake mode.
 
+The live map uses bright room colours, white vacuum trails, and translucent mop coverage
+from the robot's recorded path. A floating badge shows its current activity, including mop
+washing/drying and returning to the dock. Scroll gently to zoom, drag to pan, and use
+**Reset view** to restore the centre and default zoom. Map refreshes preserve your view.
+
 The Sequences tab builds your own multi-step cleans. A Sequence is a named, ordered list of
 Steps, each a Clean with its own rooms, mode, and carpet setting, and each starting only once
 the robot is home from the last. For example: vacuum the two bathrooms with carpet Rise so the

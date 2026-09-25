@@ -11,7 +11,9 @@ from roborock_auto.domain.models import MapData, Room
 
 @runtime_checkable
 class MapPort(Protocol):
-    async def get_map_png(self) -> bytes: ...
+    async def get_map_png(self) -> bytes:
+        """Latest real PNG, retained on failure; empty when no map is available yet."""
+        ...
     async def get_map_data(self) -> MapData: ...
     async def get_map_text(self) -> str:
         """A compact text/ASCII rendering of the map — rooms, robot position, and driven-path
@@ -21,6 +23,5 @@ class MapPort(Protocol):
     async def list_rooms(self) -> list[Room]: ...
 
     def map_ok(self) -> bool:
-        """False when the most recent map fetch fell back to the placeholder, so the UI
-        can say so instead of showing a stale-looking map as if it were live."""
+        """False when the latest fetch failed; any retained map must be marked stale."""
         ...

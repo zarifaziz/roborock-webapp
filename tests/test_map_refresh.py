@@ -2,7 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 from fastapi import Request
 
@@ -10,6 +10,8 @@ from roborock_auto.adapters.web import server
 
 
 def _request(gateway):
+    if not hasattr(gateway, "map_ok"):
+        gateway.map_ok = Mock(return_value=True)
     state = SimpleNamespace(
         gateway=gateway,
         map_cache={"at": 0.0, "png": b""},
@@ -79,6 +81,47 @@ async def test_live_map_cannot_be_cached_by_the_browser():
 
     assert dict(response.headers) == {
         "cache-control": "no-store",
+        "x-map-stale": "false",
         "content-length": "16",
         "content-type": "image/png",
     }
+
+
+async def test_map_failure_before_first_success_is_unavailable():
+    gateway = SimpleNamespace(get_map_png=AsyncMock(return_value=b""), map_ok=lambda: False)
+    response = await server.map_png(_request(gateway))
+    assert (response.status_code, response.body, dict(response.headers)) == (
+        503, b"", {"cache-control": "no-store", "x-map-stale": "true", "content-length": "0"},
+    )
+
+
+async def test_cached_map_keeps_its_own_stale_flag():
+    gateway = SimpleNamespace(
+        get_map_png=AsyncMock(return_value=b"last-real-map"), map_ok=Mock(return_value=False),
+    )
+    request = _request(gateway)
+    first = await server.map_png(request)
+    gateway.map_ok.return_value = True
+    second = await server.map_png(request)
+    assert [(r.status_code, r.body, r.headers["x-map-stale"]) for r in (first, second)] == [
+        (200, b"last-real-map", "true"), (200, b"last-real-map", "true"),
+    ]
+    assert gateway.get_map_png.await_count == 1
+
+
+async def test_unavailable_initial_map_is_coalesced_and_retried_after_ttl(monkeypatch):
+    clock = SimpleNamespace(value=100.0)
+    monkeypatch.setattr(server, "time", SimpleNamespace(monotonic=lambda: clock.value))
+    gateway = SimpleNamespace(
+        get_map_png=AsyncMock(side_effect=[b"", b"recovered"]), map_ok=Mock(return_value=False),
+    )
+    request = _request(gateway)
+    responses = await asyncio.gather(*(server.map_png(request) for _ in range(3)))
+    assert ([(r.status_code, r.body) for r in responses], gateway.get_map_png.await_count) == (
+        [(503, b"")] * 3, 1,
+    )
+    clock.value += 3
+    gateway.map_ok.return_value = True
+    recovered = await server.map_png(request)
+    assert (recovered.status_code, recovered.body, recovered.headers["x-map-stale"],
+            gateway.get_map_png.await_count) == (200, b"recovered", "false", 2)

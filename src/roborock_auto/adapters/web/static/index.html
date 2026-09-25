@@ -765,7 +765,7 @@
       <div class="card map-card">
         <div class="map-head">
           <h2>Map</h2>
-          <span class="map-badge" id="map-badge">⚠ placeholder — live map unavailable</span>
+          <span class="map-badge" id="map-badge">Map temporarily unavailable — retrying</span>
           <button class="rotate-btn" id="map-reset" onclick="resetZoom()" title="Reset map zoom and centre" aria-label="Reset map view">
             <svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 1-5 5H1.5A6.5 6.5 0 1 0 8 1.5V0L4.5 3 8 6V3z"/></svg>
             Reset view
@@ -782,7 +782,7 @@
           <div class="map-zoom" id="map-zoom">
             <div class="map-rotor" id="map-rotor">
               <img id="map" alt="live map" />
-              <div class="map-overlay" id="map-overlay"></div>
+              <div class="map-overlay" id="map-overlay" style="visibility:hidden"></div>
               <div class="robot-activity" id="robot-activity" hidden role="status" aria-live="polite">
                 <div class="robot-activity-upright"><div class="robot-activity-bubble">
                   <span class="robot-activity-icon" id="robot-activity-icon" aria-hidden="true"></span>
@@ -1430,7 +1430,7 @@ function setRobotMapData(data) {
   const valid = p && data.image_width > 0 && data.image_height > 0 &&
     Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.y >= 0 &&
     p.x <= data.image_width && p.y <= data.image_height;
-  el.hidden = !valid || !robotActivity;
+  el.hidden = !valid || !robotActivity || !mapObjectUrl || mapRefreshFailed;
   if (!valid) return;
   el.style.left = `${p.x / data.image_width * 100}%`;
   el.style.top = `${p.y / data.image_height * 100}%`;
@@ -1452,7 +1452,11 @@ async function refreshRobotPosition() {
   try {
     const response = await fetch('/map-data');
     if (!response.ok) throw new Error('Map unavailable');
-    setRobotMapData(await response.json());
+    const data = await response.json();
+    setRobotMapData(data);
+    if (!mapRefreshFailed && !$('map-overlay').childElementCount && data.rooms?.length) {
+      renderMapRegions(data, Object.fromEntries(roomsCache.map(r => [r.segment_id, r.name])));
+    }
   } catch { setRobotMapData(null); }
 }
 
@@ -1466,6 +1470,9 @@ async function buildMapRegions() {
     for (const r of await rl.json()) names[r.segment_id] = r.name;
   } catch { return; }  // no map geometry — chips still drive selection
   setRobotMapData(data);
+  renderMapRegions(data, names);
+}
+function renderMapRegions(data, names) {
   const overlay = $("map-overlay");
   // Index over the full room list (not the filtered one) so region accents line up with chips.
   overlay.innerHTML = (data.rooms || []).map((r, i) => {
@@ -1677,7 +1684,6 @@ async function refreshStatus() {
   syncSeg("seg-fan", s.fan_power);
   syncSeg("seg-mop", s.mop_route);
   syncSeg("seg-water", s.water_mode);
-  // Explicit false only: a server that predates map_ok omits the field, which is not a failure.
   renderMapBadge();
 
   // header battery ring mirror
@@ -1717,8 +1723,9 @@ function sizeMap() {
 let mapLoading = false, mapRefreshTimer = null, mapObjectUrl = null, mapRefreshFailed = false;
 function renderMapBadge() {
   const badge = $('map-badge');
-  badge.textContent = mapRefreshFailed ? 'Map update unavailable — retrying' : '⚠ placeholder — live map unavailable';
-  badge.style.display = mapRefreshFailed || lastStatus?.map_ok === false ? 'inline-block' : 'none';
+  badge.textContent = mapObjectUrl ? 'Showing last known map — retrying' : 'Map temporarily unavailable — retrying';
+  badge.style.display = mapRefreshFailed ? 'inline-block' : 'none';
+  $('map-overlay').style.visibility = mapObjectUrl ? '' : 'hidden';
 }
 async function refreshMap() {
   if (mapLoading) return;
@@ -1728,6 +1735,13 @@ async function refreshMap() {
   try {
     const response = await fetch('/map.png?t=' + Date.now());
     if (!response.ok) throw new Error('Map unavailable');
+    const stale = response.headers.get('X-Map-Stale') === 'true';
+    if (stale && mapObjectUrl) {
+      mapRefreshFailed = true;
+      setRobotMapData(null);
+      renderMapBadge();
+      return;
+    }
     nextUrl = URL.createObjectURL(await response.blob());
     const nextImage = new Image();
     nextImage.src = nextUrl;
@@ -1737,11 +1751,12 @@ async function refreshMap() {
     await $('map').decode();
     mapObjectUrl = nextUrl;
     nextUrl = null;
-    mapRefreshFailed = false;
+    mapRefreshFailed = stale;
     renderMapBadge();
     if (previousUrl) URL.revokeObjectURL(previousUrl);
     sizeMap();
-    await refreshRobotPosition();
+    if (stale) setRobotMapData(null);
+    else await refreshRobotPosition();
   } catch {
     setRobotMapData(null);
     mapRefreshFailed = true;
@@ -2580,6 +2595,12 @@ function initServiceWorker() {
     if (reg.waiting && navigator.serviceWorker.controller) showUpdateToast(reg);
     watch(reg.installing);
     reg.addEventListener("updatefound", () => watch(reg.installing));
+    const checkUpdate = () => {
+      if (document.visibilityState === "visible") reg.update().catch(() => {});
+    };
+    window.addEventListener("focus", checkUpdate);
+    document.addEventListener("visibilitychange", checkUpdate);
+    setInterval(checkUpdate, 60000);
   }).catch(() => { /* a failed registration must never break the app */ });
 }
 
@@ -2602,8 +2623,14 @@ function showUpdateToast(reg) {
 // Everything that needs the server. Kept out of boot()'s critical path so an OFFLINE
 // launch (shell served by the service worker) still renders the full UI and recovers:
 // refreshStatus() retries this once the connection returns.
-let appDataLoaded = false;
-async function loadAppData() {
+let appDataLoaded = false, appDataLoading = null;
+function loadAppData() {
+  if (!appDataLoading) {
+    appDataLoading = loadAppDataOnce().finally(() => { appDataLoading = null; });
+  }
+  return appDataLoading;
+}
+async function loadAppDataOnce() {
   try {
     const caps = await (await fetch("/capabilities")).json();
     $("model").textContent = caps.model;

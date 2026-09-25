@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import hashlib
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -183,12 +184,15 @@ async def map_png(request: Request):
     # starts after completion so a slow fetch still gives queued commands breathing room.
     cache = request.app.state.map_cache
     async with request.app.state.map_lock:
-        if not cache["png"] or time.monotonic() - cache["at"] >= _MAP_TTL_SEC:
-            cache["png"] = await _gw(request).get_map_png()
+        if "stale" not in cache or time.monotonic() - cache["at"] >= _MAP_TTL_SEC:
+            gateway = _gw(request)
+            cache["png"] = await gateway.get_map_png()
+            cache["stale"] = not gateway.map_ok()
             cache["at"] = time.monotonic()
-    return Response(
-        content=cache["png"], media_type="image/png", headers={"Cache-Control": "no-store"}
-    )
+        headers = {"Cache-Control": "no-store", "X-Map-Stale": str(cache["stale"]).lower()}
+        if not cache["png"]:
+            return Response(status_code=503, headers=headers)
+        return Response(content=cache["png"], media_type="image/png", headers=headers)
 
 
 @app.get("/rooms")
@@ -840,7 +844,7 @@ async def sequences_run(request: Request, sequence_id: int):
 
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/sw.js")
@@ -848,8 +852,10 @@ async def service_worker():
     # Served from the ROOT, not the static mount: a service worker only controls pages at
     # or below its own path, so /static/sw.js could never control /. The header widens the
     # allowed scope explicitly as belt-and-braces.
-    return FileResponse(
-        STATIC_DIR / "sw.js",
+    version = hashlib.sha256((STATIC_DIR / "index.html").read_bytes()).hexdigest()[:16]
+    worker = (STATIC_DIR / "sw.js").read_text().replace("__SHELL_VERSION__", version)
+    return Response(
+        worker,
         media_type="text/javascript",
         headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
     )

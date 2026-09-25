@@ -19,6 +19,8 @@ import logging
 from typing import Any
 
 from roborock import RoborockCommand
+from roborock.map.map_parser import MapParserConfig
+from vacuum_map_parser_base.config.drawable import Drawable
 
 from roborock_auto.adapters.map_text import TextRoom, render_map_text
 from roborock_auto.adapters.roborock_cloud.codes import (
@@ -39,7 +41,6 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     water_mode_value,
 )
 from roborock_auto.adapters.roborock_cloud.session import load_user_data
-from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
 from roborock_auto.config import Config
 from roborock_auto.domain.models import (
     CarpetMode,
@@ -69,11 +70,12 @@ class RoborockCloudAdapter:
         self._user_data: Any = None
         self._map_ok = True
         self._map_snapshot: MapData | None = None
+        self._map_png = b""
+        self._map_config: MapParserConfig | None = None
 
     # --- lifecycle --------------------------------------------------------
     async def connect(self) -> None:
         from roborock.devices.device_manager import UserParams, create_device_manager
-        from roborock.map.map_parser import MapParserConfig
         from roborock.web_api import RoborockApiClient
 
         from roborock_auto.adapters.roborock_cloud.palette import install_calm_palette
@@ -89,8 +91,6 @@ class RoborockCloudAdapter:
         # stays crisp (room geometry scales by the same factor, so bboxes stay correct), and
         # draw the richer map elements the phone app shows: obstacles (furniture), virtual
         # walls, no-go / no-mop / no-carpet zones, and room-name labels.
-        from vacuum_map_parser_base.config.drawable import Drawable
-
         map_config = MapParserConfig(
             map_scale=8,
             # Make the area outside the floor plan transparent instead of the parser's default
@@ -113,6 +113,7 @@ class RoborockCloudAdapter:
                 Drawable.ZONES,
             ],
         )
+        self._map_config = map_config
         self._manager = await create_device_manager(params, map_parser_config=map_config)
         devices = await self._manager.get_devices()
         self._device = _pick_device(devices, self._config.duid)
@@ -183,27 +184,34 @@ class RoborockCloudAdapter:
         return await self._locked_retry(read)
 
     async def get_map_png(self) -> bytes:
-        # Map goes through an unofficial parser; on any failure serve the placeholder so the
-        # app never breaks. A mismatched map tells the user the live fetch failed.
+        # Preserve the last real image and its geometry through transient cloud failures.
         try:
             async def read() -> bytes:
                 mc = self._v1.map_content
+                if self._map_config is not None:
+                    # The parser shares this list; update in place before rendering.
+                    drawables = self._map_config.drawables
+                    mode = _opt(_opt(self._v1, "status"), "current_cleaning_mode_name")
+                    if Drawable.MOP_PATH in drawables:
+                        drawables.remove(Drawable.MOP_PATH)
+                    if mode in ("mop", "vac_and_mop"):
+                        drawables.insert(0, Drawable.MOP_PATH)
                 await mc.refresh()
                 png = mc.image_content
-                self._map_snapshot = _map_data(_opt(mc, "map_data")) if png else MapData()
+                if png:
+                    snapshot = _map_data(_opt(mc, "map_data"))
+                    self._map_png = png
+                    self._map_snapshot = snapshot
                 return png
 
             png = await self._locked_retry(read)
-            if png:
-                self._map_ok = True
-                return png
-            self._map_ok = False
-            return SAMPLE_MAP_PNG
+            self._map_ok = bool(png)
         except Exception:
-            self._map_snapshot = MapData()
-            _LOGGER.warning("live map fetch failed; serving placeholder", exc_info=True)
+            _LOGGER.warning("live map fetch failed; retaining last real map", exc_info=True)
             self._map_ok = False
-            return SAMPLE_MAP_PNG
+        if self._map_snapshot is None:
+            self._map_snapshot = MapData()
+        return self._map_png
 
     async def get_map_data(self) -> MapData:
         # Geometry belongs to the displayed PNG, not to a second independently fetched map.

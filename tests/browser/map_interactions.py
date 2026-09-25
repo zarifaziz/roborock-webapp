@@ -23,6 +23,7 @@ class MapInteractions(unittest.IsolatedAsyncioTestCase):
         self.map_delay = 0
         self.map_requests = 0
         self.map_error = False
+        self.map_stale = False
 
         async def route(request):
             path = request.request.url.split("test.invalid", 1)[-1]
@@ -35,7 +36,7 @@ class MapInteractions(unittest.IsolatedAsyncioTestCase):
                     self.map_error = False
                     await request.fulfill(status=503, body="unavailable")
                 else:
-                    await request.fulfill(content_type="image/svg+xml", body=MAP)
+                    await request.fulfill(content_type="image/svg+xml", body=MAP, headers={"X-Map-Stale": str(self.map_stale).lower()})
             else:
                 await request.fulfill(status=503, content_type="application/json", body="{}")
 
@@ -201,9 +202,82 @@ class MapInteractions(unittest.IsolatedAsyncioTestCase):
         self.map_error = True
         await self.page.evaluate("refreshMap()")
         await self.status_response()
-        self.assertEqual(await self.page.locator("#map-badge").evaluate("el => ({visible:getComputedStyle(el).display !== 'none',text:el.textContent})"), {"visible": True, "text": "Map update unavailable — retrying"})
+        self.assertEqual(await self.page.locator("#map-badge").evaluate("el => ({visible:getComputedStyle(el).display !== 'none',text:el.textContent})"), {"visible": True, "text": "Showing last known map — retrying"})
         await self.page.evaluate("refreshMap()")
         self.assertFalse(await self.page.locator("#map-badge").is_visible())
+
+    async def test_stale_map_preserves_image_hides_activity_and_recovers(self):
+        geometry = {"robot": {"x": 300, "y": 200}, "image_width": 600, "image_height": 400}
+        await self.page.route("**/map-data", lambda route: route.fulfill(content_type="application/json", body=json.dumps(geometry)))
+        await self.status_response()
+        await self.page.evaluate("refreshMap()")
+        before = await self.page.locator("#map").get_attribute("src")
+        self.map_stale = True
+        await self.page.evaluate("refreshMap()")
+        await self.status_response()
+        await self.page.evaluate("refreshRobotPosition()")
+        self.assertEqual(await self.page.evaluate("""() => ({src:document.getElementById('map').getAttribute('src'),
+          badge:document.getElementById('map-badge').textContent,
+          hidden:document.getElementById('robot-activity').hidden})"""),
+          {"src": before, "badge": "Showing last known map — retrying", "hidden": True})
+        self.map_stale = False
+        await self.page.evaluate("refreshMap()")
+        self.assertEqual(await self.page.evaluate("""() => ({width:document.getElementById('map').naturalWidth,
+          badge:getComputedStyle(document.getElementById('map-badge')).display,
+          hidden:document.getElementById('robot-activity').hidden})"""),
+          {"width": 600, "badge": "none", "hidden": False})
+
+    async def test_new_viewer_can_see_retained_real_map_as_stale(self):
+        self.map_stale = True
+        await self.page.reload()
+        await self.page.wait_for_function("document.getElementById('map').naturalWidth === 600 && !mapLoading")
+        await self.status_response()
+        self.assertEqual(await self.page.evaluate("""() => ({width:document.getElementById('map').naturalWidth,
+          badge:document.getElementById('map-badge').textContent,
+          hidden:document.getElementById('robot-activity').hidden})"""),
+          {"width": 600, "badge": "Showing last known map — retrying", "hidden": True})
+
+    async def test_initial_map_failure_has_no_demo_map_and_recovers(self):
+        await self.page.route("**/map.png?*", lambda route: route.fulfill(status=503, body="unavailable"))
+        await self.page.reload()
+        await self.page.wait_for_function("!mapLoading && getComputedStyle(document.getElementById('map-badge')).display !== 'none'")
+        self.assertEqual(await self.page.evaluate("""() => ({src:document.getElementById('map').getAttribute('src'),
+          badge:document.getElementById('map-badge').textContent,
+          overlayVisible:getComputedStyle(document.getElementById('map-overlay')).visibility,
+          hidden:document.getElementById('robot-activity').hidden})"""),
+          {"src": None, "badge": "Map temporarily unavailable — retrying", "overlayVisible": "hidden", "hidden": True})
+        await self.page.unroute("**/map.png?*")
+        await self.page.evaluate("refreshMap()")
+        self.assertEqual(await self.page.locator("#map").evaluate("img => img.naturalWidth"), 600)
+        self.assertFalse(await self.page.locator("#map-badge").is_visible())
+
+    async def test_map_recovery_restores_room_regions_without_reload(self):
+        geometry = {"robot": {"x": 300, "y": 200}, "image_width": 600, "image_height": 400,
+                    "rooms": [{"segment_id": 16, "name": "Room 16", "bbox": [0.1, 0.2, 0.6, 0.8]}]}
+        await self.page.route("**/map-data", lambda route: route.fulfill(content_type="application/json", body=json.dumps(geometry)))
+        await self.page.evaluate("roomsCache=[{segment_id:16,name:'Study'}]; document.getElementById('map-overlay').innerHTML=''")
+        await self.page.evaluate("refreshMap()")
+        self.assertEqual(await self.page.locator("#map-overlay .map-region").evaluate_all("els => els.map(el => ({id:el.dataset.id,text:el.textContent,left:el.style.left,top:el.style.top}))"),
+                         [{"id": "16", "text": "Study", "left": "10%", "top": "20%"}])
+
+    async def test_initialization_requests_share_pending_load(self):
+        result = await self.page.evaluate("""async () => {
+          let release, calls=0; const original=window.fetch;
+          const pending=new Promise(resolve => release=resolve);
+          window.fetch=async path => {
+            if(path === '/capabilities') {calls++; await pending; return {json:async()=>({model:'Robot'})};}
+            if(path === '/rooms') throw new Error('offline');
+            return original(path);
+          };
+          try {
+            const first=loadAppData().catch(()=>{}), second=loadAppData().catch(()=>{});
+            await Promise.resolve(); release(); await Promise.all([first,second]);
+            const concurrent=calls;
+            await loadAppData().catch(()=>{});
+            return {concurrent,retry:calls};
+          } finally {window.fetch=original;}
+        }""")
+        self.assertEqual(result, {"concurrent": 1, "retry": 2})
 
     async def test_status_pills_only_show_current_activity(self):
         result = []

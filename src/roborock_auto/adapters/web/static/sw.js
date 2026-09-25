@@ -12,7 +12,7 @@
  *    firing later is worse than no offline mode at all.
  */
 
-const CACHE = "roborock-shell-v4";
+const CACHE = "roborock-shell-v4-__SHELL_VERSION__";
 
 const SHELL = [
   "/",

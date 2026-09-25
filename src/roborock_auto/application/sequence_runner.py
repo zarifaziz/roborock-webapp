@@ -260,7 +260,10 @@ async def run_sequence(
         # the next plain Clean (from any app or rule) onto the carpets it must avoid. A last
         # Step at Avoid already set and read it back, so a second write only adds a way to fail.
         if steps[-1].carpet is not CarpetMode.AVOID:
-            await _set_carpet_verified(gw, CarpetMode.AVOID, sleep=sleep)
+            await _set_carpet_verified(
+                gw, CarpetMode.AVOID, sleep=sleep,
+                consequence="the clean finished but carpet may still be at Rise",
+            )
     except Exception:
         await _recover_after_abort(gw, log=log)
         raise
@@ -311,11 +314,14 @@ async def _depart_and_confirm(
             log(f"clean trigger was dropped (robot idle); re-issuing (attempt {attempt + 2})")
 
 
-async def _set_carpet_verified(gw: CleaningSettingsPort, mode: CarpetMode, *, sleep: Sleep) -> None:
+async def _set_carpet_verified(
+    gw: CleaningSettingsPort, mode: CarpetMode, *, sleep: Sleep,
+    consequence: str = "aborting before starting the clean",
+) -> None:
     await with_retry(lambda: gw.set_carpet_mode(mode), sleep=sleep)
     actual = await gw.get_carpet_mode()
     if actual != mode:
         raise AutomationError(
             f"carpet mode did not take: asked {mode.value}, device reports {actual.value}; "
-            f"aborting before starting the clean"
+            f"{consequence}"
         )

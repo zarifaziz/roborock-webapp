@@ -1735,6 +1735,9 @@ function renderTwoStage(st) {
 }
 
 function renderRun(st) {
+  // A plain Clean briefly holds the slot without rewriting progress, so the finished
+  // Sequence's record would otherwise read as running again for a poll or two.
+  if (isSequenceRun(st) && st.stage !== "running") st = { ...st, running: false };
   lastRun = st;
   // Any run in the slot blocks another start, so the orb and Run buttons wait for it.
   twoStageRunning = !!st.running;

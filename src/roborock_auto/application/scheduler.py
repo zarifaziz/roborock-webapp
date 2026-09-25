@@ -21,8 +21,16 @@ from typing import Protocol
 
 from roborock_auto.application.materialise import materialise
 from roborock_auto.application.run_slot import RunSlot
+from roborock_auto.application.sequence_launch import SequenceLauncher
+from roborock_auto.application.sequence_runner import RunCancelled
 from roborock_auto.application.start_clean import CleanPorts, start_clean, utc_now
-from roborock_auto.domain.models import CleanAction, CleanSource, DeviceStatus, Occurrence
+from roborock_auto.domain.models import (
+    CleanAction,
+    CleanSource,
+    DeviceStatus,
+    Occurrence,
+    SequenceAction,
+)
 from roborock_auto.domain.policies import (
     OCCURRENCE_MAX_ATTEMPTS,
     claimable_occurrences,
@@ -33,6 +41,7 @@ from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.occurrences import OccurrencePort
 from roborock_auto.ports.robot import RobotStatusPort
 from roborock_auto.ports.schedule_rules import ScheduleRulePort
+from roborock_auto.ports.sequences import SequencePort
 
 _LOGGER = logging.getLogger("roborock_auto.scheduler")
 
@@ -50,7 +59,7 @@ def readiness_block(status: DeviceStatus, *, run_in_flight: bool) -> str | None:
     plus the one condition status cannot see — a run holding the RunSlot in this
     process, which sits docked and idle between its Steps."""
     if run_in_flight:
-        return "a two-stage clean is in flight"
+        return "another run is in flight"
     if ready_to_start(status):
         return None
     if status.error is not None:
@@ -107,6 +116,17 @@ class OutcomeRecorder:
             occurrence.id, occurrence.rule_id, at, occurrence.scheduled_for,
         )
 
+    async def cancelled(self, occurrence: Occurrence, at: datetime) -> None:
+        # Terminal on purpose: the user stopped this run, so retrying would start the
+        # very clean they just cancelled.
+        await self._occurrences.record_failed_attempt(
+            occurrence.id, at=at, reason="cancelled", exhausted=True
+        )
+        _LOGGER.info(
+            "occurrence=%d rule=%d state=failed reason='cancelled'",
+            occurrence.id, occurrence.rule_id,
+        )
+
     async def failed_attempt(self, occurrence: Occurrence, reason: str, at: datetime) -> None:
         attempts = occurrence.attempts + 1
         exhausted = attempts >= OCCURRENCE_MAX_ATTEMPTS
@@ -132,6 +152,8 @@ class Scheduler:
         now: Callable[[], datetime] = utc_now,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         run_slot: RunSlot | None = None,
+        sequences: SequencePort | None = None,
+        launcher: SequenceLauncher | None = None,
     ) -> None:
         self._robot = robot
         self._rules = rules
@@ -141,6 +163,8 @@ class Scheduler:
         self._now = now
         self._sleep = sleep
         self._run_slot = run_slot if run_slot is not None else RunSlot()
+        self._sequences = sequences
+        self._launcher = launcher
         self._recorder = OutcomeRecorder(occurrences)
         self.last_tick_at: datetime | None = None
         self.consecutive_errors = 0
@@ -151,11 +175,19 @@ class Scheduler:
         return min(TICK_INTERVAL_SEC * 2 ** min(self.consecutive_errors, 4), MAX_BACKOFF_SEC)
 
     async def run(self) -> None:
+        await self._fail_interrupted()
         _LOGGER.info("scheduler started timezone=%s tick_interval_sec=%s", self._tz,
                      TICK_INTERVAL_SEC)
         while True:
             await self._sleep(self.backoff_sec())
             await self.tick_safely()
+
+    async def _fail_interrupted(self) -> None:
+        # A claim held when the last process died can never resolve: its run died with
+        # the process. Failing it outright, not retrying, because the robot may already
+        # have started it before the restart.
+        await self._occurrences.fail_claimed(at=self._now(), reason="interrupted by a restart")
+        _LOGGER.info("claimed occurrences left by the previous process marked failed")
 
     async def tick_safely(self) -> None:
         try:
@@ -182,24 +214,76 @@ class Scheduler:
             return
         actions = {rule.id: rule.action for rule in await self._rules.list_rules()}
         for occurrence in due:
-            # Gated per Occurrence, not per tick: the first firing makes the robot busy,
-            # so the second of two simultaneous ones waits and fires on a later tick.
-            reason = readiness_block(
-                await self._robot.get_status(), run_in_flight=self._run_slot.running
-            )
-            if reason is not None:
-                await self._recorder.blocked(occurrence, reason)
-                continue
-            if not await self._occurrences.claim(occurrence.id):
-                continue
+            # The slot is taken before the readiness check and held until the clean has
+            # started, so nothing else can start a run in the await between the two.
+            # Gated per Occurrence, not per tick: the first firing makes the robot busy
+            # or holds the slot, so the second of two simultaneous ones waits.
+            held = self._run_slot.acquire()
+            launched = False
             try:
-                await fire(
-                    self._robot,
-                    cleaning_log=self._cleaning_log,
-                    action=actions[occurrence.rule_id],
-                    now=self._now,
+                reason = readiness_block(
+                    await self._robot.get_status(), run_in_flight=not held
                 )
-            except Exception as exc:  # noqa: BLE001 - a refusal is an outcome, not a crash
-                await self._recorder.failed_attempt(occurrence, str(exc), self._now())
-            else:
+                if reason is not None:
+                    await self._recorder.blocked(occurrence, reason)
+                    continue
+                if not await self._occurrences.claim(occurrence.id):
+                    continue
+                action = actions[occurrence.rule_id]
+                try:
+                    if isinstance(action, SequenceAction):
+                        await self._launch(occurrence, action)
+                        launched = True
+                    else:
+                        await fire(
+                            self._robot,
+                            cleaning_log=self._cleaning_log,
+                            action=action,
+                            now=self._now,
+                        )
+                except Exception as exc:  # noqa: BLE001 - a refusal is an outcome, not a crash
+                    await self._recorder.failed_attempt(occurrence, str(exc), self._now())
+                else:
+                    if not launched:
+                        await self._recorder.fired(occurrence, self._now())
+            finally:
+                # A launched run owns the slot now and releases it when it ends.
+                if held and not launched:
+                    self._run_slot.release()
+
+    async def _launch(self, occurrence: Occurrence, action: SequenceAction) -> None:
+        """Start the Sequence in the background and return without waiting on it. The
+        Occurrence is fired once the robot first departs; until then it stays claimed."""
+        sequence = await self._sequences.get_sequence(action.sequence_id)
+        if sequence is None:
+            raise LookupError(f"no Sequence {action.sequence_id}")
+        departed = False
+
+        async def on_first_departure() -> None:
+            nonlocal departed
+            # Set before marking: if the mark fails, a later Step's failure must still
+            # not count as a failed attempt, which would re-fire Step 1.
+            departed = True
+            try:
                 await self._recorder.fired(occurrence, self._now())
+            except Exception:
+                _LOGGER.exception(
+                    "occurrence=%d rule=%d could not be marked fired;"
+                    " it stays claimed and is not re-fired",
+                    occurrence.id, occurrence.rule_id,
+                )
+
+        async def on_end(error: Exception | None) -> None:
+            if departed or error is None:
+                return
+            if isinstance(error, RunCancelled):
+                await self._recorder.cancelled(occurrence, self._now())
+            else:
+                await self._recorder.failed_attempt(occurrence, str(error), self._now())
+
+        self._launcher.launch(
+            sequence,
+            source=CleanSource.SCHEDULER,
+            on_first_departure=on_first_departure,
+            on_end=on_end,
+        )

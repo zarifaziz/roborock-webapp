@@ -192,8 +192,8 @@ class WeeklyGrid:
 
 @dataclass(frozen=True)
 class CleanAction:
-    """The "what" half of a Schedule Rule, and the only Action understood today: clean
-    `segment_ids` (None = whole house) in `mode`."""
+    """The "what" half of a Schedule Rule that cleans `segment_ids` (None = whole house)
+    in `mode`."""
 
     mode: CleaningMode
     segment_ids: tuple[int, ...] | None
@@ -235,8 +235,15 @@ class Sequence:
             raise ValueError("a Sequence needs at least one Step")
 
 
-# The discriminated union of Actions, with exactly one member today.
-Action = CleanAction
+@dataclass(frozen=True)
+class SequenceAction:
+    """The Action that runs a saved Sequence, named by its id."""
+
+    sequence_id: int
+
+
+# The discriminated union of Actions.
+Action = CleanAction | SequenceAction
 
 
 @dataclass(frozen=True)

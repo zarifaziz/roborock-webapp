@@ -9,8 +9,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
+from roborock_auto.adapters.fake import FakeRobot
+from roborock_auto.adapters.web import server
 from roborock_auto.adapters.web.server import app
 from roborock_auto.domain.models import (
+    CarpetMode,
     CleaningMode,
     CleaningRun,
     CleanSource,
@@ -318,7 +321,7 @@ def test_two_stage_conflict_when_running(client):
     assert client.post("/clean/two-stage").json() == {"ok": True}
     r = client.post("/clean/two-stage")
     assert r.status_code == 409
-    assert r.json() == {"detail": "a two-stage clean is already running"}
+    assert r.json() == {"detail": "another run is already in progress"}
 
 
 def test_two_stage_cancel_stops_the_run(client):
@@ -495,7 +498,7 @@ def test_overdue_clean_conflicts_with_a_running_two_stage_clean(client):
     assert client.post("/clean/two-stage").json() == {"ok": True}
     r = client.post("/clean/overdue", json={"mode": "vacuum"})
     assert r.status_code == 409
-    assert r.json() == {"detail": "a two-stage clean is already running"}
+    assert r.json() == {"detail": "another run is already in progress"}
 
 
 def test_overdue_clean_conflicts_when_the_robot_is_not_ready(client):
@@ -640,7 +643,9 @@ def test_schedule_with_an_unknown_action_type_is_422(client):
         json=_rule_request(action={"type": "mop_wash", "mode": "vacuum", "segment_ids": None}),
     )
     assert r.status_code == 422
-    assert r.json() == {"detail": "invalid action type 'mop_wash': expected 'clean'"}
+    assert r.json() == {
+        "detail": "invalid action type 'mop_wash': expected 'clean' or 'sequence'"
+    }
 
 
 def test_replacing_or_deleting_a_missing_schedule_is_404(client):
@@ -940,3 +945,314 @@ def test_icons_served_as_png(client, path):
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/png"
     assert r.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+# --- Sequences: CRUD, run, cancel, progress, and the Sequence Action ---
+
+_BATHROOMS_THEN_HOUSE = {
+    "name": "Bathrooms then house",
+    "steps": [
+        {"mode": "vacuum", "carpet": "rise", "segment_ids": [16, 17]},
+        {"mode": "vac_and_mop", "carpet": "avoid", "segment_ids": None},
+    ],
+}
+_TWO_STAGE = {
+    "name": "Two-stage",
+    "steps": [
+        {"mode": "vacuum", "carpet": "rise", "segment_ids": None},
+        {"mode": "mop", "carpet": "avoid", "segment_ids": None},
+    ],
+}
+
+
+def _sequence_doc(id, body) -> dict:
+    return {"id": id, **body}
+
+
+def test_sequence_crud_snapshot(client):
+    assert client.get("/sequences").json() == []
+    assert client.post("/sequences", json=_BATHROOMS_THEN_HOUSE).json() == _sequence_doc(
+        1, _BATHROOMS_THEN_HOUSE
+    )
+    assert client.post("/sequences", json=_TWO_STAGE).json() == _sequence_doc(2, _TWO_STAGE)
+    assert client.get("/sequences").json() == [
+        _sequence_doc(1, _BATHROOMS_THEN_HOUSE),
+        _sequence_doc(2, _TWO_STAGE),
+    ]
+    assert client.get("/sequences/2").json() == _sequence_doc(2, _TWO_STAGE)
+
+    reordered = {"name": "Reordered", "steps": _BATHROOMS_THEN_HOUSE["steps"][::-1]}
+    assert client.put("/sequences/1", json=reordered).json() == _sequence_doc(1, reordered)
+    assert client.get("/sequences/1").json() == _sequence_doc(1, reordered)
+
+    assert client.delete("/sequences/1").json() == {"ok": True}
+    assert client.get("/sequences").json() == [_sequence_doc(2, _TWO_STAGE)]
+
+
+def test_a_missing_sequence_is_404_everywhere(client):
+    for response in (
+        client.get("/sequences/9"),
+        client.put("/sequences/9", json=_TWO_STAGE),
+        client.delete("/sequences/9"),
+        client.post("/sequences/9/run"),
+    ):
+        assert (response.status_code, response.json()) == (404, {"detail": "no Sequence 9"})
+
+
+def _step(**over) -> dict:
+    base = {"mode": "vacuum", "carpet": "rise", "segment_ids": None}
+    base.update(over)
+    return base
+
+
+@pytest.mark.parametrize(
+    ("body", "detail"),
+    [
+        ({"name": "Empty", "steps": []}, "a Sequence needs at least one Step"),
+        ({"name": "  ", "steps": [_step()]}, "a Sequence needs a name"),
+        ({"name": 7, "steps": [_step()]}, "a Sequence needs a name"),
+        ({"name": "x", "steps": "vacuum"}, "steps must be a list of Steps"),
+        ({"name": "x", "steps": 5}, "steps must be a list of Steps"),
+        ({"name": "x", "steps": ["vacuum"]}, "steps must be a list of Steps"),
+        (
+            {"name": "x", "steps": [_step(segment_ids=[])]},
+            "an empty Segment list is ambiguous; use null for the whole house",
+        ),
+        (
+            {"name": "x", "steps": [_step(segment_ids=["kitchen"])]},
+            "a Step's segment_ids must be a list of Segment numbers or null",
+        ),
+        ({"name": "x", "steps": [_step(mode="polish")]}, "invalid value 'polish' for CleaningMode"),
+        ({"name": "x", "steps": [_step(carpet="shag")]}, "invalid value 'shag' for CarpetMode"),
+        (
+            {"name": "x", "steps": [_step(carpet="unknown")]},
+            "a Step's carpet mode must be rise or avoid",
+        ),
+    ],
+)
+def test_an_invalid_sequence_is_422_on_create_and_replace(client, body, detail):
+    created = client.post("/sequences", json=body)
+    assert (created.status_code, created.json()) == (422, {"detail": detail})
+    client.post("/sequences", json=_TWO_STAGE)
+    replaced = client.put("/sequences/1", json=body)
+    assert (replaced.status_code, replaced.json()) == (422, {"detail": detail})
+    assert client.get("/sequences").json() == [_sequence_doc(1, _TWO_STAGE)]
+
+
+_IDLE_PROGRESS = {"running": False, "stage": "idle", "message": "", "error": None}
+
+
+def _wait_for_progress_idle(client) -> dict:
+    deadline = time.monotonic() + 5.0
+    progress = client.get("/sequences/progress").json()
+    while progress["running"] and time.monotonic() < deadline:
+        time.sleep(0.02)
+        progress = client.get("/sequences/progress").json()
+    return progress
+
+
+def test_run_then_cancel_recovers_the_robot_and_reports_the_step_it_stopped_at(client):
+    assert client.get("/sequences/progress").json() == _IDLE_PROGRESS
+    client.post("/sequences", json=_BATHROOMS_THEN_HOUSE)
+    assert client.post("/sequences/1/run").json() == {"ok": True}
+    running = client.get("/sequences/progress").json()
+    assert (running["running"], running["stage"], running["step"]) == (True, "running", 0)
+    assert client.post("/sequences/cancel").json() == {"ok": True}
+    assert _wait_for_progress_idle(client) == {
+        "running": False,
+        "stage": "cancelled",
+        "message": "Sequence cancelled",
+        "error": None,
+        "sequence_id": 1,
+        "sequence_name": "Bathrooms then house",
+        "source": "app",
+        "step": 0,
+        "step_count": 2,
+        "phase": "departing",
+    }
+    assert client.app.state.gateway.commands == [
+        ("connect",),
+        ("set_carpet_mode", CarpetMode.RISE),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("clean_rooms", (16, 17)),
+        ("dock",),
+        ("set_carpet_mode", CarpetMode.AVOID),
+    ]
+    assert _runs(client) == []
+
+
+def test_a_sequence_run_is_refused_while_any_run_holds_the_slot(client):
+    client.post("/sequences", json=_TWO_STAGE)
+    assert client.post("/clean/two-stage").json() == {"ok": True}
+    r = client.post("/sequences/1/run")
+    assert (r.status_code, r.json()) == (
+        409, {"detail": "another run is already in progress"}
+    )
+    client.post("/sequences/cancel")
+    _wait_for_progress_idle(client)
+    assert client.post("/sequences/1/run").json() == {"ok": True}
+    # Both entry points share one slot, so the Two-Stage Clean is refused in turn.
+    r = client.post("/clean/two-stage")
+    assert (r.status_code, r.json()) == (409, {"detail": "another run is already in progress"})
+
+
+def test_a_sequence_run_is_refused_when_the_robot_is_not_ready_and_frees_the_slot(client):
+    client.post("/sequences", json=_TWO_STAGE)
+    client.app.state.gateway.set_timeline(
+        [(0.0, DeviceStatus("cleaning", 90, in_cleaning=True, docked=False, cleaning=True))]
+    )
+    r = client.post("/sequences/1/run")
+    assert (r.status_code, r.json()) == (409, {"detail": "the robot is mid-job"})
+    assert client.get("/sequences/progress").json() == _IDLE_PROGRESS
+    assert client.app.state.gateway.commands == [("connect",)]
+
+
+def test_cancel_with_nothing_running_is_409(client):
+    r = client.post("/sequences/cancel")
+    assert (r.status_code, r.json()) == (409, {"detail": "nothing is running"})
+
+
+def test_the_two_stage_status_keeps_its_shape_after_a_sequence_run(client):
+    client.post("/sequences", json=_BATHROOMS_THEN_HOUSE)
+    client.post("/sequences/1/run")
+    client.post("/sequences/cancel")
+    _wait_for_progress_idle(client)
+    client.post("/clean/two-stage")
+    assert set(client.get("/clean/two-stage/status").json()) == {
+        "running", "stage", "message", "error"
+    }
+
+
+def _sequence_rule(sequence_id=1, **over) -> dict:
+    return _rule_request(
+        name="Saturday deep clean",
+        action={"type": "sequence", "sequence_id": sequence_id},
+        **over,
+    )
+
+
+def test_schedule_rules_accept_and_return_a_sequence_action(client, clock):
+    client.post("/sequences", json=_BATHROOMS_THEN_HOUSE)
+    client.post("/sequences", json=_TWO_STAGE)
+    expected = {
+        "id": 1,
+        "name": "Saturday deep clean",
+        "enabled": True,
+        "recurrence": {"days": ["monday", "wednesday", "friday"], "at": "09:30"},
+        "action": {"type": "sequence", "sequence_id": 1},
+        "next_fires_at": "2026-08-20T23:30:00+00:00",
+    }
+    assert client.post("/schedules", json=_sequence_rule()).json() == expected
+    assert client.get("/schedules").json() == [expected]
+    moved = {**expected, "action": {"type": "sequence", "sequence_id": 2}}
+    assert client.put("/schedules/1", json=_sequence_rule(2)).json() == moved
+    assert client.get("/schedules").json() == [moved]
+
+
+@pytest.mark.parametrize(
+    ("action", "detail"),
+    [
+        ({"type": "sequence", "sequence_id": 9}, "no Sequence 9"),
+        ({"type": "sequence", "sequence_id": "1"}, "action.sequence_id must be a Sequence id"),
+        ({"type": "sequence"}, "action.sequence_id must be a Sequence id"),
+    ],
+)
+def test_a_sequence_action_must_name_an_existing_sequence(client, action, detail):
+    client.post("/sequences", json=_TWO_STAGE)
+    r = client.post("/schedules", json=_rule_request(action=action))
+    assert (r.status_code, r.json()) == (422, {"detail": detail})
+    assert client.get("/schedules").json() == []
+
+
+def test_deleting_a_sequence_a_rule_fires_is_409_naming_the_rule(client):
+    client.post("/sequences", json=_TWO_STAGE)
+    client.post("/schedules", json=_sequence_rule())
+    r = client.delete("/sequences/1")
+    assert (r.status_code, r.json()) == (
+        409, {"detail": "Sequence 1 is fired by Schedule Rule 'Saturday deep clean'"}
+    )
+    assert client.get("/sequences").json() == [_sequence_doc(1, _TWO_STAGE)]
+    client.delete("/schedules/1")  # a deleted Rule no longer holds the Sequence
+    assert client.delete("/sequences/1").json() == {"ok": True}
+
+
+def test_shutdown_cancels_a_run_the_scheduler_started(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("DATABASE_PATH", ":memory:")
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
+
+    class WitnessRobot(FakeRobot):
+        """Notes, as the gateway closes, whether shutdown has asked the run to stop:
+        event-loop teardown would cancel it too, but only after the lifespan is over."""
+
+        async def close(self) -> None:
+            self.run_cancelled_before_close = app.state.run_slot.task.cancelling() > 0
+            await super().close()
+
+    monkeypatch.setattr(server, "get_gateway", lambda _config: WitnessRobot())
+    with TestClient(app) as client:
+        clock = {"now": datetime(2026, 8, 20, 9, 0, tzinfo=UTC)}
+        client.app.state.now = lambda: clock["now"]
+        client.post("/sequences", json=_TWO_STAGE)
+        client.post("/schedules", json=_sequence_rule())
+        clock["now"] = datetime.fromisoformat("2026-08-20T23:30:00+00:00")
+        client.portal.call(client.app.state.scheduler.tick)
+        task = client.app.state.run_slot.task
+        assert client.get("/sequences/progress").json()["source"] == "scheduler"
+        assert not task.done()
+        robot = client.app.state.gateway
+    assert robot.run_cancelled_before_close is True
+    assert task.cancelled()
+
+
+def test_a_readiness_check_that_raises_still_frees_the_slot(client):
+    client.post("/sequences", json=_TWO_STAGE)
+
+    async def lost_contact():
+        raise RuntimeError("lost contact")
+
+    client.app.state.gateway.get_status = lost_contact
+    with pytest.raises(RuntimeError, match="lost contact"):
+        client.post("/sequences/1/run")
+    assert client.app.state.run_slot.running is False
+
+
+def test_overdue_clean_holds_the_run_slot_across_check_and_start_then_frees_it(client, clock):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    gw, slot = client.app.state.gateway, client.app.state.run_slot
+    held: list[tuple[str, bool]] = []
+    get_status, clean_rooms = gw.get_status, gw.clean_rooms
+
+    async def witness_status():
+        held.append(("get_status", slot.running))
+        return await get_status()
+
+    async def witness_clean(segment_ids, repeat=1):
+        held.append(("clean_rooms", slot.running))
+        await clean_rooms(segment_ids, repeat)
+
+    gw.get_status, gw.clean_rooms = witness_status, witness_clean
+    assert client.post("/clean/overdue", json={"mode": "vacuum"}).json() == {
+        "ok": True, "segment_ids": [16]
+    }
+    assert held == [("get_status", True), ("clean_rooms", True)]
+    assert slot.running is False
+
+
+def test_overdue_clean_frees_the_run_slot_when_the_robot_is_not_ready(client):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    client.app.state.gateway.set_timeline(
+        [(0.0, DeviceStatus("cleaning", 90, in_cleaning=True, docked=False, cleaning=True))]
+    )
+    assert client.post("/clean/overdue", json={"mode": "vacuum"}).status_code == 409
+    assert client.app.state.run_slot.running is False
+
+
+def test_overdue_clean_is_409_while_any_run_holds_the_slot_and_leaves_it_held(client):
+    client.post("/intervals", json={"segment_id": 16, "interval_days": 2})
+    slot = client.app.state.run_slot
+    assert slot.acquire() is True
+    r = client.post("/clean/overdue", json={"mode": "vacuum"})
+    assert (r.status_code, r.json()) == (409, {"detail": "another run is already in progress"})
+    assert slot.running is True
+    assert client.app.state.gateway.commands == [("connect",)]

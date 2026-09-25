@@ -26,12 +26,14 @@ from roborock_auto.adapters.sqlite import (
     SqliteOccurrences,
     SqliteRoomIntervals,
     SqliteScheduleRules,
+    SqliteSequences,
     open_database,
 )
 from roborock_auto.application.materialise import MATERIALISATION_HORIZON, materialise
 from roborock_auto.application.overdue import clean_overdue, overdue_view
 from roborock_auto.application.run_slot import RunSlot
-from roborock_auto.application.scheduler import Scheduler
+from roborock_auto.application.scheduler import Scheduler, readiness_block
+from roborock_auto.application.sequence_launch import SequenceLauncher
 from roborock_auto.application.sequence_runner import RunCancelled
 from roborock_auto.application.start_clean import start_clean, utc_now
 from roborock_auto.application.two_stage_clean import run_two_stage
@@ -50,6 +52,9 @@ from roborock_auto.domain.models import (
     RoomInterval,
     ScheduleRule,
     SegmentOverdue,
+    Sequence,
+    SequenceAction,
+    Step,
     WaterMode,
     Weekday,
     WeeklyGrid,
@@ -88,12 +93,21 @@ async def lifespan(app: FastAPI):
     app.state.room_intervals = SqliteRoomIntervals(db, device_id=config.duid or "fake")
     app.state.schedule_rules = SqliteScheduleRules(db, device_id=config.duid or "fake")
     app.state.occurrences = SqliteOccurrences(db, device_id=config.duid or "fake")
+    app.state.sequences = SqliteSequences(db, device_id=config.duid or "fake")
     app.state.timezone = ZoneInfo(config.timezone)
     # One injected clock for everything that reads or writes a time, so a test can freeze it.
     app.state.now = utc_now
     app.state.map_cache = {"at": 0.0, "png": b""}
     app.state.run_slot = RunSlot()
     app.state.run_slot.progress.update(_idle_progress())
+    app.state.sequence_launcher = SequenceLauncher(
+        gw,
+        config,
+        slot=app.state.run_slot,
+        cleaning_log=app.state.cleaning_log,
+        now=lambda: app.state.now(),
+        log=_LOGGER.info,
+    )
     app.state.scheduler = Scheduler(
         gw,
         rules=app.state.schedule_rules,
@@ -103,6 +117,8 @@ async def lifespan(app: FastAPI):
         # Read through app.state on every call, so the test clock reaches the scheduler.
         now=lambda: app.state.now(),
         run_slot=app.state.run_slot,
+        sequences=app.state.sequences,
+        launcher=app.state.sequence_launcher,
     )
     app.state.scheduler_task = asyncio.create_task(app.state.scheduler.run())
     try:
@@ -416,21 +432,27 @@ async def overdue(request: Request):
 
 @app.post("/clean/overdue")
 async def clean_overdue_now(request: Request, mode: str = Body(..., embed=True)):
-    # Two distinct mechanisms, so two distinct conflicts: an in-process flag, then a live
-    # status read.
-    if request.app.state.run_slot.running:
-        raise HTTPException(409, "a two-stage clean is already running")
-    gw = _gw(request)
-    if not ready_to_start(await gw.get_status()):
-        raise HTTPException(409, "the robot is not ready: it must be docked, idle and error-free")
-    cleaned = await clean_overdue(
-        gw,
-        intervals=request.app.state.room_intervals,
-        cleaning_log=request.app.state.cleaning_log,
-        source=CleanSource.APP,
-        mode=_parse(CleaningMode, mode),
-        now=request.app.state.now,
-    )
+    # Two distinct mechanisms, so two distinct conflicts: the in-process RunSlot, then a
+    # live status read. The slot is held across both so no run starts in between.
+    slot = request.app.state.run_slot
+    if not slot.acquire():
+        raise HTTPException(409, "another run is already in progress")
+    try:
+        gw = _gw(request)
+        if not ready_to_start(await gw.get_status()):
+            raise HTTPException(
+                409, "the robot is not ready: it must be docked, idle and error-free"
+            )
+        cleaned = await clean_overdue(
+            gw,
+            intervals=request.app.state.room_intervals,
+            cleaning_log=request.app.state.cleaning_log,
+            source=CleanSource.APP,
+            mode=_parse(CleaningMode, mode),
+            now=request.app.state.now,
+        )
+    finally:
+        slot.release()
     return {"ok": True, "segment_ids": cleaned}
 
 
@@ -454,9 +476,18 @@ def _parse_recurrence(body: dict) -> WeeklyGrid:
         raise HTTPException(422, str(exc))
 
 
-def _parse_clean_action(body: dict) -> CleanAction:
+async def _parse_action(request: Request, body: dict) -> CleanAction | SequenceAction:
+    if body.get("type") == "sequence":
+        sequence_id = body.get("sequence_id")
+        if not isinstance(sequence_id, int) or isinstance(sequence_id, bool):
+            raise HTTPException(422, "action.sequence_id must be a Sequence id")
+        if await request.app.state.sequences.get_sequence(sequence_id) is None:
+            raise HTTPException(422, f"no Sequence {sequence_id}")
+        return SequenceAction(sequence_id=sequence_id)
     if body.get("type") != "clean":
-        raise HTTPException(422, f"invalid action type {body.get('type')!r}: expected 'clean'")
+        raise HTTPException(
+            422, f"invalid action type {body.get('type')!r}: expected 'clean' or 'sequence'"
+        )
     segment_ids = body.get("segment_ids")
     if segment_ids is not None and (
         not isinstance(segment_ids, list) or not all(isinstance(s, int) for s in segment_ids)
@@ -471,6 +502,17 @@ def _parse_clean_action(body: dict) -> CleanAction:
         raise HTTPException(422, str(exc))
 
 
+def _action_body(action: CleanAction | SequenceAction) -> dict:
+    if isinstance(action, SequenceAction):
+        return {"type": "sequence", "sequence_id": action.sequence_id}
+    segment_ids = action.segment_ids
+    return {
+        "type": "clean",
+        "mode": action.mode.value,
+        "segment_ids": None if segment_ids is None else list(segment_ids),
+    }
+
+
 def _rule_body(rule: ScheduleRule, tz: ZoneInfo, now) -> dict:
     # "Next" looks exactly one Materialisation horizon ahead, so it can never disagree
     # with what gets materialised.
@@ -479,7 +521,6 @@ def _rule_body(rule: ScheduleRule, tz: ZoneInfo, now) -> dict:
         if rule.enabled
         else []
     )
-    segment_ids = rule.action.segment_ids
     return {
         "id": rule.id,
         "name": rule.name,
@@ -488,11 +529,7 @@ def _rule_body(rule: ScheduleRule, tz: ZoneInfo, now) -> dict:
             "days": [day.value for day in Weekday if day in rule.recurrence.days],
             "at": rule.recurrence.at.isoformat(timespec="minutes"),
         },
-        "action": {
-            "type": "clean",
-            "mode": rule.action.mode.value,
-            "segment_ids": None if segment_ids is None else list(segment_ids),
-        },
+        "action": _action_body(rule.action),
         "next_fires_at": upcoming[0].isoformat() if upcoming else None,
     }
 
@@ -524,7 +561,7 @@ async def schedules_create(
     rule = await request.app.state.schedule_rules.create_rule(
         name=name,
         recurrence=_parse_recurrence(recurrence),
-        action=_parse_clean_action(action),
+        action=await _parse_action(request, action),
         enabled=enabled,
     )
     await _materialise(request)
@@ -544,7 +581,7 @@ async def schedules_replace(
         id=rule_id,
         name=name,
         recurrence=_parse_recurrence(recurrence),
-        action=_parse_clean_action(action),
+        action=await _parse_action(request, action),
         enabled=enabled,
     )
     if not await request.app.state.schedule_rules.replace_rule(rule):
@@ -611,10 +648,13 @@ async def scheduler_status(request: Request):
 async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, embed=True)):
     slot = request.app.state.run_slot
     if not slot.acquire():
-        raise HTTPException(409, "a two-stage clean is already running")
+        raise HTTPException(409, "another run is already in progress")
     gw = _gw(request)
     config = request.app.state.config
     progress = slot.progress
+    # Cleared, not updated: the slot's last run may have been a Sequence, whose extra
+    # keys must not leak into this endpoint's status shape.
+    progress.clear()
     progress.update(stage="vacuuming", message="starting", error=None)
 
     def on_stage(stage: str) -> None:
@@ -654,6 +694,142 @@ async def clean_two_stage_cancel(request: Request):
 async def clean_two_stage_status(request: Request):
     slot = request.app.state.run_slot
     return {"running": slot.running, **slot.progress}
+
+
+def _parse_step(body) -> Step:
+    if not isinstance(body, dict):
+        raise HTTPException(422, "steps must be a list of Steps")
+    segment_ids = body.get("segment_ids")
+    if segment_ids is not None and (
+        not isinstance(segment_ids, list) or not all(isinstance(s, int) for s in segment_ids)
+    ):
+        raise HTTPException(422, "a Step's segment_ids must be a list of Segment numbers or null")
+    try:
+        return Step(
+            mode=_parse(CleaningMode, body.get("mode")),
+            carpet=_parse(CarpetMode, body.get("carpet")),
+            segment_ids=None if segment_ids is None else tuple(segment_ids),
+        )
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+def _parse_sequence(sequence_id: int, name, steps) -> Sequence:
+    if not isinstance(name, str):
+        raise HTTPException(422, "a Sequence needs a name")
+    if not isinstance(steps, list):
+        raise HTTPException(422, "steps must be a list of Steps")
+    try:
+        return Sequence(id=sequence_id, name=name, steps=tuple(_parse_step(s) for s in steps))
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+
+
+def _sequence_body(sequence: Sequence) -> dict:
+    return {
+        "id": sequence.id,
+        "name": sequence.name,
+        "steps": [
+            {
+                "mode": step.mode.value,
+                "carpet": step.carpet.value,
+                "segment_ids": None if step.segment_ids is None else list(step.segment_ids),
+            }
+            for step in sequence.steps
+        ],
+    }
+
+
+async def _sequence_or_404(request: Request, sequence_id: int) -> Sequence:
+    sequence = await request.app.state.sequences.get_sequence(sequence_id)
+    if sequence is None:
+        raise HTTPException(404, f"no Sequence {sequence_id}")
+    return sequence
+
+
+# The fixed paths are declared before /sequences/{sequence_id} so they are not read as ids.
+@app.get("/sequences/progress")
+async def sequences_progress(request: Request):
+    slot = request.app.state.run_slot
+    return {"running": slot.running, **slot.progress}
+
+
+@app.post("/sequences/cancel")
+async def sequences_cancel(request: Request):
+    slot = request.app.state.run_slot
+    if not slot.running:
+        raise HTTPException(409, "nothing is running")
+    slot.cancel.set()
+    return {"ok": True}
+
+
+@app.get("/sequences")
+async def sequences_list(request: Request):
+    return [_sequence_body(s) for s in await request.app.state.sequences.list_sequences()]
+
+
+@app.post("/sequences")
+async def sequences_create(
+    request: Request,
+    name: object = Body(..., embed=True),
+    steps: object = Body(..., embed=True),
+):
+    # Validated through the entity before an id exists; the store assigns the real one.
+    draft = _parse_sequence(0, name, steps)
+    sequence = await request.app.state.sequences.create_sequence(draft.name, draft.steps)
+    return _sequence_body(sequence)
+
+
+@app.get("/sequences/{sequence_id}")
+async def sequences_read(request: Request, sequence_id: int):
+    return _sequence_body(await _sequence_or_404(request, sequence_id))
+
+
+@app.put("/sequences/{sequence_id}")
+async def sequences_replace(
+    request: Request,
+    sequence_id: int,
+    name: object = Body(..., embed=True),
+    steps: object = Body(..., embed=True),
+):
+    sequence = _parse_sequence(sequence_id, name, steps)
+    if not await request.app.state.sequences.replace_sequence(sequence):
+        raise HTTPException(404, f"no Sequence {sequence_id}")
+    return _sequence_body(sequence)
+
+
+@app.delete("/sequences/{sequence_id}")
+async def sequences_delete(request: Request, sequence_id: int):
+    users = [
+        rule.name
+        for rule in await request.app.state.schedule_rules.list_rules()
+        if rule.action == SequenceAction(sequence_id=sequence_id)
+    ]
+    if users:
+        names = ", ".join(repr(name) for name in users)
+        raise HTTPException(409, f"Sequence {sequence_id} is fired by Schedule Rule {names}")
+    if not await request.app.state.sequences.delete_sequence(sequence_id):
+        raise HTTPException(404, f"no Sequence {sequence_id}")
+    return {"ok": True}
+
+
+@app.post("/sequences/{sequence_id}/run")
+async def sequences_run(request: Request, sequence_id: int):
+    sequence = await _sequence_or_404(request, sequence_id)
+    slot = request.app.state.run_slot
+    if not slot.acquire():
+        raise HTTPException(409, "another run is already in progress")
+    # Held across the readiness check and the launch, so nothing can start in between.
+    try:
+        reason = readiness_block(await _gw(request).get_status(), run_in_flight=False)
+    except BaseException:
+        slot.release()
+        raise
+    if reason is not None:
+        slot.release()
+        raise HTTPException(409, reason)
+    request.app.state.sequence_launcher.launch(sequence, source=CleanSource.APP)
+    return {"ok": True}
 
 
 @app.get("/")

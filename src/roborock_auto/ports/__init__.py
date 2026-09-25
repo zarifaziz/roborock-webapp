@@ -22,6 +22,7 @@ from roborock_auto.ports.robot import (
 )
 from roborock_auto.ports.room_intervals import RoomIntervalPort
 from roborock_auto.ports.schedule_rules import ScheduleRulePort
+from roborock_auto.ports.sequences import SequencePort
 
 __all__ = [
     "AuthPort",
@@ -37,6 +38,7 @@ __all__ = [
     "RoomIntervalPort",
     "RoutinePort",
     "ScheduleRulePort",
+    "SequencePort",
 ]
 
 

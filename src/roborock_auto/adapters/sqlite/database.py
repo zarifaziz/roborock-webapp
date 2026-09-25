@@ -66,6 +66,35 @@ MIGRATIONS: tuple[str, ...] = (
         ON occurrences (device_id, rule_id, scheduled_for)
         WHERE state <> 'cancelled';
     """,
+    # SQLite cannot alter a CHECK in place, so schedule_rules is rebuilt to admit the
+    # Sequence Action. Ids are copied as-is: Occurrences join on rule_id.
+    """
+    CREATE TABLE sequences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        steps_json TEXT NOT NULL
+    );
+    CREATE TABLE schedule_rules_v5 (
+        id INTEGER PRIMARY KEY,
+        device_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        recurrence_type TEXT NOT NULL CHECK (recurrence_type IN ('weekly_grid')),
+        recurrence_json TEXT NOT NULL,
+        action_type TEXT NOT NULL CHECK (action_type IN ('clean', 'sequence')),
+        action_json TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        deleted INTEGER NOT NULL DEFAULT 0
+    );
+    INSERT INTO schedule_rules_v5
+        (id, device_id, name, recurrence_type, recurrence_json,
+         action_type, action_json, enabled, deleted)
+        SELECT id, device_id, name, recurrence_type, recurrence_json,
+               action_type, action_json, enabled, deleted
+        FROM schedule_rules;
+    DROP TABLE schedule_rules;
+    ALTER TABLE schedule_rules_v5 RENAME TO schedule_rules;
+    """,
 )
 
 

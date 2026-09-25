@@ -185,10 +185,10 @@ def test_water_roundtrip(client):
 def test_map_data_shape(client):
     assert client.get("/map-data").json() == {
         "rooms": [
-            {"segment_id": 16, "name": "Living Room", "bbox": [0.0, 0.0, 0.5, 0.5]},
-            {"segment_id": 17, "name": "Kitchen", "bbox": [0.5, 0.0, 1.0, 0.5]},
-            {"segment_id": 18, "name": "Bedroom", "bbox": [0.0, 0.5, 0.5, 1.0]},
-            {"segment_id": 19, "name": "Hallway", "bbox": [0.5, 0.5, 1.0, 1.0]},
+            {"segment_id": 16, "name": "Living Room", "bbox": [0.0, 0.0, 0.5, 0.5], "color": None},
+            {"segment_id": 17, "name": "Kitchen", "bbox": [0.5, 0.0, 1.0, 0.5], "color": None},
+            {"segment_id": 18, "name": "Bedroom", "bbox": [0.0, 0.5, 0.5, 1.0], "color": None},
+            {"segment_id": 19, "name": "Hallway", "bbox": [0.5, 0.5, 1.0, 1.0], "color": None},
         ],
         "robot": {"x": 50, "y": 50},
         "image_width": 100,
@@ -281,10 +281,10 @@ def test_auth_discover_shape(client):
         "mode": "fake",
         "carpet_mode": "avoid",
         "rooms": [
-            {"segment_id": 16, "name": "Living Room", "bbox": None},
-            {"segment_id": 17, "name": "Kitchen", "bbox": None},
-            {"segment_id": 18, "name": "Bedroom", "bbox": None},
-            {"segment_id": 19, "name": "Hallway", "bbox": None},
+            {"segment_id": 16, "name": "Living Room", "bbox": None, "color": None},
+            {"segment_id": 17, "name": "Kitchen", "bbox": None, "color": None},
+            {"segment_id": 18, "name": "Bedroom", "bbox": None, "color": None},
+            {"segment_id": 19, "name": "Hallway", "bbox": None, "color": None},
         ],
         "routines": [
             {"id": 1001, "name": "Vacuum whole house"},
@@ -1236,7 +1236,7 @@ def test_overdue_clean_holds_the_run_slot_across_check_and_start_then_frees_it(c
     assert client.post("/clean/overdue", json={"mode": "vacuum"}).json() == {
         "ok": True, "segment_ids": [16]
     }
-    assert held == [("get_status", True), ("clean_rooms", True)]
+    assert held == [("get_status", True), ("get_status", True), ("clean_rooms", True)]
     assert slot.running is False
 
 
@@ -1257,3 +1257,51 @@ def test_overdue_clean_is_409_while_any_run_holds_the_slot_and_leaves_it_held(cl
     assert (r.status_code, r.json()) == (409, {"detail": "another run is already in progress"})
     assert slot.running is True
     assert client.app.state.gateway.commands == [("connect",)]
+
+
+@pytest.mark.parametrize("endpoint,payload", [
+    ("/start", {"mode": "vacuum", "carpet_mode": "rise"}),
+    ("/clean/segments", {"mode": "vacuum", "carpet_mode": "rise", "segment_ids": [16]}),
+])
+def test_start_applies_selected_carpet_and_rejects_second_clean(client, endpoint, payload):
+    assert client.post(endpoint, json=payload).json() == {"ok": True}
+    assert client.get("/carpet").json() == {"mode": "rise"}
+    before = list(client.app.state.gateway.commands)
+    response = client.post(endpoint, json=payload)
+    assert response.status_code == 409
+    assert client.app.state.gateway.commands == before
+
+
+@pytest.mark.parametrize("endpoint,payload", [
+    ("/start", {"mode": "vacuum"}),
+    ("/clean/segments", {"mode": "vacuum", "segment_ids": [16]}),
+    ("/carpet", {"mode": "rise"}),
+    ("/water", {"mode": "standard"}),
+    ("/fan", {"power": "max"}),
+    ("/mop", {"mode": "deep"}),
+])
+def test_setting_or_start_cannot_interleave_with_held_start_slot(client, endpoint, payload):
+    assert client.app.state.run_slot.acquire()
+    try:
+        response = client.post(endpoint, json=payload)
+        assert (response.status_code, client.app.state.gateway.commands) == (409, [("connect",)])
+    finally:
+        client.app.state.run_slot.release()
+
+
+def test_unconfirmed_mode_returns_actionable_conflict_and_does_not_start(client):
+    from dataclasses import replace
+
+    gateway = client.app.state.gateway
+    original = gateway.get_status
+
+    async def mismatched_status():
+        return replace(await original(), cleaning_mode="vac_and_mop")
+
+    gateway.get_status = mismatched_status
+    response = client.post("/start", json={"mode": "vacuum"})
+    assert (response.status_code, response.json(), gateway.commands, _runs(client)) == (
+        409,
+        {"detail": "Cleaning mode not confirmed: requested vacuum, robot reported vac_and_mop. Clean not started."},
+        [("connect",), ("set_cleaning_mode", CleaningMode.VACUUM)], [],
+    )

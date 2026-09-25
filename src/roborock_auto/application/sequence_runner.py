@@ -19,7 +19,7 @@ from enum import Enum
 from typing import Any, Protocol
 
 from roborock_auto.application.retry import AutomationError, DepartRejected, Sleep, with_retry
-from roborock_auto.application.start_clean import utc_now
+from roborock_auto.application.start_clean import utc_now, verify_cleaning_mode
 from roborock_auto.config import Config
 from roborock_auto.domain.models import (
     CarpetMode,
@@ -234,6 +234,7 @@ async def run_sequence(
             # Read-back before departing: if Avoid did not stick, wet pads would cross carpet.
             await _set_carpet_verified(gw, step.carpet, sleep=sleep)
             await with_retry(lambda mode=step.mode: gw.set_cleaning_mode(mode), sleep=sleep)
+            await verify_cleaning_mode(gw, step.mode)
             on_progress(index, Phase.DEPARTING)
             await _depart_and_confirm(
                 gw, _depart_for(gw, step), clock=clock, sleep=sleep, interval=poll, log=log

@@ -13,6 +13,7 @@ from collections.abc import Callable
 
 from roborock_auto.adapters.map_text import TextRoom, render_map_text
 from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
+from roborock_auto.domain.cleaning_history import CleanRecord
 from roborock_auto.domain.models import (
     CarpetMode,
     CleaningMode,
@@ -144,6 +145,9 @@ class FakeRobot:
 
     async def list_routines(self) -> list[Routine]:
         return list(_ROUTINES)
+
+    async def get_last_clean_record(self) -> CleanRecord | None:
+        return None
 
     async def get_consumables(self) -> Consumables:
         return Consumables(

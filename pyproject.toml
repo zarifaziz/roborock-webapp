@@ -8,6 +8,7 @@ dependencies = [
     "python-roborock>=2.0.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "claude-agent-sdk>=0.2.159,<0.3",
 ]
 
 [project.optional-dependencies]

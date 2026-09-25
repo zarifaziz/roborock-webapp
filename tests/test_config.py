@@ -76,3 +76,16 @@ def test_timezone_must_be_a_known_iana_zone(monkeypatch):
 def test_timezone_parses(monkeypatch):
     monkeypatch.setenv("GATEWAY", "fake")
     assert Config.from_env().timezone == "Australia/Sydney"
+
+
+@pytest.mark.parametrize("enabled, model, expected", [
+    ("", "", (False, "sonnet")),
+    ("true", "claude-sonnet-5", (True, "claude-sonnet-5")),
+    ("false", "sonnet", (False, "sonnet")),
+])
+def test_assistant_configuration(monkeypatch, enabled, model, expected):
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("ASSISTANT_ENABLED", enabled)
+    monkeypatch.setenv("ASSISTANT_MODEL", model)
+    config = Config.from_env()
+    assert (config.assistant_enabled, config.assistant_model) == expected

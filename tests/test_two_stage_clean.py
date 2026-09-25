@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -716,7 +717,7 @@ async def test_on_first_departure_fires_exactly_once_when_the_first_step_leaves_
 async def test_on_first_departure_never_fires_when_the_first_step_fails_before_leaving():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)
-    gw.set_timeline([(0, DOCKED_IDLE)])  # every trigger is dropped
+    gw.set_timeline([(0, replace(DOCKED_IDLE, cleaning_mode="vacuum"))])  # every trigger is dropped
     fired_at: list[float] = []
 
     async def on_first_departure() -> None:

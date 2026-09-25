@@ -278,7 +278,7 @@
   .map-label {
     padding: 2px 4px; font-size: clamp(10px, 1.1vw, 13px); font-weight: 700;
     letter-spacing: -0.02em; line-height: 1.25; white-space: nowrap;
-    pointer-events: none; color: #24516e;
+    pointer-events: none; color: #24516e; background: #ffffffba; border-radius: 5px;
     text-shadow: 0 1px 3px #ffffffed, 0 0 5px #ffffffb0;
     transform: rotate(calc(var(--rot, 0deg) * -1));
     transition: transform 0.35s ease;
@@ -380,8 +380,8 @@
   #clean-target.show { display: block; }
   /* The room(s) currently being cleaned, highlighted on the map. */
   .map-region.cleaning {
-    background: color-mix(in srgb, var(--accent) 22%, transparent);
-    box-shadow: inset 0 0 0 2px var(--accent);
+    background: color-mix(in srgb, var(--rc, var(--accent)) 22%, transparent);
+    box-shadow: inset 0 0 0 2px var(--rc, var(--accent));
     animation: cleaning-pulse 1.6s ease-in-out infinite;
   }
   @keyframes cleaning-pulse { 0%,100% { opacity: 0.55; } 50% { opacity: 1; } }
@@ -460,22 +460,12 @@
   }
   .chip::before {
     content: ""; width: 8px; height: 8px; border-radius: 50%;
-    background: var(--accent); opacity: 0.85; flex-shrink: 0;
+    background: var(--rc, var(--accent)); opacity: 0.85; flex-shrink: 0;
     box-shadow: inset 0 0 0 1px rgb(20 22 26 / 0.12);
   }
-  .chip:nth-child(8n+1)::before { background: #9DBFE3; }
-  .chip:nth-child(8n+2)::before { background: #D6BC88; }
-  .chip:nth-child(8n+3)::before { background: #7A9FC4; }
-  .chip:nth-child(8n+4)::before { background: #DACDB8; }
-  .chip:nth-child(8n+5)::before { background: #8FBB97; }
-  .chip:nth-child(8n+6)::before { background: #D6A8AF; }
-  .chip:nth-child(8n+7)::before { background: #90C2BB; }
-  .chip:nth-child(8n+8)::before { background: #B3A8D6; }
   .chip:hover { background: var(--track); }
   .chip:active { transform: scale(0.96); }
-  .chip.sel { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
-  #clean-btn { margin-top: 16px; }
-  #clean-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: var(--shadow-sm); }
+  .chip.sel { background: color-mix(in srgb, var(--rc, var(--accent)) 24%, var(--card-solid)); border-color: var(--rc, var(--accent)); color: var(--ink); }
 
   .routine-list { display: flex; flex-direction: column; gap: 10px; }
   .cons { display: flex; flex-direction: column; gap: 14px; }
@@ -712,6 +702,22 @@
   #toast.err { background: var(--critical); color: #fff; }
   /* tappable toast (the "update available — reload" notice) */
   #toast.action { pointer-events: auto; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
+
+  .clean-draft { padding: 0 12px; }
+  #map-zoom-value { font-variant-numeric: tabular-nums; color: var(--ink-3); margin-left: 5px; }
+  #data-freshness { font-size: 0.72rem; }
+  #seg-clean-carpet { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #seg-clean-carpet button { white-space: normal; min-width: 90px; }
+  .seg button:disabled { opacity: 0.45; cursor: not-allowed; }
+  #assistant-review[hidden], #two-stage-card[hidden] { display: none; }
+  #assistant-message { display:block; box-sizing:border-box; width:100%; margin:10px 0; padding:12px; border:1px solid var(--border); border-radius:12px; font:inherit; background:var(--card-solid); color:var(--ink); resize:vertical; }
+  #assistant-response, #recent-clean-requests { white-space:pre-line; overflow-wrap:anywhere; }
+  dialog { width:min(440px, calc(100vw - 48px)); box-sizing:border-box; max-height:calc(100dvh - 48px); overflow:auto; border:1px solid var(--border); border-radius:22px; padding:24px; background:var(--card-solid); color:var(--ink); box-shadow:var(--shadow); }
+  dialog::backdrop { background:rgb(20 32 40 / 0.45); backdrop-filter:blur(5px); }
+  dialog dl { display:grid; grid-template-columns:75px 1fr; gap:12px; line-height:1.5; }
+  dialog dt { color:var(--ink-3); } dialog dd { margin:0; overflow-wrap:anywhere; font-weight:600; }
+  .review-actions { display:flex; justify-content:flex-end; gap:10px; margin-top:20px; }
+  #clean-review-error { color:var(--danger); }
 </style>
 </head>
 <body>
@@ -764,7 +770,7 @@
     <div class="col-left">
       <div class="card map-card">
         <div class="map-head">
-          <h2>Map</h2>
+          <h2>Map <span id="map-zoom-value">100%</span></h2>
           <span class="map-badge" id="map-badge">Map temporarily unavailable — retrying</span>
           <button class="rotate-btn" id="map-reset" onclick="resetZoom()" title="Reset map zoom and centre" aria-label="Reset map view">
             <svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 1-5 5H1.5A6.5 6.5 0 1 0 8 1.5V0L4.5 3 8 6V3z"/></svg>
@@ -794,6 +800,10 @@
         </div>
       </div>
 
+      <div class="clean-draft"><p id="data-freshness" class="note">Waiting for map and robot data.</p>
+        <p id="clean-draft-summary" class="note"></p>
+        <button class="btn" onclick="showTab('rooms')">Edit clean settings</button>
+      </div>
       <!-- floating bottom action bar (inline on desktop) — the only control surface;
            renderActionBar() swaps the orb between Clean / Pause / Resume from the status poll -->
       <div class="actionbar">
@@ -822,9 +832,18 @@
 
       <!-- CLEAN -->
       <section class="panel active" data-panel="clean">
+        <div class="card">
+          <h2>Ask your cleaning assistant</h2>
+          <label for="assistant-message" class="note">Describe a clean or ask what happened.</label>
+          <textarea id="assistant-message" rows="2" placeholder="Mop the Study, avoiding carpet"></textarea>
+          <button class="btn" id="assistant-ask" onclick="askAssistant()">Ask assistant</button>
+          <p class="note" id="assistant-response" role="status"></p>
+          <button class="btn" id="assistant-review" hidden onclick="reviewAssistantPlan()">Review proposed clean</button>
+          <p class="note">Suggestions never start the robot. Review and confirm first. Requests, room names and recent cleaning records are sent to Claude.</p>
+        </div>
         <div class="card" id="two-stage-card">
           <h2>Two-stage clean</h2>
-          <p class="note">Vacuums the whole floor, then mops while avoiding carpet. Tap the glowing button to start.</p>
+          <p class="note">Vacuum first, then mop while avoiding carpet. Choose settings in Rooms; the Clean button lets you review before starting.</p>
           <div class="stage-track" id="two-stage-track">
             <div class="stage-step"><div class="bar"></div>Vacuum</div>
             <div class="stage-step"><div class="bar"></div>Wait</div>
@@ -842,6 +861,7 @@
 
         <div class="card">
           <h2>Status</h2>
+          <p id="clean-request-feedback" class="note" role="status"></p>
           <div class="state-row">
             <span class="state-badge"><span class="dot" id="s-dot"></span><span id="s-state">—</span></span>
             <span class="pill" id="p-cleaning" hidden>cleaning</span>
@@ -860,6 +880,13 @@
           </div>
         </div>
 
+        <div class="card">
+          <h2>Latest cleaning record</h2>
+          <p class="note" id="recent-clean-record">Loading cleaning record…</p>
+          <p class="note" id="recent-clean-requests"></p>
+          <p class="note" id="recent-clean-dock"></p>
+          <button class="btn" onclick="refreshRecentCleaning()">Refresh record</button>
+        </div>
       </section>
 
       <!-- ROOMS -->
@@ -874,14 +901,19 @@
             <button data-v="vac_and_mop" title="Vacuum and mop together">Vac + Mop</button>
             <button data-v="two-stage" class="active" title="Vacuum, then mop avoiding carpet">Two-stage</button>
           </div>
+          <div class="seg-label">Carpet behavior for this clean</div>
+          <div class="seg" id="seg-clean-carpet"></div>
+          <p class="seg-help" id="carpet-current">Last verified: not yet read</p>
+          <p class="seg-help" id="carpet-verified-age"></p>
+          <p class="seg-help" id="carpet-help"></p>
           <div class="seg-label">Passes</div>
           <div class="seg" id="seg-passes">
             <button data-v="1" class="active" title="Clean each room once">1×</button>
             <button data-v="2" title="Clean each room twice">2×</button>
             <button data-v="3" title="Clean each room three times">3×</button>
           </div>
-          <p class="seg-help">Two-stage sets carpet automatically — Rise while vacuuming, then Avoid while mopping (overrides the Setup carpet setting for this run). The Setup carpet setting applies to the Vacuum / Mop modes. Passes applies to the Vacuum / Mop / Vac + Mop modes.</p>
-          <button class="btn primary" id="clean-btn" disabled onclick="cleanRooms()">Clean selected rooms</button>
+          <p class="seg-help" id="passes-help"></p>
+          <p class="seg-help">No rooms selected means the whole floor. Use the single Clean button to review and start.</p>
         </div>
       </section>
 
@@ -1119,6 +1151,14 @@
 
 <div id="toast"></div>
 
+<dialog id="clean-review" aria-labelledby="clean-review-title">
+  <h2 id="clean-review-title">Review your clean</h2>
+  <dl id="clean-review-details"></dl>
+  <p class="note">Settings are checked on the robot before movement starts.</p>
+  <p id="clean-review-error" role="alert"></p>
+  <div class="review-actions"><button class="btn" id="cancel-clean-review" onclick="document.getElementById('clean-review').close()">Cancel</button>
+  <button class="btn primary" id="confirm-clean" onclick="confirmClean()">Confirm and start</button></div>
+</dialog>
 <script>
 const $ = (id) => document.getElementById(id);
 // User-supplied text (rule names) goes through here before any innerHTML interpolation:
@@ -1189,6 +1229,7 @@ for (const [segId, path, key] of SEGMENTS) {
     if (!btn) return;
     if (await post(path, { [key]: btn.dataset.v }, `${key} → ${btn.dataset.v}`)) {
       [...$(segId).children].forEach((b) => b.classList.toggle("active", b === btn));
+      if (segId === 'seg-carpet') { currentCarpetMode = btn.dataset.v; carpetVerifiedAt = Date.now(); renderCleaningDraft(); }
     }
   });
 }
@@ -1229,7 +1270,7 @@ function rotateMap() {
   localStorage.setItem("mapRot", rot);
   applyRot();
   applyZoom();  // the rotated content's pan bounds changed, so re-clamp
-  setTimeout(positionActivityBubble, 360);
+  setTimeout(() => { positionActivityBubble(); layoutMapLabels(); }, 360);
 }
 
 /* ---------- map zoom & pan ---------- */
@@ -1262,8 +1303,10 @@ function applyZoom() {
   $("map-zoom").style.transform = `translate(${zTx}px, ${zTy}px) scale(${zScale})`;
   // While zoomed the pointer pans the map, so touch scrolling must not fight it.
   stage.style.setProperty("--map-scale", zScale);
+  $("map-zoom-value").textContent = Math.round(zScale * 100) + "%";
   stage.style.touchAction = zScale > 1 ? "none" : "";
   stage.style.cursor = zScale > 1 ? "grab" : "";
+  requestAnimationFrame(layoutMapLabels);
   requestAnimationFrame(positionActivityBubble);
 }
 
@@ -1350,8 +1393,13 @@ function initMapZoom() {
 }
 
 /* ---------- rooms ---------- */
-// Chip accents cycle every 8 (mirrors the .chip:nth-child CSS); map regions reuse them.
-const ROOM_COLORS = ["#9DBFE3", "#D6BC88", "#7A9FC4", "#DACDB8", "#8FBB97", "#D6A8AF", "#90C2BB", "#B3A8D6"];
+const mapRoomColors = new Map();
+function roomColor(id) {
+  return mapRoomColors.get(Number(id)) || roomsCache.find(room => room.segment_id === Number(id))?.color || '#9DBFE3';
+}
+function syncRoomColors() {
+  document.querySelectorAll('#rooms .chip').forEach(chip => chip.style.setProperty('--rc', roomColor(chip.dataset.id)));
+}
 
 // Map-region clicks are deferred so a dblclick zoom can cancel them.
 let pendingRoomClick = 0;
@@ -1366,6 +1414,8 @@ function toggleRoom(id) {
   const hadSelection = selectedRoomIds().length > 0;
   if (chip) chip.classList.toggle("sel", next);
   if (region) region.classList.toggle("sel", next);
+  for (const el of [chip, region]) if (el) el.setAttribute("aria-pressed", String(next));
+  requestAnimationFrame(layoutMapLabels);
   // First room selected -> reveal the mode picker + run button ("room mode").
   if (!hadSelection && selectedRoomIds().length > 0) showTab("rooms");
   syncCleanBtn();
@@ -1447,6 +1497,7 @@ function positionActivityBubble() {
     Math.min(0, stage.right - 6 - anchor.left - half));
   el.style.setProperty('--bubble-shift', `${shift}px`);
   el.dataset.placement = anchor.top - stage.top < bubble.offsetHeight + 25 ? 'below' : 'above';
+  layoutMapLabels();
 }
 async function refreshRobotPosition() {
   try {
@@ -1474,17 +1525,20 @@ async function buildMapRegions() {
 }
 function renderMapRegions(data, names) {
   const overlay = $("map-overlay");
-  // Index over the full room list (not the filtered one) so region accents line up with chips.
-  overlay.innerHTML = (data.rooms || []).map((r, i) => {
+  // Use the renderer's actual room colour, independent of API list ordering.
+  (data.rooms || []).forEach(room => { if (room.color) mapRoomColors.set(room.segment_id, room.color); });
+  syncRoomColors();
+  overlay.innerHTML = (data.rooms || []).map(r => {
     if (!r.bbox) return "";
     const [x0, y0, x1, y1] = r.bbox;
-    const c = ROOM_COLORS[i % ROOM_COLORS.length];
+    const c = roomColor(r.segment_id);
     const name = esc(names[r.segment_id] || r.name);
-    return `<button class="map-region" data-id="${r.segment_id}" title="${name}"
+    return `<button class="map-region" data-id="${r.segment_id}" title="${name}" aria-label="${name}" aria-pressed="false"
       style="left:${x0 * 100}%;top:${y0 * 100}%;width:${(x1 - x0) * 100}%;height:${(y1 - y0) * 100}%;--rc:${c}"><span class="map-label">${name}</span></button>`;
   }).join("");
   // Assignment (not addEventListener): buildMapRegions can run again after an offline
   // boot recovers, and a duplicated listener would toggle the room twice (a no-op).
+  requestAnimationFrame(layoutMapLabels);
   overlay.onclick = (e) => {
     const region = e.target.closest(".map-region");
     if (!region) return;
@@ -1494,35 +1548,201 @@ function renderMapRegions(data, names) {
   };
 }
 
-function cleanRooms() {
-  const ids = selectedRoomIds();
-  if (!ids.length) return;
-  const mode = roomMode();
-  if (mode === "two-stage") {
-    setActiveClean(ids, 1, false);
-    startTwoStage(ids);  // switches to Clean tab + drives the 5-step progress poller
-  } else {
-    setActiveClean(ids, roomPasses(), false);
-    post("/clean/segments", { segment_ids: ids, mode, repeat: roomPasses() }, `cleaning ${ids.length} room${ids.length > 1 ? "s" : ""}`);
+function layoutMapLabels() {
+  const labels = [...document.querySelectorAll('#map-overlay .map-label')];
+  const priority = label => label.parentElement.matches('.sel, .cleaning') ? 1 : 0;
+  labels.sort((a,b) => priority(b)-priority(a));
+  const occupied = $('robot-activity').hidden ? [] : [document.querySelector('.robot-activity-bubble').getBoundingClientRect()];
+  const overlaps = (a,b) => a.left < b.right+3 && a.right+3 > b.left && a.top < b.bottom+3 && a.bottom+3 > b.top;
+  for (const label of labels) {
+    label.style.visibility = '';
+    const rect = label.getBoundingClientRect();
+    if (occupied.some(other => overlaps(rect,other))) label.style.visibility = 'hidden';
+    else occupied.push(rect);
   }
-}
-function syncCleanBtn() {
-  const n = document.querySelectorAll("#rooms .chip.sel").length;
-  const b = $("clean-btn");
-  b.disabled = n === 0;
-  b.textContent = n ? `Clean ${n} room${n > 1 ? "s" : ""}` : "Clean selected rooms";
-  // Keep the floating orb's sub-label in sync with what it will do when tapped.
-  renderActionBar(lastStatus);
 }
 
-// The floating orb is the one contextual clean action: selected rooms run the chosen
-// room mode; nothing selected runs a whole-floor two-stage clean.
+const CLEAN_MODE_LABELS = {vacuum: 'Vacuum', mop: 'Mop', vac_and_mop: 'Vacuum + mop', 'two-stage': 'Vacuum, then mop'};
+const CARPET_LABELS = {rise: 'Rise — include carpets, lift mop', avoid: 'Avoid — stay off carpet', ignore: 'Ignore — clean carpet normally', cross: 'Cross — cross carpet without cleaning'};
+let currentCarpetMode = null, plannedCarpetMode = null, supportedCarpetModes = [], carpetVerifiedAt = null;
+let pendingClean = null, cleanSubmitting = false, assistantPlan = null;
+let lastMapAt = null, lastStatusAt = null;
+
+function cleaningDraft() {
+  const ids = selectedRoomIds(), mode = roomMode();
+  return {segment_ids: ids.length ? ids : null, mode,
+    carpet: mode === 'two-stage' ? 'avoid' : plannedCarpetMode,
+    repeat: mode === 'two-stage' || !ids.length ? 1 : roomPasses()};
+}
+function cleanPlanRows(plan) {
+  return [
+    ['Rooms', plan.segment_ids ? plan.segment_ids.map(roomName).join(', ') : 'Whole floor'],
+    ['Mode', CLEAN_MODE_LABELS[plan.mode]],
+    ['Carpet', plan.mode === 'two-stage' ? 'Rise during vacuuming; Avoid during mopping' : CARPET_LABELS[plan.carpet]],
+    ['Passes', plan.mode === 'two-stage' ? '1 vacuum pass, then 1 mop pass' : plan.segment_ids ? `${plan.repeat} per room` : '1 whole-floor pass'],
+  ];
+}
+function renderCleaningDraft() {
+  const plan = cleaningDraft(), twoStage = plan.mode === 'two-stage';
+  $("two-stage-card").hidden = !twoStage && !lastRun?.running;
+  $('carpet-current').textContent = `Last verified: ${CARPET_LABELS[currentCarpetMode] || 'not yet read'}`;
+  $('seg-clean-carpet').innerHTML = Object.entries(CARPET_LABELS).map(([value, label]) => {
+    const supported = supportedCarpetModes.includes(value);
+    return `<button data-v="${value}" ${twoStage || !supported ? 'disabled' : ''} class="${plan.carpet === value ? 'active' : ''}" aria-pressed="${plan.carpet === value}" title="${supported ? label : 'Not supported by this integration yet'}">${label.split(' — ')[0]}${supported ? '' : ' · unavailable'}</button>`;
+  }).join('');
+  $('carpet-help').textContent = twoStage
+    ? 'Two-stage verifies Rise before vacuuming and Avoid before mopping. One pass of each.'
+    : `${CARPET_LABELS[plan.carpet] || 'Choose a supported carpet behavior'}. Ignore and Cross are not supported by this integration yet. Settings are checked on the robot before cleaning starts.`;
+  markSeg('seg-passes', String(plan.repeat));
+  document.querySelectorAll('#seg-room-mode button, #seg-passes button').forEach(button => button.setAttribute('aria-pressed', String(button.classList.contains('active'))));
+  document.querySelectorAll('#seg-passes button').forEach(b => {
+    b.disabled = twoStage || (!plan.segment_ids && b.dataset.v !== '1');
+  });
+  $('passes-help').textContent = twoStage ? 'One pass per stage.' : !plan.segment_ids ? 'Whole-floor cleaning supports one pass. Select rooms for multiple passes.' : 'Each selected room is cleaned this many times.';
+  $('clean-draft-summary').textContent = cleanPlanRows(plan).map(([,value]) => value || 'Carpet not selected').join(' · ');
+}
+function syncCleanBtn() {
+  renderCleaningDraft();
+  renderActionBar(lastStatus);
+}
 function runPrimary() {
-  if (selectedRoomIds().length) { cleanRooms(); return; }
-  if (liveConfirm("Start a whole-floor two-stage clean (vacuum, then mop avoiding carpet)?")) {
-    setActiveClean([], 1, true);
-    startTwoStage();
+  if (cleanSubmitting || twoStageRunning || lastStatus?.in_cleaning || lastStatus?.cleaning) return;
+  const plan = cleaningDraft();
+  if (!supportedCarpetModes.includes(plan.carpet) || (plan.mode === 'two-stage' && !supportedCarpetModes.includes('rise'))) {
+    toast('Choose a supported carpet behavior before starting', true); showTab('rooms'); return;
   }
+  pendingClean = plan;
+  $('clean-review-details').innerHTML = cleanPlanRows(plan).map(([name,value]) => `<dt>${esc(name)}</dt><dd>${esc(value)}</dd>`).join('');
+  $('clean-review-error').textContent = '';
+  $('clean-review').showModal();
+}
+async function confirmClean() {
+  if (!pendingClean || cleanSubmitting) return;
+  cleanSubmitting = true;
+  $('confirm-clean').disabled = true;
+  $('clean-review-error').textContent = '';
+  const plan = pendingClean;
+  $('confirm-clean').textContent = plan.mode === 'two-stage' ? 'Starting sequence…' : 'Checking settings…';
+  const path = plan.mode === 'two-stage' ? '/clean/two-stage' : plan.segment_ids ? '/clean/segments' : '/start';
+  const body = plan.mode === 'two-stage' ? (plan.segment_ids ? {segment_ids: plan.segment_ids} : {})
+    : {mode: plan.mode, carpet_mode: plan.carpet, ...(plan.segment_ids ? {segment_ids: plan.segment_ids, repeat: plan.repeat} : {})};
+  try {
+    const response = await fetch(path, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not confirm the start. Check robot status before retrying.');
+    setActiveClean(plan.segment_ids || [], plan.repeat, !plan.segment_ids);
+    $('clean-request-feedback').textContent = plan.mode === 'two-stage'
+      ? 'Two-stage requested. Each stage checks its settings before cleaning.' : 'Settings verified. Clean requested.';
+    if (plan.mode !== 'two-stage') { currentCarpetMode = plan.carpet; carpetVerifiedAt = Date.now(); }
+    pendingClean = null;
+    $('clean-review').close();
+    showTab('clean');
+    renderCleaningDraft();
+    refreshStatus();
+    pollRun();
+    refreshRecentCleaning();
+  } catch (error) {
+    $('clean-review-error').textContent = error.message || 'Connection interrupted. Check robot status before retrying.';
+  } finally {
+    cleanSubmitting = false;
+    $('confirm-clean').disabled = false;
+    $('confirm-clean').textContent = 'Confirm and start';
+  }
+}
+function renderFreshness() {
+  const age = (stamp, label, failed) => {
+    if (!stamp) return `${label}: waiting for data`;
+    const seconds = Math.max(0, Math.floor((Date.now() - stamp) / 1000));
+    return `${label}: ${seconds}s ago${failed || seconds > 10 ? ' · delayed' : ''}`;
+  };
+  $('carpet-verified-age').textContent = carpetVerifiedAt ? `Read ${Math.max(0, Math.floor((Date.now()-carpetVerifiedAt)/1000))}s ago. The robot or its app may have changed it since.` : '';
+  $('data-freshness').textContent = `${age(lastMapAt, 'Map', mapRefreshFailed)}. ${age(lastStatusAt, 'Robot', $('offline').style.display === 'inline')}.`;
+}
+async function refreshCarpetReadback() {
+  try {
+    const response = await fetch('/carpet');
+    if (!response.ok) return;
+    currentCarpetMode = (await response.json()).mode;
+    carpetVerifiedAt = Date.now();
+    syncSeg('seg-carpet', currentCarpetMode);
+    renderCleaningDraft();
+  } catch { /* retain the labelled last verification on a failed read */ }
+}
+async function loadAssistantStatus() {
+  try {
+    const response = await fetch('/assistant');
+    if (!response.ok) throw new Error('unavailable');
+    const data = await response.json();
+    $('assistant-ask').disabled = !data.enabled;
+    $('assistant-message').disabled = !data.enabled;
+    $('assistant-response').textContent = data.enabled ? '' : 'Assistant is turned off. Enable it in server settings, or use the room controls.';
+  } catch {
+    $('assistant-ask').disabled = true;
+    $('assistant-response').textContent = 'Assistant temporarily unavailable. You can use the room controls.';
+  }
+}
+async function askAssistant() {
+  const message = $('assistant-message').value.trim();
+  if (!message) return;
+  assistantPlan = null;
+  $('assistant-review').hidden = true;
+  $('assistant-ask').disabled = true;
+  $('assistant-response').textContent = 'Thinking…';
+  try {
+    const response = await fetch('/assistant', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt: message})});
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Assistant temporarily unavailable. You can use the room controls.');
+    $('assistant-response').textContent = data.message;
+    if (data.kind === 'plan' && data.plan) {
+      assistantPlan = data.plan;
+      $('assistant-response').textContent += '\n\n' + cleanPlanRows(data.plan).map(([name,value]) => `${name}: ${value}`).join('\n');
+      $('assistant-review').hidden = false;
+    }
+  } catch (error) { $('assistant-response').textContent = error.message; }
+  finally { $('assistant-ask').disabled = false; }
+}
+function reviewAssistantPlan() {
+  if (!assistantPlan) return;
+  const plan = assistantPlan;
+  const known = new Set(roomsCache.map(room => room.segment_id));
+  if (!Object.hasOwn(CLEAN_MODE_LABELS, plan.mode) || !supportedCarpetModes.includes(plan.carpet)
+      || (plan.segment_ids !== null && (!Array.isArray(plan.segment_ids) || !plan.segment_ids.length || plan.segment_ids.some(id => !known.has(id))))
+      || ![1,2,3].includes(plan.repeat) || (plan.segment_ids === null && plan.repeat !== 1)
+      || (plan.mode === 'two-stage' && (plan.repeat !== 1 || plan.carpet !== 'avoid'))) {
+    $('assistant-response').textContent = 'This plan needs clarification. Choose rooms and settings below.'; return;
+  }
+  const ids = new Set((plan.segment_ids || []).map(String));
+  document.querySelectorAll('#rooms .chip, #map-overlay .map-region').forEach(el => {
+    el.classList.toggle('sel', ids.has(el.dataset.id));
+    el.setAttribute('aria-pressed', String(ids.has(el.dataset.id)));
+  });
+  markSeg('seg-room-mode', plan.mode);
+  markSeg('seg-passes', String(plan.repeat));
+  document.querySelectorAll('#seg-room-mode button, #seg-passes button').forEach(button => button.setAttribute('aria-pressed', String(button.classList.contains('active'))));
+  plannedCarpetMode = plan.carpet;
+  syncCleanBtn();
+  runPrimary();
+}
+async function refreshRecentCleaning() {
+  try {
+    const response = await fetch('/cleaning/recent');
+    if (!response.ok) throw new Error('unavailable');
+    const data = await response.json(), record = data.last_record;
+    const parts = [];
+    if (record) {
+      parts.push(record.outcome === 'completed' ? 'Robot reports completed' : record.outcome === 'incomplete' ? 'Robot reports incomplete' : 'Completion not confirmed');
+      if (record.area_m2 != null) parts.push(`${record.area_m2} m²`);
+      if (record.duration_s != null) parts.push(fmtCleanTime(record.duration_s));
+      if (record.ended_at) parts.push(new Date(record.ended_at).toLocaleString());
+      if (record.error_code) parts.push(`Robot error ${record.error_code}`);
+      if (data.record_stale) parts.push('Last known record — update delayed');
+    } else parts.push('No completion record available.');
+    $('recent-clean-record').textContent = parts.join(' · ');
+    $('recent-clean-requests').textContent = (data.recent_requests || []).slice(0,3).map(request => {
+      const scope = request.segment_ids ? request.segment_ids.map(roomName).join(', ') : 'whole floor';
+      return `Requested: ${CLEAN_MODE_LABELS[request.mode] || request.mode} · ${scope} · ${new Date(request.started_at).toLocaleString()}`;
+    }).join('\n');
+  } catch { $('recent-clean-record').textContent = 'Completion record temporarily unavailable.'; }
 }
 
 // Which room(s)/passes the active clean is running, for the map highlight + indicator.
@@ -1549,7 +1769,8 @@ function renderActiveClean(s) {
     return;
   }
   const idset = new Set(activeClean.ids);
-  regions.forEach((r) => r.classList.toggle("cleaning", idset.has(r.dataset.id)));
+  regions.forEach((r) => r.classList.toggle("cleaning", activeClean.whole || idset.has(r.dataset.id)));
+  requestAnimationFrame(layoutMapLabels);
   const where = activeClean.whole ? "whole floor" : (activeClean.names.join(", ") || "selected rooms");
   const passes = activeClean.passes > 1 ? ` · ${activeClean.passes} passes` : "";
   tgt.textContent = `Cleaning ${where}${passes}`;
@@ -1641,6 +1862,7 @@ async function refreshStatus() {
     if (!response.ok) throw new Error("Status unavailable");
     s = await response.json();
     if (!s || typeof s.state_name !== "string") throw new Error("Status unavailable");
+    lastStatusAt = Date.now();
     setOffline(false);
   } catch { setOffline(true); return; }
   // An offline boot loaded no rooms/routines: fetch them now the connection is back.
@@ -1660,7 +1882,12 @@ async function refreshStatus() {
   eb.style.display = s.error ? "block" : "none";
   eb.textContent = s.error ? "⚠ " + s.error : "";
 
+  if (lastStatus && (lastStatus.cleaning || lastStatus.in_cleaning) && !s.cleaning && !s.in_cleaning) {
+    refreshRecentCleaning(); refreshCarpetReadback();
+  }
   lastStatus = s;
+  $('recent-clean-dock').textContent = `Robot now: ${activityForStatus(s).label}`;
+  renderFreshness();
   setRobotActivity(activityForStatus(s));
   renderActionBar(s);
 
@@ -1752,6 +1979,8 @@ async function refreshMap() {
     mapObjectUrl = nextUrl;
     nextUrl = null;
     mapRefreshFailed = stale;
+    if (!stale) lastMapAt = Date.now();
+    renderFreshness();
     renderMapBadge();
     if (previousUrl) URL.revokeObjectURL(previousUrl);
     sizeMap();
@@ -1816,7 +2045,10 @@ async function discover() {
   let d;
   try { d = await (await fetch("/auth/discover")).json(); }
   catch { toast("Discover failed — no connection", true); return; }
-  syncSeg("seg-carpet", d.carpet_mode);  // discover re-reads the device: refresh the toggle
+  currentCarpetMode = d.carpet_mode;
+  carpetVerifiedAt = Date.now();
+  syncSeg("seg-carpet", d.carpet_mode);
+  renderCleaningDraft();
   const pct = (v) => (v == null ? "—" : v + "%");
   const names = (list) => (list && list.length ? list.map((x) => x.name).join(", ") : "—");
   $("discover-results").innerHTML = `
@@ -1877,6 +2109,7 @@ let lastRun = null;  // latest RunSlot progress, shared by the Clean and Sequenc
 const isSequenceRun = (st) => !!st && st.sequence_id != null;
 
 function renderTwoStage(st) {
+  $("two-stage-card").hidden = roomMode() !== "two-stage" && !st.running;
   const seq = isSequenceRun(st);
   const own = seq ? { stage: "idle", message: "", error: null, running: false } : st;
   const idx = own.stage in TWO_STAGE_ORDER ? TWO_STAGE_ORDER[own.stage] : -1;
@@ -1930,34 +2163,6 @@ function startRunPoll() {
 function stopRunPoll() {
   clearInterval(runTimer);
   runTimer = null;
-}
-
-async function startTwoStage(segmentIds) {
-  twoStageRunning = true;
-  renderActionBar(lastStatus);
-  lastRunError = null;
-  showTab("clean");
-  // segmentIds present -> scoped two-stage; absent (whole-house orb) -> empty body = whole house.
-  const body = Array.isArray(segmentIds) && segmentIds.length ? JSON.stringify({ segment_ids: segmentIds }) : "{}";
-  try {
-    const r = await fetch("/clean/two-stage", {
-      method: "POST", headers: { "content-type": "application/json" }, body,
-    });
-    if (r.status === 409) { toast("Another run is already in progress", true); }
-    else if (!r.ok) {
-      toast(`Two-stage start failed (${r.status})`, true);
-      twoStageRunning = false;
-      renderActionBar(lastStatus);
-      return;
-    }
-    else { toast("Two-stage clean started"); }
-  } catch {
-    toast("Two-stage start failed — no connection", true);
-    twoStageRunning = false;
-    renderActionBar(lastStatus);
-    return;
-  }
-  pollRun();
 }
 
 async function cancelTwoStage() {
@@ -2634,19 +2839,23 @@ async function loadAppDataOnce() {
   try {
     const caps = await (await fetch("/capabilities")).json();
     $("model").textContent = caps.model;
-  } catch { /* capabilities are cosmetic */ }
+    supportedCarpetModes = caps.carpet_modes || [];
+    if (!supportedCarpetModes.includes(plannedCarpetMode)) plannedCarpetMode = supportedCarpetModes.includes('avoid') ? 'avoid' : supportedCarpetModes[0];
+    renderCleaningDraft();
+  } catch { /* unsupported settings stay disabled until capabilities load */ }
 
   const rooms = await (await fetch("/rooms")).json();
   roomsCache = rooms;
   $("rooms").innerHTML = rooms.map((r) =>
-    `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
+    `<button class="chip" data-id="${r.segment_id}" aria-pressed="false">${esc(r.name)}</button>`).join("");
+  syncRoomColors();
   await buildMapRegions();
 
   // Schedule cards: rooms are picked by name everywhere, never by Segment number.
   $("interval-room").innerHTML = rooms.map((r) =>
     `<option value="${r.segment_id}">${r.name}</option>`).join("");
   $("rule-rooms").innerHTML = rooms.map((r) =>
-    `<button class="chip" data-id="${r.segment_id}">${r.name}</button>`).join("");
+    `<button class="chip" data-id="${r.segment_id}" aria-pressed="false">${esc(r.name)}</button>`).join("");
 
   const routines = await (await fetch("/routines")).json();
   $("routines").innerHTML = routines.map((r) =>
@@ -2654,13 +2863,12 @@ async function loadAppDataOnce() {
 
   await loadConsumables();
 
-  // Carpet setting: one boot-time device read (not per poll — each read costs a command).
-  try {
-    syncSeg("seg-carpet", (await (await fetch("/carpet")).json()).mode);
-  } catch { /* toggle stays unmarked until the user sets it */ }
+  await refreshCarpetReadback();
 
   await loadAuthStatus();
   appDataLoaded = true;
+  refreshRecentCleaning();
+  loadAssistantStatus();
   refreshMap();
   refreshSchedule();
   refreshSequences();
@@ -2669,6 +2877,14 @@ async function loadAppDataOnce() {
 async function boot() {
   applyRot();
   initMapZoom();
+  renderCleaningDraft();
+  $('seg-clean-carpet').addEventListener('click', event => {
+    const button = event.target.closest('button');
+    if (!button || button.disabled) return;
+    plannedCarpetMode = button.dataset.v;
+    renderCleaningDraft();
+  });
+  setInterval(renderFreshness, 1000);
   window.addEventListener("resize", sizeMap);
   initServiceWorker();
 
@@ -2684,6 +2900,7 @@ async function boot() {
       const btn = e.target.closest("button");
       if (!btn) return;
       [...$(segId).children].forEach((b) => b.classList.toggle("active", b === btn));
+      if (segId === "seg-room-mode" || segId === "seg-passes") renderCleaningDraft();
     });
   }
   $("rule-rooms").addEventListener("click", (e) => {

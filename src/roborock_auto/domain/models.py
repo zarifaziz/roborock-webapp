@@ -300,6 +300,7 @@ class Room:
     # Normalized (x0, y0, x1, y1) fractions 0..1 of the rendered map image, top-left origin,
     # for click-to-select overlays. None when the geometry is unknown (e.g. list_rooms).
     bbox: tuple[float, float, float, float] | None = None
+    color: str | None = None
 
 
 @dataclass(frozen=True)

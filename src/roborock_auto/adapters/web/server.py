@@ -18,10 +18,11 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from roborock_auto.adapters import get_auth, get_gateway
+from roborock_auto.adapters.cleaning_assistant import CleaningAssistant
 from roborock_auto.adapters.sqlite import (
     SqliteCleaningLog,
     SqliteOccurrences,
@@ -30,13 +31,15 @@ from roborock_auto.adapters.sqlite import (
     SqliteSequences,
     open_database,
 )
+from roborock_auto.adapters.web.assistant_api import router as assistant_router
+from roborock_auto.adapters.web.cleaning_context import RecentCleaning
 from roborock_auto.application.materialise import MATERIALISATION_HORIZON, materialise
 from roborock_auto.application.overdue import clean_overdue, overdue_view
 from roborock_auto.application.run_slot import RunSlot
 from roborock_auto.application.scheduler import Scheduler, readiness_block
 from roborock_auto.application.sequence_launch import SequenceLauncher
 from roborock_auto.application.sequence_runner import RunCancelled
-from roborock_auto.application.start_clean import start_clean, utc_now
+from roborock_auto.application.start_clean import SettingsNotConfirmed, start_clean, utc_now
 from roborock_auto.application.two_stage_clean import run_two_stage
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
@@ -91,6 +94,10 @@ async def lifespan(app: FastAPI):
     app.state.auth = get_auth(config)
     app.state.config = config
     app.state.cleaning_log = SqliteCleaningLog(db, device_id=config.duid or "fake")
+    app.state.recent_cleaning = RecentCleaning(gw, app.state.cleaning_log)
+    app.state.assistant = CleaningAssistant(
+        enabled=config.assistant_enabled, model=config.assistant_model,
+    )
     app.state.room_intervals = SqliteRoomIntervals(db, device_id=config.duid or "fake")
     app.state.schedule_rules = SqliteScheduleRules(db, device_id=config.duid or "fake")
     app.state.occurrences = SqliteOccurrences(db, device_id=config.duid or "fake")
@@ -135,6 +142,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="roborock-webapp", lifespan=lifespan)
+app.include_router(assistant_router)
 
 
 def _gw(request: Request) -> RobotGateway:
@@ -216,16 +224,48 @@ async def consumables_reset(request: Request, part: str = Body(..., embed=True))
     return {"ok": True}
 
 
+@app.exception_handler(SettingsNotConfirmed)
+async def settings_not_confirmed(request: Request, exc: SettingsNotConfirmed):
+    return JSONResponse(status_code=409, content={"detail": str(exc)})
+
+
+def _carpet_selection(value: str | None) -> CarpetMode | None:
+    if value is None:
+        return None
+    mode = _parse(CarpetMode, value)
+    if mode not in QREVO_L_PRO.carpet_modes:
+        raise HTTPException(422, "Carpet mode is not supported by this app for this robot")
+    return mode
+
+
+@asynccontextmanager
+async def _control_slot(request: Request, *, starting: bool = False):
+    slot = request.app.state.run_slot
+    if not slot.acquire():
+        raise HTTPException(409, "another run or settings change is already in progress")
+    try:
+        if starting and not ready_to_start(await _gw(request).get_status()):
+            raise HTTPException(409, "the robot is not ready: it must be docked, idle and error-free")
+        yield
+    finally:
+        slot.release()
+
+
 @app.post("/start")
-async def start(request: Request, mode: str = Body(..., embed=True)):
-    await start_clean(
-        _gw(request),
-        cleaning_log=request.app.state.cleaning_log,
-        source=CleanSource.APP,
-        mode=_parse(CleaningMode, mode),
-        segment_ids=None,
-        now=request.app.state.now,
-    )
+async def start(
+    request: Request, mode: str = Body(..., embed=True),
+    carpet_mode: str | None = Body(None, embed=True),
+):
+    async with _control_slot(request, starting=True):
+        await start_clean(
+            _gw(request),
+            cleaning_log=request.app.state.cleaning_log,
+            source=CleanSource.APP,
+            mode=_parse(CleaningMode, mode),
+            segment_ids=None,
+            carpet_mode=_carpet_selection(carpet_mode),
+            now=request.app.state.now,
+        )
     return {"ok": True}
 
 
@@ -270,19 +310,22 @@ def _parse(enum_cls, value: str):
 
 @app.post("/fan")
 async def fan(request: Request, power: str = Body(..., embed=True)):
-    await _gw(request).set_fan_power(_parse(FanPower, power))
+    async with _control_slot(request):
+        await _gw(request).set_fan_power(_parse(FanPower, power))
     return {"ok": True}
 
 
 @app.post("/mop")
 async def mop(request: Request, mode: str = Body(..., embed=True)):
-    await _gw(request).set_mop_mode(_parse(MopMode, mode))
+    async with _control_slot(request):
+        await _gw(request).set_mop_mode(_parse(MopMode, mode))
     return {"ok": True}
 
 
 @app.post("/water")
 async def water(request: Request, mode: str = Body(..., embed=True)):
-    await _gw(request).set_water_mode(_parse(WaterMode, mode))
+    async with _control_slot(request):
+        await _gw(request).set_water_mode(_parse(WaterMode, mode))
     return {"ok": True}
 
 
@@ -298,7 +341,14 @@ async def carpet(request: Request, mode: str = Body(..., embed=True)):
     parsed = _parse(CarpetMode, mode)
     if parsed is CarpetMode.UNKNOWN:
         raise HTTPException(422, "cannot set carpet mode to 'unknown'")
-    await _gw(request).set_carpet_mode(parsed)
+    async with _control_slot(request):
+        gw = _gw(request)
+        await gw.set_carpet_mode(parsed)
+        reported = await gw.get_carpet_mode()
+        if reported is not parsed:
+            raise SettingsNotConfirmed(
+                f"Carpet mode not confirmed: requested {parsed.value}, robot reported {reported.value}."
+            )
     return {"ok": True}
 
 
@@ -364,20 +414,23 @@ async def clean_segments(
     segment_ids: list[int] = Body(..., embed=True),
     mode: str = Body(..., embed=True),
     repeat: int = Body(1, embed=True),
+    carpet_mode: str | None = Body(None, embed=True),
 ):
     if not segment_ids:
         raise HTTPException(422, "segment_ids must not be empty")
     if not 1 <= repeat <= 3:
         raise HTTPException(422, "repeat must be between 1 and 3")
-    await start_clean(
-        _gw(request),
-        cleaning_log=request.app.state.cleaning_log,
-        source=CleanSource.APP,
-        mode=_parse(CleaningMode, mode),
-        segment_ids=segment_ids,
-        repeat=repeat,
-        now=request.app.state.now,
-    )
+    async with _control_slot(request, starting=True):
+        await start_clean(
+            _gw(request),
+            cleaning_log=request.app.state.cleaning_log,
+            source=CleanSource.APP,
+            mode=_parse(CleaningMode, mode),
+            segment_ids=segment_ids,
+            repeat=repeat,
+            carpet_mode=_carpet_selection(carpet_mode),
+            now=request.app.state.now,
+        )
     return {"ok": True}
 
 

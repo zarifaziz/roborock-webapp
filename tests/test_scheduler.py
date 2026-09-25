@@ -47,7 +47,7 @@ NEXT_WEEK = FIRST + timedelta(days=7)
 FORTNIGHT = FIRST + timedelta(days=14)
 
 BUSY = DeviceStatus("cleaning", 90, in_cleaning=True, docked=False, cleaning=True)
-DOCKED_IDLE = DeviceStatus("charging", 100, in_cleaning=False, docked=True)
+DOCKED_IDLE = DeviceStatus("charging", 100, in_cleaning=False, docked=True, cleaning_mode="vacuum")
 
 
 class Clock:
@@ -609,7 +609,7 @@ async def test_a_plain_clean_holds_the_run_slot_from_its_readiness_check_to_its_
     await h.rule()
     h.clock.now = FIRST
     await h.scheduler.tick()
-    assert h.robot.slot_held == [("get_status", True), ("clean_rooms", True)]
+    assert h.robot.slot_held == [("get_status", True), ("get_status", True), ("clean_rooms", True)]
     assert h.run_slot.running is False
 
 

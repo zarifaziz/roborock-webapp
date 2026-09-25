@@ -39,7 +39,6 @@ from roborock_auto.domain.policies import (
 )
 from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.occurrences import OccurrencePort
-from roborock_auto.ports.robot import RobotStatusPort
 from roborock_auto.ports.schedule_rules import ScheduleRulePort
 from roborock_auto.ports.sequences import SequencePort
 
@@ -49,7 +48,7 @@ TICK_INTERVAL_SEC = 30.0
 MAX_BACKOFF_SEC = 300.0
 
 
-class SchedulerPorts(RobotStatusPort, CleanPorts, Protocol):
+class SchedulerPorts(CleanPorts, Protocol):
     """Everything the scheduler needs from the robot — and nothing more."""
 
 

@@ -42,6 +42,7 @@ from roborock_auto.adapters.roborock_cloud.codes import (
 )
 from roborock_auto.adapters.roborock_cloud.session import load_user_data
 from roborock_auto.config import Config
+from roborock_auto.domain.cleaning_history import CleanRecord
 from roborock_auto.domain.models import (
     CarpetMode,
     CleaningMode,
@@ -279,7 +280,8 @@ class RoborockCloudAdapter:
             rooms = self._v1.rooms
             await rooms.refresh()
             return [
-                Room(int(m.segment_id), m.name or f"Room {m.segment_id}")
+                Room(int(m.segment_id), m.name or f"Room {m.segment_id}",
+                     color=_room_color(int(m.segment_id)))
                 for m in (rooms.rooms or [])
             ]
 
@@ -291,6 +293,30 @@ class RoborockCloudAdapter:
             return [Routine(int(s.id), s.name) for s in scenes]
 
         return await self._retry_no_lock(read)
+
+    async def get_last_clean_record(self) -> CleanRecord | None:
+        async def read() -> CleanRecord | None:
+            summary = self._v1.clean_summary
+            await summary.refresh()
+            record = summary.last_clean_record
+            if record is None:
+                return None
+            complete, error = _opt(record, "complete"), _opt(record, "error")
+            outcome = "unknown"
+            if complete == 1 and error == 0:
+                outcome = "completed"
+            elif complete == 0 or (error is not None and error != 0):
+                outcome = "incomplete"
+            return CleanRecord(
+                started_at=_opt(record, "begin_datetime"),
+                ended_at=_opt(record, "end_datetime"),
+                duration_s=_opt(record, "duration"),
+                area_m2=_opt(record, "square_meter_area"),
+                outcome=outcome,
+                error_code=error,
+            )
+
+        return await self._locked_retry(read)
 
     async def get_consumables(self) -> Consumables:
         async def read() -> Consumables:
@@ -437,6 +463,13 @@ def _pick_device(devices: list, duid: str) -> Any:
     return v1[0]
 
 
+def _room_color(segment_id: int) -> str:
+    from roborock_auto.adapters.roborock_cloud.palette import build_palette
+
+    color = build_palette().get_room_color(segment_id)
+    return "#" + "".join(f"{channel:02x}" for channel in color[:3])
+
+
 def _map_data(data: Any) -> MapData:
     try:
         # map_data.rooms is dict[segment_id -> Room(x0,y0,x1,y1,...)]; image.dimensions
@@ -451,6 +484,7 @@ def _map_data(data: Any) -> MapData:
                 int(seg_id),
                 getattr(r, "name", None) or f"Room {seg_id}",
                 bbox=_room_bbox(r, dims, width, height),
+                color=_room_color(int(seg_id)),
             )
             for seg_id, r in items
         ]

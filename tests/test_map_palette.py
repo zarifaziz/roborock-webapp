@@ -176,3 +176,22 @@ def test_disconnected_mop_segments_do_not_paint_the_gap():
     assert [image.getpixel((240, y)) for y in range(320)] == (
         [room] * 151 + [trace] * 3 + [room] * 166
     )
+
+
+def test_room_color_metadata_matches_vendor_floor_pixels():
+    from types import SimpleNamespace
+
+    from vacuum_map_parser_base.config.image_config import ImageConfig
+    from vacuum_map_parser_roborock.image_parser import RoborockImageParser
+
+    from roborock_auto.adapters.roborock_cloud.adapter import _map_data
+
+    segments = [1, 7, 16, 17, 30]
+    image, _ = RoborockImageParser(build_palette(), ImageConfig(scale=1)).parse(
+        bytes((segment << 3) | 7 for segment in segments), len(segments), 1, None,
+    )
+    geometry = _map_data(SimpleNamespace(rooms={segment: SimpleNamespace() for segment in segments}))
+    assert [room.color for room in geometry.rooms] == [
+        "#" + "".join(f"{channel:02x}" for channel in image.getpixel((x, 0))[:3])
+        for x in range(len(segments))
+    ]

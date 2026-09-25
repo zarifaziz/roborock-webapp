@@ -66,6 +66,9 @@ class Config:
     database_path: str      # SQLite file recording what this app did (cleaning runs)
     timezone: str           # IANA zone name Schedule Rules are interpreted in; no default
 
+    assistant_enabled: bool = False
+    assistant_model: str = "sonnet"
+
     @classmethod
     def from_env(cls) -> Config:
         gateway = _get("GATEWAY", "fake").lower()
@@ -85,4 +88,6 @@ class Config:
             session_path=_get("SESSION_PATH", "user_data.json"),
             database_path=_get("DATABASE_PATH", "roborock.db"),
             timezone=_require_timezone(),
+            assistant_enabled=_get("ASSISTANT_ENABLED", "false").lower() == "true",
+            assistant_model=_get("ASSISTANT_MODEL", "sonnet"),
         )

@@ -29,6 +29,26 @@ from the robot's recorded path. A floating badge shows its current activity, inc
 washing/drying and returning to the dock. Scroll gently to zoom, drag to pan, and use
 **Reset view** to restore the centre and default zoom. Map refreshes preserve your view.
 
+Rooms shows carpet behavior beside cleaning mode and passes. Review the exact job before
+starting; the app reads cleaning and carpet settings back from the robot and refuses to
+start when they do not match. Rise includes carpets with the mop lifted; Avoid skips them.
+Ignore and Cross are documented Roborock modes but remain unavailable until their firmware
+commands are verified for this integration. The latest cleaning record reports completion,
+duration and area separately from the app's record of requested rooms.
+
+### Natural-language cleaning assistant
+
+Set `ASSISTANT_ENABLED=true` and optionally `ASSISTANT_MODEL=sonnet` in `.env`, then restart
+the server. Authenticate Claude Code as the user running the server, or configure
+`ANTHROPIC_API_KEY`. The Python Claude Agent SDK uses Sonnet to turn requests such as
+"Vacuum the kitchen including carpets twice" into a reviewable plan. Review and confirm
+the plan before the robot moves. Questions about previous cleans use recorded evidence;
+an app start request is never treated as proof that a room was completed.
+
+Your prompt, room names and recent cleaning records are sent to Claude when you ask.
+The assistant has no robot, filesystem, shell or MCP tools; requests are bounded by time,
+turn and cost limits. Manual controls work when the assistant is disabled or unavailable.
+
 The Sequences tab builds your own multi-step cleans. A Sequence is a named, ordered list of
 Steps, each a Clean with its own rooms, mode, and carpet setting, and each starting only once
 the robot is home from the last. For example: vacuum the two bathrooms with carpet Rise so the

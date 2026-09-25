@@ -29,10 +29,12 @@ from roborock_auto.adapters.sqlite import (
     SqliteOccurrences,
     SqliteRoomIntervals,
     SqliteScheduleRules,
+    SqliteSequences,
     apply_migrations,
     open_database,
 )
 from roborock_auto.domain.models import (
+    CarpetMode,
     CleanAction,
     CleaningMode,
     CleaningRun,
@@ -41,6 +43,9 @@ from roborock_auto.domain.models import (
     OccurrenceState,
     RoomInterval,
     ScheduleRule,
+    Sequence,
+    SequenceAction,
+    Step,
     Weekday,
     WeeklyGrid,
 )
@@ -697,3 +702,213 @@ async def test_outcome_writes_are_device_scoped(open_rules, open_occurrences):
     await theirs.mark_fired(1, FIRED_AT)
     await theirs.record_failed_attempt(1, at=FIRED_AT, reason="not yours", exhausted=True)
     assert await ours.list_occurrences() == [_occurrence(1, state=OccurrenceState.CLAIMED)]
+
+
+# --- Sequences, the Sequence Action, and migration 5 ---
+
+
+@pytest.fixture(params=["sqlite"])
+def open_sequences(request, tmp_path):
+    """Opens a Sequence store over one shared database file; call again to re-open."""
+    connections = []
+
+    def _open(device_id: str = "robot-1") -> SqliteSequences:
+        conn = open_database(str(tmp_path / "roborock.db"))
+        connections.append(conn)
+        return SqliteSequences(conn, device_id=device_id)
+
+    yield _open
+    for conn in connections:
+        conn.close()
+
+
+BATHROOMS_THEN_HOUSE = (
+    Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=(3, 5)),
+    Step(mode=CleaningMode.VAC_AND_MOP, carpet=CarpetMode.AVOID, segment_ids=None),
+)
+TWO_STAGE = (
+    Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=None),
+    Step(mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=None),
+)
+
+
+async def test_sequences_round_trip_exactly_with_assigned_identities(open_sequences):
+    store = open_sequences()
+    first = await store.create_sequence("Bathrooms then house", BATHROOMS_THEN_HOUSE)
+    second = await store.create_sequence("Two-stage", TWO_STAGE)
+    assert (first, second) == (
+        Sequence(id=1, name="Bathrooms then house", steps=BATHROOMS_THEN_HOUSE),
+        Sequence(id=2, name="Two-stage", steps=TWO_STAGE),
+    )
+    assert await store.list_sequences() == [first, second]
+    assert await store.get_sequence(2) == second
+    assert await store.get_sequence(99) is None
+
+
+async def test_replacing_a_sequence_reports_whether_it_was_there(open_sequences):
+    store = open_sequences()
+    created = await store.create_sequence("Bathrooms then house", BATHROOMS_THEN_HOUSE)
+    replacement = Sequence(id=created.id, name="Reordered", steps=TWO_STAGE[::-1])
+    assert await store.replace_sequence(replacement) is True
+    assert await store.list_sequences() == [replacement]
+    assert await store.replace_sequence(Sequence(id=99, name="x", steps=TWO_STAGE)) is False
+
+
+async def test_deleting_a_sequence_removes_it_and_never_reuses_its_id(open_sequences):
+    store = open_sequences()
+    await store.create_sequence("Two-stage", TWO_STAGE)
+    doomed = await store.create_sequence("Bathrooms then house", BATHROOMS_THEN_HOUSE)
+    assert await store.delete_sequence(doomed.id) is True
+    assert await store.delete_sequence(doomed.id) is False
+    assert await store.get_sequence(doomed.id) is None
+    fresh = await store.create_sequence("Fresh", TWO_STAGE)
+    assert await store.list_sequences() == [
+        Sequence(id=1, name="Two-stage", steps=TWO_STAGE),
+        Sequence(id=3, name="Fresh", steps=TWO_STAGE),
+    ]
+    assert fresh.id == 3
+
+
+async def test_sequences_are_device_scoped(open_sequences):
+    ours, theirs = open_sequences("robot-1"), open_sequences("robot-2")
+    created = await ours.create_sequence("Two-stage", TWO_STAGE)
+    assert await theirs.list_sequences() == []
+    assert await theirs.get_sequence(created.id) is None
+    assert await theirs.replace_sequence(created) is False
+    assert await theirs.delete_sequence(created.id) is False
+    assert await ours.list_sequences() == [created]
+
+
+async def test_reopening_keeps_the_sequences(open_sequences):
+    created = await open_sequences().create_sequence("Two-stage", TWO_STAGE)
+    assert await open_sequences().list_sequences() == [created]
+
+
+@pytest.mark.parametrize(
+    ("steps_json", "error", "match"),
+    [
+        ('[{"mode": "vacuum", "segment_ids": null}]', KeyError, "carpet"),
+        ('[{"mode": "vacuum", "carpet": "shag", "segment_ids": null}]', ValueError, "shag"),
+        (
+            '[{"mode": "vacuum", "carpet": "unknown", "segment_ids": null}]',
+            ValueError,
+            "rise or avoid",
+        ),
+        ('[{"mode": "vacuum", "carpet": "rise", "segment_ids": []}]', ValueError, "ambiguous"),
+        ("[]", ValueError, "at least one Step"),
+    ],
+)
+async def test_a_malformed_steps_payload_fails_loudly_on_read(
+    tmp_path, steps_json, error, match
+):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteSequences(conn, device_id="robot-1")
+    await store.create_sequence("Two-stage", TWO_STAGE)
+    conn.execute("UPDATE sequences SET steps_json = ?", (steps_json,))
+    conn.commit()
+    with pytest.raises(error, match=match):
+        await store.list_sequences()
+    with pytest.raises(error, match=match):
+        await store.get_sequence(1)
+    conn.close()
+
+
+async def test_a_rule_with_a_sequence_action_round_trips_exactly(open_rules):
+    store = open_rules()
+    created = await store.create_rule(**_weekday_mornings(action=SequenceAction(sequence_id=7)))
+    assert created == ScheduleRule(id=1, **_weekday_mornings(action=SequenceAction(7)))
+    assert await open_rules().list_rules() == [created]
+    replacement = ScheduleRule(id=1, **_weekday_mornings())
+    assert await store.replace_rule(replacement) is True
+    assert await store.list_rules() == [replacement]
+
+
+async def test_a_malformed_sequence_action_payload_fails_loudly_on_read(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteScheduleRules(conn, device_id="robot-1")
+    await store.create_rule(**_weekday_mornings(action=SequenceAction(sequence_id=7)))
+    conn.execute("UPDATE schedule_rules SET action_json = '{\"id\": 7}'")
+    conn.commit()
+    with pytest.raises(KeyError, match="sequence_id"):
+        await store.list_rules()
+    conn.close()
+
+
+_V4_RULES = [
+    # id, device_id, name, recurrence_type, recurrence_json, action_type, action_json,
+    # enabled, deleted. Ids have gaps on purpose: they must survive the rebuild as-is.
+    (
+        2, "robot-1", "Weekday mornings", "weekly_grid",
+        '{"days": ["monday"], "at": "09:30"}', "clean",
+        '{"mode": "vacuum", "segment_ids": [16, 17]}', 1, 0,
+    ),
+    (
+        5, "robot-1", "Old weekend", "weekly_grid",
+        '{"days": ["sunday"], "at": "11:00"}', "clean",
+        '{"mode": "mop", "segment_ids": null}', 0, 1,
+    ),
+    (
+        9, "robot-2", "Other robot", "weekly_grid",
+        '{"days": ["friday"], "at": "08:00"}', "clean",
+        '{"mode": "vac_and_mop", "segment_ids": null}', 1, 0,
+    ),
+]
+_V4_OCCURRENCES = [
+    # id, device_id, rule_id, scheduled_for, deadline, state, attempts, last_attempt_at,
+    # blocked_reason, fired_at
+    (
+        4, "robot-1", 2, "2026-08-23T23:30:00+00:00", "2026-08-24T05:30:00+00:00",
+        "fired", 0, None, None, "2026-08-23T23:30:00+00:00",
+    ),
+    (
+        6, "robot-1", 5, "2026-08-23T01:00:00+00:00", "2026-08-23T07:00:00+00:00",
+        "failed", 3, "2026-08-23T01:10:00+00:00", "the robot refused the clean", None,
+    ),
+    (
+        8, "robot-1", 2, "2026-08-30T23:30:00+00:00", "2026-08-31T05:30:00+00:00",
+        "pending", 0, None, None, None,
+    ),
+]
+
+
+async def test_migration_5_keeps_every_version_4_rule_and_occurrence_with_its_id(tmp_path):
+    path = str(tmp_path / "roborock.db")
+    conn = sqlite3.connect(path, autocommit=False)
+    apply_migrations(conn, MIGRATIONS[:4])
+    conn.executemany("INSERT INTO schedule_rules VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", _V4_RULES)
+    conn.executemany(
+        "INSERT INTO occurrences VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", _V4_OCCURRENCES
+    )
+    conn.commit()
+    conn.close()
+
+    conn = open_database(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("SELECT * FROM schedule_rules ORDER BY id").fetchall() == _V4_RULES
+    assert conn.execute("SELECT * FROM occurrences ORDER BY id").fetchall() == _V4_OCCURRENCES
+    rules = SqliteScheduleRules(conn, device_id="robot-1")
+    assert await rules.list_rules() == [
+        ScheduleRule(
+            id=2,
+            name="Weekday mornings",
+            recurrence=WeeklyGrid(days=frozenset({Weekday.MONDAY}), at=time(9, 30)),
+            action=CleanAction(mode=CleaningMode.VACUUM, segment_ids=(16, 17)),
+            enabled=True,
+        )
+    ]
+    # The widened CHECK admits the new Action type, and new rows continue after the ids.
+    created = await rules.create_rule(**_weekday_mornings(action=SequenceAction(1)))
+    assert created.id == 10
+    assert [
+        (o.id, o.rule_id, o.rule_name, o.state)
+        for o in await SqliteOccurrences(conn, device_id="robot-1").list_occurrences()
+    ] == [
+        (6, 5, "Old weekend", OccurrenceState.FAILED),
+        (4, 2, "Weekday mornings", OccurrenceState.FIRED),
+        (8, 2, "Weekday mornings", OccurrenceState.PENDING),
+    ]
+    sequences = SqliteSequences(conn, device_id="robot-1")
+    assert await sequences.create_sequence("Two-stage", TWO_STAGE) == Sequence(
+        id=1, name="Two-stage", steps=TWO_STAGE
+    )
+    conn.close()

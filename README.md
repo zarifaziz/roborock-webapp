@@ -40,6 +40,13 @@ Run the tests:
 uv run pytest
 ```
 
+Map browser regressions run against mocked requests in installed Google Chrome (no robot
+connection):
+
+```
+uv run --with playwright python tests/browser/map_interactions.py
+```
+
 ## Go live (needs your Roborock account)
 
 1. Set `GATEWAY=live` and `ROBOROCK_EMAIL` in `.env` (copy from `.env.example`).

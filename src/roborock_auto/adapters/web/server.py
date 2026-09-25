@@ -1,7 +1,7 @@
 """Driving adapter: FastAPI control panel over the ports.
 
-One shared gateway is created in the lifespan handler and reused across requests. The map
-PNG is only re-read when the parsed map data changes, so polling stays cheap.
+One shared gateway is created in the lifespan handler and reused across requests. Nearby
+map requests share a short-lived cache to avoid duplicate device reads.
 """
 
 from __future__ import annotations
@@ -98,6 +98,7 @@ async def lifespan(app: FastAPI):
     # One injected clock for everything that reads or writes a time, so a test can freeze it.
     app.state.now = utc_now
     app.state.map_cache = {"at": 0.0, "png": b""}
+    app.state.map_lock = asyncio.Lock()
     app.state.run_slot = RunSlot()
     app.state.run_slot.progress.update(_idle_progress())
     app.state.sequence_launcher = SequenceLauncher(
@@ -173,19 +174,21 @@ async def map_txt(request: Request):
     return await _gw(request).get_map_text()
 
 
-_MAP_TTL_SEC = 15.0  # the map is fetched at most this often, independent of status polling
+_MAP_TTL_SEC = 2.0
 
 
 @app.get("/map.png")
 async def map_png(request: Request):
-    # A map fetch holds the single device lock for seconds; refresh on a TTL so it does not
-    # queue behind every 5s status poll and slow down start/pause/dock.
+    # Coalesce concurrent viewers before they reach the shared device I/O lock. The TTL
+    # starts after completion so a slow fetch still gives queued commands breathing room.
     cache = request.app.state.map_cache
-    now = time.monotonic()
-    if not cache["png"] or now - cache["at"] >= _MAP_TTL_SEC:
-        cache["png"] = await _gw(request).get_map_png()
-        cache["at"] = now
-    return Response(content=cache["png"], media_type="image/png")
+    async with request.app.state.map_lock:
+        if not cache["png"] or time.monotonic() - cache["at"] >= _MAP_TTL_SEC:
+            cache["png"] = await _gw(request).get_map_png()
+            cache["at"] = time.monotonic()
+    return Response(
+        content=cache["png"], media_type="image/png", headers={"Cache-Control": "no-store"}
+    )
 
 
 @app.get("/rooms")

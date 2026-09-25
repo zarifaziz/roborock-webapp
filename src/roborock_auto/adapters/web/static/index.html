@@ -735,9 +735,9 @@
         <div class="map-head">
           <h2>Map</h2>
           <span class="map-badge" id="map-badge">⚠ placeholder — live map unavailable</span>
-          <button class="rotate-btn" id="map-reset" hidden onclick="resetZoom()" title="Reset zoom" aria-label="Reset map zoom and pan">
+          <button class="rotate-btn" id="map-reset" onclick="resetZoom()" title="Reset map zoom and centre" aria-label="Reset map view">
             <svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 1-5 5H1.5A6.5 6.5 0 1 0 8 1.5V0L4.5 3 8 6V3z"/></svg>
-            Reset
+            Reset view
           </button>
           <button class="rotate-btn" onclick="rotateMap()" title="Rotate map 90°">
             <svg viewBox="0 0 16 16"><path d="M8 3a5 5 0 1 0 5 5h-1.5A3.5 3.5 0 1 1 8 4.5V7l3.5-3L8 1v2z"/></svg>
@@ -1222,7 +1222,6 @@ function applyZoom() {
   zScale = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, zScale));
   [zTx, zTy] = clampPan(zTx, zTy);
   $("map-zoom").style.transform = `translate(${zTx}px, ${zTy}px) scale(${zScale})`;
-  $("map-reset").hidden = zScale === 1 && zTx === 0 && zTy === 0;
   // While zoomed the pointer pans the map, so touch scrolling must not fight it.
   stage.style.touchAction = zScale > 1 ? "none" : "";
   stage.style.cursor = zScale > 1 ? "grab" : "";
@@ -1259,22 +1258,12 @@ function initMapZoom() {
     return [e.clientX - r.left, e.clientY - r.top];
   };
 
-  // Trackpad pinch arrives as ctrl+wheel (cmd+wheel also zooms); plain wheel scrolls
-  // the page when unzoomed, and pans once zoomed — until the pan hits a clamp edge,
-  // where the event falls back through to page scroll.
+  // Wheel and trackpad pinch both zoom around the cursor; drag handles panning.
   stage.addEventListener("wheel", (e) => {
-    if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const [px, py] = local(e);
-      zoomAt(px, py, zScale * Math.exp(-e.deltaY * 0.01));
-      return;
-    }
-    if (zScale === 1) return;  // unzoomed plain wheel -> page scroll
-    const [nx, ny] = clampPan(zTx - e.deltaX, zTy - e.deltaY);
-    if (nx === zTx && ny === zTy) return;  // pinned at the clamp -> page scroll
     e.preventDefault();
-    zTx = nx; zTy = ny;
-    applyZoom();
+    const [px, py] = local(e);
+    const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? stage.clientHeight : 1;
+    zoomAt(px, py, zScale * Math.exp(-e.deltaY * unit * 0.01));
   }, { passive: false });
 
   stage.addEventListener("dblclick", (e) => {
@@ -1602,9 +1591,18 @@ function sizeMap() {
   applyZoom();  // stage size changed, so the pan clamp bounds did too
 }
 
+let mapLoading = false, mapRefreshTimer = null;
 function refreshMap() {
+  if (mapLoading) return;
+  clearTimeout(mapRefreshTimer);
+  mapLoading = true;
   const img = $("map");
-  img.onload = sizeMap;
+  const settled = () => {
+    mapLoading = false;
+    mapRefreshTimer = setTimeout(refreshMap, 3000);
+  };
+  img.onload = () => { sizeMap(); settled(); };
+  img.onerror = settled;
   img.src = "/map.png?t=" + Date.now();
 }
 
@@ -2542,7 +2540,7 @@ async function boot() {
   window.addEventListener("online", refreshStatus);
   setInterval(refreshStatus, 5000);
   setInterval(() => { if (!runTimer) pollRun(); }, 5000);
-  setInterval(refreshMap, 15000);  // matches the server-side map TTL
+  refreshMap();
   // Keep the schedule cards live (a firing shows up as it happens), but only while visible.
   setInterval(() => {
     if (document.querySelector('.panel[data-panel="schedule"]').classList.contains("active")) refreshSchedule();

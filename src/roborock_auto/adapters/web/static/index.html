@@ -1569,7 +1569,8 @@ function layoutMapLabels() {
 const CLEAN_MODE_LABELS = {vacuum: 'Vacuum', mop: 'Mop', vac_and_mop: 'Vacuum + mop', 'two-stage': 'Vacuum, then mop'};
 const CARPET_LABELS = {rise: 'Rise — include carpets, lift mop', avoid: 'Avoid — stay off carpet', ignore: 'Ignore — clean carpet normally', cross: 'Cross — cross carpet without cleaning'};
 let currentCarpetMode = null, plannedCarpetMode = null, supportedCarpetModes = [], carpetVerifiedAt = null;
-let pendingClean = null, cleanSubmitting = false, assistantPlan = null;
+let pendingClean = null, pendingAssistantPlan = null, cleanSubmitting = false, assistantPlan = null;
+let assistantRequest = 0;
 let lastMapAt = null, lastStatusAt = null;
 
 function cleaningDraft() {
@@ -1609,13 +1610,14 @@ function syncCleanBtn() {
   renderCleaningDraft();
   renderActionBar(lastStatus);
 }
-function runPrimary() {
+function runPrimary(assistantSource = null) {
   if (cleanSubmitting || twoStageRunning || lastStatus?.in_cleaning || lastStatus?.cleaning) return;
   const plan = cleaningDraft();
   if (!supportedCarpetModes.includes(plan.carpet) || (plan.mode === 'two-stage' && !supportedCarpetModes.includes('rise'))) {
     toast('Choose a supported carpet behavior before starting', true); showTab('rooms'); return;
   }
   pendingClean = plan;
+  pendingAssistantPlan = assistantSource;
   $('clean-review-details').innerHTML = cleanPlanRows(plan).map(([name,value]) => `<dt>${esc(name)}</dt><dd>${esc(value)}</dd>`).join('');
   $('clean-review-error').textContent = '';
   $('clean-review').showModal();
@@ -1625,7 +1627,7 @@ async function confirmClean() {
   cleanSubmitting = true;
   $('confirm-clean').disabled = true;
   $('clean-review-error').textContent = '';
-  const plan = pendingClean;
+  const plan = pendingClean, assistantSource = pendingAssistantPlan;
   $('confirm-clean').textContent = plan.mode === 'two-stage' ? 'Starting sequence…' : 'Checking settings…';
   const path = plan.mode === 'two-stage' ? '/clean/two-stage' : plan.segment_ids ? '/clean/segments' : '/start';
   const body = plan.mode === 'two-stage' ? (plan.segment_ids ? {segment_ids: plan.segment_ids} : {})
@@ -1638,7 +1640,16 @@ async function confirmClean() {
     $('clean-request-feedback').textContent = plan.mode === 'two-stage'
       ? 'Two-stage requested. Each stage checks its settings before cleaning.' : 'Settings verified. Clean requested.';
     if (plan.mode !== 'two-stage') { currentCarpetMode = plan.carpet; carpetVerifiedAt = Date.now(); }
+    if (assistantSource && assistantSource === assistantPlan) {
+      assistantRequest++;
+      assistantPlan = null;
+      $('assistant-message').value = '';
+      $('assistant-response').textContent = '';
+      $('assistant-review').hidden = true;
+      $('assistant-ask').disabled = false;
+    }
     pendingClean = null;
+    pendingAssistantPlan = null;
     $('clean-review').close();
     showTab('clean');
     renderCleaningDraft();
@@ -1688,6 +1699,7 @@ async function loadAssistantStatus() {
 async function askAssistant() {
   const message = $('assistant-message').value.trim();
   if (!message) return;
+  const request = ++assistantRequest;
   assistantPlan = null;
   $('assistant-review').hidden = true;
   $('assistant-ask').disabled = true;
@@ -1695,6 +1707,7 @@ async function askAssistant() {
   try {
     const response = await fetch('/assistant', {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({prompt: message})});
     const data = await response.json().catch(() => ({}));
+    if (request !== assistantRequest) return;
     if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Assistant temporarily unavailable. You can use the room controls.');
     $('assistant-response').textContent = data.message;
     if (data.kind === 'plan' && data.plan) {
@@ -1702,8 +1715,11 @@ async function askAssistant() {
       $('assistant-response').textContent += '\n\n' + cleanPlanRows(data.plan).map(([name,value]) => `${name}: ${value}`).join('\n');
       $('assistant-review').hidden = false;
     }
-  } catch (error) { $('assistant-response').textContent = error.message; }
-  finally { $('assistant-ask').disabled = false; }
+  } catch (error) {
+    if (request === assistantRequest) $('assistant-response').textContent = error.message;
+  } finally {
+    if (request === assistantRequest) $('assistant-ask').disabled = false;
+  }
 }
 function reviewAssistantPlan() {
   if (!assistantPlan) return;
@@ -1725,7 +1741,7 @@ function reviewAssistantPlan() {
   document.querySelectorAll('#seg-room-mode button, #seg-passes button').forEach(button => button.setAttribute('aria-pressed', String(button.classList.contains('active'))));
   plannedCarpetMode = plan.carpet;
   syncCleanBtn();
-  runPrimary();
+  runPrimary(plan);
 }
 async function refreshRecentCleaning() {
   try {
@@ -1907,6 +1923,7 @@ async function refreshStatusOnce() {
 
   // Live clean telemetry, only while a job is active (matches the phone app).
   const jobActive = s.cleaning || s.in_cleaning;
+  if (jobActive) $('clean-request-feedback').textContent = '';
   const haveStats = s.clean_area_m2 != null || s.clean_time_s != null;
   $("clean-stats").classList.toggle("show", jobActive && haveStats);
   $("cs-area").textContent = s.clean_area_m2 != null ? s.clean_area_m2 + " m²" : "—";

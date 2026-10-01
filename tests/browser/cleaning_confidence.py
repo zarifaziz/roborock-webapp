@@ -82,6 +82,165 @@ class CleaningConfidence(unittest.IsolatedAsyncioTestCase):
         await self.page.locator('#cancel-clean-review').click()
         self.assertFalse(await self.page.locator('#clean-review').is_visible())
 
+    async def assistant_proposal(self):
+        await self.load_controls()
+        await self.page.get_by_role('button', name='Clean', exact=True).first.click()
+        plan = {"segment_ids": [16], "mode": "vacuum", "carpet": "rise", "repeat": 1}
+        reply = {"kind": "plan", "message": "Vacuum the Study once, including carpets.", "plan": plan}
+        await self.page.route('**/assistant', lambda route: route.fulfill(
+            content_type='application/json', body=json.dumps(reply)))
+        await self.page.locator('#assistant-message').fill('Vacuum study including carpets')
+        await self.page.locator('#assistant-ask').click()
+        await self.page.wait_for_function("!document.getElementById('assistant-review').hidden")
+        return {
+            "prompt": "Vacuum study including carpets",
+            "response": "Vacuum the Study once, including carpets.\n\nRooms: Study\nMode: Vacuum\nCarpet: Rise — include carpets, lift mop\nPasses: 1 per room",
+            "plan": plan,
+            "reviewHidden": False,
+        }
+
+    async def assistant_snapshot(self):
+        return await self.page.evaluate("""() => ({
+          prompt:document.getElementById('assistant-message').value,
+          response:document.getElementById('assistant-response').textContent,
+          plan:assistantPlan,
+          reviewHidden:document.getElementById('assistant-review').hidden
+        })""")
+
+    async def test_confirmed_assistant_clean_consumes_proposal_and_stays_cleared_after_run(self):
+        proposal = await self.assistant_proposal()
+        self.assertEqual(await self.assistant_snapshot(), proposal)
+        sent = []
+
+        async def command(route):
+            sent.append(route.request.post_data_json)
+            await route.fulfill(content_type='application/json', body='{"ok":true}')
+
+        await self.page.route('**/clean/segments', command)
+        await self.page.locator('#assistant-review').click()
+        await self.page.locator('#confirm-clean').click()
+        await self.page.wait_for_function("!document.getElementById('clean-review').open")
+        states = [await self.assistant_snapshot()]
+        await self.status_response(state_name='cleaning', docked=False, cleaning=True, in_cleaning=True, drying_mop=False)
+        states.append(await self.assistant_snapshot())
+        await self.status_response(drying_mop=False)
+        states.append(await self.assistant_snapshot())
+        cleared = {"prompt": "", "response": "", "plan": None, "reviewHidden": True}
+        self.assertEqual(states, [cleared, cleared, cleared])
+        self.assertEqual(sent, [{"segment_ids": [16], "mode": "vacuum", "carpet_mode": "rise", "repeat": 1}])
+
+    async def test_cancelled_or_rejected_assistant_clean_preserves_proposal(self):
+        proposal = await self.assistant_proposal()
+        await self.page.locator('#assistant-review').click()
+        await self.page.locator('#cancel-clean-review').click()
+        self.assertEqual(await self.assistant_snapshot(), proposal)
+        await self.page.route('**/clean/segments', lambda route: route.fulfill(
+            status=409, content_type='application/json',
+            body='{"detail":"Carpet setting was not applied; clean not started"}'))
+        await self.page.locator('#assistant-review').click()
+        await self.page.locator('#confirm-clean').click()
+        await self.page.wait_for_function("!cleanSubmitting")
+        self.assertEqual(await self.assistant_snapshot(), proposal)
+        self.assertEqual(await self.page.locator('#clean-review-error').inner_text(),
+                         'Carpet setting was not applied; clean not started')
+        self.assertTrue(await self.page.locator('#clean-review').is_visible())
+
+    async def test_returning_to_dock_without_record_does_not_claim_completion(self):
+        await self.assistant_proposal()
+        await self.page.route('**/clean/segments', lambda route: route.fulfill(
+            content_type='application/json', body='{"ok":true}'))
+        await self.page.route('**/cleaning/recent', lambda route: route.fulfill(
+            content_type='application/json', body=json.dumps({
+                "last_record": None, "record_available": False,
+                "record_stale": False, "recent_requests": [],
+            })))
+        await self.page.locator('#assistant-review').click()
+        await self.page.locator('#confirm-clean').click()
+        await self.page.wait_for_function("!document.getElementById('clean-review').open")
+        await self.status_response(state_name='cleaning', docked=False, cleaning=True, in_cleaning=True, drying_mop=False)
+        await self.status_response(drying_mop=False)
+        await self.page.evaluate('refreshRecentCleaning()')
+        self.assertEqual(await self.page.evaluate("""() => ({
+          record:document.getElementById('recent-clean-record').textContent,
+          dock:document.getElementById('recent-clean-dock').textContent,
+          active:activeClean
+        })"""), {"record": "No completion record available.", "dock": "Robot now: Charging", "active": None})
+
+    async def test_start_feedback_clears_only_after_cleaning_is_observed(self):
+        await self.assistant_proposal()
+        await self.page.route('**/clean/segments', lambda route: route.fulfill(
+            content_type='application/json', body='{"ok":true}'))
+        await self.page.locator('#assistant-review').click()
+        await self.page.locator('#confirm-clean').click()
+        await self.page.wait_for_function("!document.getElementById('clean-review').open")
+        feedback = self.page.locator('#clean-request-feedback')
+        states = [await feedback.inner_text()]
+        await self.status_response(drying_mop=False)
+        states.append(await feedback.inner_text())
+        await self.status_response(state_name='cleaning', docked=False, cleaning=True, in_cleaning=True, drying_mop=False)
+        states.append(await feedback.inner_text())
+        await self.status_response(drying_mop=False)
+        states.append(await feedback.inner_text())
+        self.assertEqual(states, ['Settings verified. Clean requested.', 'Settings verified. Clean requested.', '', ''])
+
+    async def test_manual_clean_preserves_unrelated_assistant_proposal(self):
+        proposal = await self.assistant_proposal()
+        await self.page.route('**/start', lambda route: route.fulfill(
+            content_type='application/json', body='{"ok":true}'))
+        await self.page.get_by_role('button', name='Rooms', exact=True).click()
+        await self.page.locator('#seg-room-mode [data-v="vacuum"]').click()
+        await self.page.locator('#two-stage-btn').click()
+        await self.page.locator('#confirm-clean').click()
+        await self.page.wait_for_function("!document.getElementById('clean-review').open")
+        self.assertEqual(await self.assistant_snapshot(), proposal)
+
+    async def test_old_confirmed_proposal_preserves_new_assistant_answer(self):
+        await self.assistant_proposal()
+        await self.page.locator('#assistant-review').click()
+        await self.page.route('**/assistant', lambda route: route.fulfill(
+            content_type='application/json', body=json.dumps({
+                "kind": "answer", "message": "No completion record available.", "plan": None,
+            })))
+        await self.page.evaluate("document.getElementById('assistant-message').value='What happened last time?'; askAssistant()")
+        await self.page.route('**/clean/segments', lambda route: route.fulfill(
+            content_type='application/json', body='{"ok":true}'))
+        await self.page.locator('#confirm-clean').click()
+        await self.page.wait_for_function("!document.getElementById('clean-review').open")
+        self.assertEqual(await self.assistant_snapshot(), {
+            "prompt": "What happened last time?", "response": "No completion record available.",
+            "plan": None, "reviewHidden": True,
+        })
+
+    async def test_older_assistant_response_cannot_replace_newer_question(self):
+        await self.load_controls()
+        await self.page.get_by_role('button', name='Clean', exact=True).first.click()
+        received, release = asyncio.Event(), asyncio.Event()
+
+        async def assistant_reply(route):
+            if route.request.post_data_json['prompt'] == 'Vacuum the Study':
+                received.set()
+                await release.wait()
+                reply = {"kind": "plan", "message": "Old proposal", "plan": {
+                    "segment_ids": [16], "mode": "vacuum", "carpet": "rise", "repeat": 1,
+                }}
+            else:
+                reply = {"kind": "answer", "message": "No completion record available.", "plan": None}
+            await route.fulfill(content_type='application/json', body=json.dumps(reply))
+
+        await self.page.route('**/assistant', assistant_reply)
+        await self.page.evaluate("document.getElementById('assistant-message').value='Vacuum the Study'; window.oldAssistantRequest=askAssistant(); void 0")
+        await received.wait()
+        try:
+            await self.page.evaluate("document.getElementById('assistant-message').value='What happened last time?'; askAssistant()")
+        finally:
+            release.set()
+        await self.page.evaluate('window.oldAssistantRequest')
+        self.assertEqual(await self.assistant_snapshot(), {
+            "prompt": "What happened last time?", "response": "No completion record available.",
+            "plan": None, "reviewHidden": True,
+        })
+        self.assertFalse(await self.page.locator('#assistant-ask').is_disabled())
+
     async def test_setting_mismatch_keeps_review_open_without_success(self):
         await self.load_controls()
         await self.page.locator('#rooms .chip[data-id="16"]').click()

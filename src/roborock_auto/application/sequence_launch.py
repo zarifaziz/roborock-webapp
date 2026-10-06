@@ -23,10 +23,22 @@ from roborock_auto.application.sequence_runner import (
 )
 from roborock_auto.application.start_clean import utc_now
 from roborock_auto.config import Config
-from roborock_auto.domain.models import CleanSource, Sequence
+from roborock_auto.domain.models import CleanSource, Step
 from roborock_auto.ports.cleaning_log import CleaningLogPort
 
 OnEnd = Callable[[Exception | None], Awaitable[None]]
+
+
+def step_body(step: Step) -> dict:
+    """The one wire shape of a Step, shared by the Sequence and Up next endpoints and by
+    run progress, so the UI renders a Step the same way wherever it appears."""
+    return {
+        "mode": step.mode.value,
+        "carpet": step.carpet.value,
+        "segment_ids": None if step.segment_ids is None else list(step.segment_ids),
+        "repeat": step.repeat,
+    }
+
 
 _PHASE_LABELS = {
     Phase.SETTING_UP: "setting carpet and cleaning mode",
@@ -60,27 +72,32 @@ class SequenceLauncher:
 
     def launch(
         self,
-        sequence: Sequence,
+        steps: tuple[Step, ...],
         *,
+        name: str,
+        sequence_id: int | None,
         source: CleanSource,
         on_first_departure: Callable[[], Awaitable[None]] | None = None,
         on_end: OnEnd | None = None,
     ) -> asyncio.Task:
-        """Run `sequence` as a background task. The caller has already acquired the
-        slot; the run releases it when it ends. `on_end` receives the error that ended
-        the run (RunCancelled for a cancel), or None on success."""
+        """Run `steps` as a background task under `name`. `sequence_id` names the saved
+        Sequence the Steps came from, or None for an ad-hoc run from Up next. The caller
+        has already acquired the slot; the run releases it when it ends. `on_end`
+        receives the error that ended the run (RunCancelled for a cancel), or None on
+        success."""
         slot = self._slot
         progress = slot.progress
-        count = len(sequence.steps)
+        count = len(steps)
         progress.update(
             stage="running",
             message=f"Step 1 of {count}: {_PHASE_LABELS[Phase.SETTING_UP]}",
             error=None,
-            sequence_id=sequence.id,
-            sequence_name=sequence.name,
+            sequence_id=sequence_id,
+            sequence_name=name,
             source=source.value,
             step=0,
             step_count=count,
+            steps=[step_body(step) for step in steps],
             phase=Phase.SETTING_UP.value,
         )
 
@@ -103,7 +120,7 @@ class SequenceLauncher:
             try:
                 await run_sequence(
                     self._gw,
-                    sequence.steps,
+                    steps,
                     self._config,
                     cleaning_log=self._cleaning_log,
                     source=source,

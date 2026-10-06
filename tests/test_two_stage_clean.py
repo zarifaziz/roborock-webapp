@@ -382,7 +382,7 @@ class _DropFirstDepartRobot(FakeRobot):
         super().__init__(clock=clock)
         self._drops_left = drops
 
-    async def clean_rooms(self, segment_ids):
+    async def clean_rooms(self, segment_ids, repeat=1):
         self.commands.append(("clean_rooms", tuple(segment_ids)))
         if self._drops_left > 0:
             self._drops_left -= 1

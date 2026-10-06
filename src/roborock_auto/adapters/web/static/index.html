@@ -525,7 +525,10 @@
   .pill.warn { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
   .pill.bad { background: color-mix(in srgb, var(--critical) 13%, transparent); color: var(--critical); }
   #overdue-btn:disabled { opacity: 0.45; cursor: default; transform: none; box-shadow: var(--shadow-sm); }
+  .card-head { display: flex; align-items: center; gap: 10px; }
+  .card-head h2 { margin: 0; flex: 1; }
   .form-row { display: flex; gap: 10px; align-items: flex-end; }
+  .form-row .btn[hidden] { display: none; }
   .form-row .field { flex: 1; min-width: 0; }
   .form-row .btn { width: auto; flex-shrink: 0; }
   .days { display: flex; gap: 5px; }
@@ -812,6 +815,9 @@
         <button class="round-action" id="stop-action" hidden onclick="cmd('/stop')" title="Stop the current job">
           <svg viewBox="0 0 16 16"><path d="M3 3h10v10H3z"/></svg>Stop
         </button>
+        <button class="round-action" id="queue-action" hidden onclick="queueDraft()" title="Add this clean to Up next; it starts once the robot is home">
+          <svg viewBox="0 0 16 16"><path d="M1 3h9v2H1zM1 7h9v2H1zM1 11h6v2H1zM12 8h2v2h2v2h-2v2h-2v-2h-2v-2h2z"/></svg>Queue
+        </button>
         <button class="round-action" id="dock-action" onclick="cmd('/dock')" title="Dock">
           <svg viewBox="0 0 16 16"><path d="M8 1 1 7h2v7h4v-4h2v4h4V7h2z"/></svg>Dock
         </button>
@@ -875,6 +881,16 @@
           <div class="battery">
             <div class="meter-row"><b>Battery</b><span><span id="s-battery">—</span><span class="low" id="s-low" hidden>low</span></span></div>
             <div class="meter"><i id="battery-bar" style="width:0%"></i></div>
+          </div>
+        </div>
+
+        <div class="card" id="queue-card" hidden>
+          <div class="card-head"><h2>Up next</h2><span class="pill" id="queue-pill"></span></div>
+          <p class="note" id="queue-note"></p>
+          <div class="sched-list" id="queue-list"></div>
+          <div class="form-row" style="margin-top: 12px">
+            <button class="btn primary" id="queue-resume" hidden onclick="resumeQueue()" title="Let Up next start again once the robot is home">Resume</button>
+            <button class="btn" onclick="clearQueue()" title="Forget everything in Up next">Clear</button>
           </div>
         </div>
 
@@ -1153,7 +1169,7 @@
 <dialog id="clean-review" aria-labelledby="clean-review-title">
   <h2 id="clean-review-title">Review your clean</h2>
   <dl id="clean-review-details"></dl>
-  <p class="note">Settings are checked on the robot before movement starts.</p>
+  <p class="note" id="clean-review-note">Settings are checked on the robot before movement starts.</p>
   <p id="clean-review-error" role="alert"></p>
   <div class="review-actions"><button class="btn" id="cancel-clean-review" onclick="document.getElementById('clean-review').close()">Cancel</button>
   <button class="btn primary" id="confirm-clean" onclick="confirmClean()">Confirm and start</button></div>
@@ -1212,7 +1228,7 @@ async function post(path, body, okMsg) {
 function liveConfirm(msg) { return authMode !== "live" || window.confirm(msg); }
 const cmd = (path) => {
   if (path === "/start" && !liveConfirm("Start cleaning the WHOLE floor now?")) return;
-  return post(path, {}, path.slice(1) + " sent");
+  return post(path, {}, path.slice(1) + " sent").then((ok) => { if (ok) refreshQueue(); return ok; });
 };
 
 /* ---------- segmented settings ---------- */
@@ -1612,6 +1628,14 @@ function syncCleanBtn() {
 }
 function runPrimary(assistantSource = null) {
   if (cleanSubmitting || twoStageRunning || lastStatus?.in_cleaning || lastStatus?.cleaning) return;
+  openCleanReview(assistantSource, false);
+}
+// The Queue button: the same review, but the clean waits in Up next instead of starting.
+function queueDraft() {
+  if (cleanSubmitting) return;
+  openCleanReview(null, true);
+}
+function openCleanReview(assistantSource, queue) {
   const plan = cleaningDraft();
   if (!supportedCarpetModes.includes(plan.carpet) || (plan.mode === 'two-stage' && !supportedCarpetModes.includes('rise'))) {
     toast('Choose a supported carpet behavior before starting', true); showTab('rooms'); return;
@@ -1620,7 +1644,52 @@ function runPrimary(assistantSource = null) {
   pendingAssistantPlan = assistantSource;
   $('clean-review-details').innerHTML = cleanPlanRows(plan).map(([name,value]) => `<dt>${esc(name)}</dt><dd>${esc(value)}</dd>`).join('');
   $('clean-review-error').textContent = '';
+  setReviewMode(queue);
   $('clean-review').showModal();
+}
+let reviewQueues = false;  // true: the dialog's confirm adds to Up next rather than starting
+function setReviewMode(queue) {
+  reviewQueues = queue;
+  $('clean-review-title').textContent = queue ? 'Add to Up next' : 'Review your clean';
+  $('clean-review-note').textContent = queue
+    ? 'Starts once the robot is home and idle. You can reorder or remove it any time.'
+    : 'Settings are checked on the robot before movement starts.';
+  $('confirm-clean').textContent = queue ? 'Add to Up next' : 'Confirm and start';
+}
+// The Two-stage preset's Steps are built on the server, so a queued one cannot drift from
+// the one the button starts; anything else is the single Step the user described.
+function queueRequest(plan) {
+  const label = planLabel(plan);
+  if (plan.mode === 'two-stage') return {label, preset: 'two-stage', segment_ids: plan.segment_ids};
+  return {label, steps: [{mode: plan.mode, carpet: plan.carpet, segment_ids: plan.segment_ids, repeat: plan.repeat}]};
+}
+function planLabel(plan) {
+  const [rooms, mode] = cleanPlanRows(plan);
+  const passes = plan.mode !== 'two-stage' && plan.segment_ids && plan.repeat > 1 ? ` · ${plan.repeat} passes` : '';
+  return `${rooms[1]} · ${mode[1]}${passes}`;
+}
+async function queueClean(plan, assistantSource) {
+  const res = await api('/queue', 'POST', queueRequest(plan));
+  if (!res.ok) throw new Error(res.detail);
+  $('clean-request-feedback').textContent = 'Added to Up next. It starts once the robot is home.';
+  consumeAssistantPlan(assistantSource);
+  pendingClean = null;
+  pendingAssistantPlan = null;
+  $('clean-review').close();
+  showTab('clean');
+  toast('Added to Up next');
+  await refreshQueue();
+  $('queue-card').scrollIntoView({behavior: 'smooth', block: 'nearest'});
+}
+// A proposal the user acted on (started or queued) is spent; it must not be confirmable twice.
+function consumeAssistantPlan(assistantSource) {
+  if (!assistantSource || assistantSource !== assistantPlan) return;
+  assistantRequest++;
+  assistantPlan = null;
+  $('assistant-message').value = '';
+  $('assistant-response').textContent = '';
+  $('assistant-review').hidden = true;
+  $('assistant-ask').disabled = false;
 }
 async function confirmClean() {
   if (!pendingClean || cleanSubmitting) return;
@@ -1628,26 +1697,26 @@ async function confirmClean() {
   $('confirm-clean').disabled = true;
   $('clean-review-error').textContent = '';
   const plan = pendingClean, assistantSource = pendingAssistantPlan;
-  $('confirm-clean').textContent = plan.mode === 'two-stage' ? 'Starting sequence…' : 'Checking settings…';
-  const path = plan.mode === 'two-stage' ? '/clean/two-stage' : plan.segment_ids ? '/clean/segments' : '/start';
-  const body = plan.mode === 'two-stage' ? (plan.segment_ids ? {segment_ids: plan.segment_ids} : {})
-    : {mode: plan.mode, carpet_mode: plan.carpet, ...(plan.segment_ids ? {segment_ids: plan.segment_ids, repeat: plan.repeat} : {})};
   try {
+    if (reviewQueues) { await queueClean(plan, assistantSource); return; }
+    $('confirm-clean').textContent = plan.mode === 'two-stage' ? 'Starting sequence…' : 'Checking settings…';
+    const path = plan.mode === 'two-stage' ? '/clean/two-stage' : plan.segment_ids ? '/clean/segments' : '/start';
+    const body = plan.mode === 'two-stage' ? (plan.segment_ids ? {segment_ids: plan.segment_ids} : {})
+      : {mode: plan.mode, carpet_mode: plan.carpet, ...(plan.segment_ids ? {segment_ids: plan.segment_ids, repeat: plan.repeat} : {})};
     const response = await fetch(path, {method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
     const data = await response.json().catch(() => ({}));
+    if (response.status === 409 && robotBusy()) {
+      // The robot got busy between the tap and the confirm: offer the wait instead of a dead
+      // end. Only then: a settings refusal is also a 409, and that plan must not be queued.
+      setReviewMode(true);
+      throw new Error(`${typeof data.detail === 'string' ? data.detail : 'The robot is busy'}. Add it to Up next instead?`);
+    }
     if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'Could not confirm the start. Check robot status before retrying.');
     setActiveClean(plan.segment_ids || [], plan.repeat, !plan.segment_ids);
     $('clean-request-feedback').textContent = plan.mode === 'two-stage'
       ? 'Two-stage requested. Each stage checks its settings before cleaning.' : 'Settings verified. Clean requested.';
     if (plan.mode !== 'two-stage') { currentCarpetMode = plan.carpet; carpetVerifiedAt = Date.now(); }
-    if (assistantSource && assistantSource === assistantPlan) {
-      assistantRequest++;
-      assistantPlan = null;
-      $('assistant-message').value = '';
-      $('assistant-response').textContent = '';
-      $('assistant-review').hidden = true;
-      $('assistant-ask').disabled = false;
-    }
+    consumeAssistantPlan(assistantSource);
     pendingClean = null;
     pendingAssistantPlan = null;
     $('clean-review').close();
@@ -1661,7 +1730,7 @@ async function confirmClean() {
   } finally {
     cleanSubmitting = false;
     $('confirm-clean').disabled = false;
-    $('confirm-clean').textContent = 'Confirm and start';
+    $('confirm-clean').textContent = reviewQueues ? 'Add to Up next' : 'Confirm and start';
   }
 }
 function renderFreshness() {
@@ -1830,6 +1899,8 @@ function renderActionBar(s) {
   const active = !!s && !paused && (s.cleaning || s.in_cleaning);
   $("stop-action").hidden = !active && !paused;
   $("dock-action").disabled = !!s && s.docked && !active && !paused;
+  // Queue is offered whenever a clean could not start right now, or a list already exists.
+  $("queue-action").hidden = !(active || paused || twoStageRunning || (lastQueue && lastQueue.entries.length));
   if (active) {
     setOrb("pause", "Pause", "cleaning…", () => post("/pause", {}, "pause sent"), "Pause the current job");
     orb.disabled = false;
@@ -1915,6 +1986,7 @@ async function refreshStatusOnce() {
   renderFreshness();
   setRobotActivity(activityForStatus(s));
   renderActionBar(s);
+  syncSequenceButtons();
 
   // Dock/tank problems (empty clean-water tank, full waste-water tank, ...).
   const db = $("dock-banner");
@@ -2131,7 +2203,9 @@ let lastRun = null;  // latest RunSlot progress, shared by the Clean and Sequenc
 // One RunSlot serves both the Two-Stage Clean and Sequences, and both status endpoints
 // read the same progress. Only a Sequence run writes sequence_id, so that key alone
 // decides which card owns the progress; the other card stands aside.
-const isSequenceRun = (st) => !!st && st.sequence_id != null;
+// A run the launcher started (a Sequence or an Up next entry) carries its Steps; the
+// Two-Stage Clean endpoint writes its own stage tokens and nothing else.
+const isSequenceRun = (st) => !!st && st.step_count != null;
 
 function renderTwoStage(st) {
   $("two-stage-card").hidden = roomMode() !== "two-stage" && !st.running;
@@ -2145,7 +2219,7 @@ function renderTwoStage(st) {
     el.classList.toggle("done", done);
   });
   $("two-stage-message").textContent = seq && st.running
-    ? `Sequence "${st.sequence_name}" is running · ${st.message}` : own.message || "";
+    ? `Running "${st.sequence_name}" · ${st.message}` : own.message || "";
   $("two-stage-see-seq").hidden = !(seq && st.running);
   $("two-stage-cancel").hidden = !own.running;
   const err = $("two-stage-error");
@@ -2161,7 +2235,7 @@ function renderRun(st) {
   // Any run in the slot blocks another start, so the orb and Run buttons wait for it.
   twoStageRunning = !!st.running;
   renderActionBar(lastStatus);
-  document.querySelectorAll(".seq-run-btn").forEach((b) => (b.disabled = twoStageRunning));
+  syncSequenceButtons();
   renderTwoStage(st);
   renderSequenceRun(st);
   if (st.error && st.error !== lastRunError) toast(st.error, true);
@@ -2199,6 +2273,73 @@ async function cancelTwoStage() {
   // The run winds down (dock + carpet restore) within a beat; the poller resets the strip
   // and re-enables the orb once the status flips to cancelled.
   pollRun();
+}
+
+/* ---------- Up next ---------- */
+let lastQueue = null;  // latest /queue payload; the action bar and Sequences tab read it
+// Busy means a clean cannot start now: the robot is out or paused, or a run holds the slot.
+function robotBusy() {
+  const s = lastStatus;
+  return twoStageRunning || !!(s && (s.cleaning || s.in_cleaning || s.state_name === "paused"));
+}
+async function refreshQueue() {
+  const res = await api("/queue");
+  if (!res.ok) return;
+  lastQueue = res.data;
+  renderQueue(lastQueue);
+  renderActionBar(lastStatus);
+}
+// The Sequence cards' Run / Add to Up next buttons follow busy; rebuilt only when it flips,
+// since a rebuild every poll would drop focus and swallow a click in progress.
+let sequencesRenderedBusy = null;
+function syncSequenceButtons() {
+  const busy = robotBusy();
+  if (busy === sequencesRenderedBusy || !sequencesCache.length) return;
+  renderSequences();
+}
+function renderQueue(q) {
+  const card = $("queue-card");
+  const n = q.entries.length;
+  card.hidden = n === 0;
+  if (!n) return;
+  $("queue-pill").className = "pill " + (q.held ? "warn" : "on");
+  $("queue-pill").textContent = q.held ? "on hold" : plural(n, "clean");
+  $("queue-resume").hidden = !q.held;
+  $("queue-note").textContent = q.held
+    ? `On hold: ${q.hold_reason}. Resume when you want the robot to carry on.`
+    : q.waiting_for ? `Starts once the robot is home and idle (${q.waiting_for}).`
+    : "Starts once the robot is home and idle.";
+  $("queue-list").innerHTML = q.entries.map((e, i) => `<div class="sched-row" data-id="${e.id}">
+      <div class="row-top"><b>${i + 1}. ${esc(e.label)}</b>
+        <button class="reset-btn" data-act="up" title="Move earlier" aria-label="Move ${esc(e.label)} earlier" ${i === 0 ? "disabled" : ""}>↑</button>
+        <button class="reset-btn" data-act="down" title="Move later" aria-label="Move ${esc(e.label)} later" ${i === n - 1 ? "disabled" : ""}>↓</button>
+        <button class="reset-btn" data-act="remove" title="Remove from Up next" aria-label="Remove ${esc(e.label)}">Remove</button>
+      </div>
+      ${e.steps.length > 1 ? e.steps.map((step, j) => `<div class="sched-sub">${j + 1}. ${esc(stepSummary(step))}</div>`).join("") : ""}
+    </div>`).join("");
+}
+async function onQueueClick(e) {
+  const row = e.target.closest(".sched-row");
+  const btn = e.target.closest("button");
+  if (!row || !btn || btn.disabled || !lastQueue) return;
+  const id = Number(row.dataset.id);
+  const index = lastQueue.entries.findIndex((x) => x.id === id);
+  const act = btn.dataset.act;
+  const res = act === "remove" ? await api(`/queue/${id}`, "DELETE")
+    : await api(`/queue/${id}/move`, "POST", { to: act === "up" ? index - 1 : index + 1 });
+  if (!res.ok) toast(res.detail, true);
+  refreshQueue();
+}
+async function resumeQueue() {
+  const res = await api("/queue/resume", "POST");
+  if (!res.ok) toast(res.detail, true); else toast("Up next will carry on once the robot is home");
+  refreshQueue();
+}
+async function clearQueue() {
+  if (!liveConfirm("Forget everything in Up next?")) return;
+  const res = await api("/queue/clear", "POST");
+  if (!res.ok) toast(res.detail, true); else toast("Up next cleared");
+  refreshQueue();
 }
 
 /* ---------- schedule ---------- */
@@ -2534,7 +2675,8 @@ function sequenceName(id) {
 // "Vacuum · Bathroom, Bathroom1 · carpet Rise" — segment_ids null means the whole house.
 function stepSummary(step) {
   const where = step.segment_ids == null ? "Whole house" : step.segment_ids.map(roomName).join(", ");
-  return `${STEP_MODE_WORDS[step.mode] || step.mode} · ${where} · carpet ${CARPET_WORDS[step.carpet] || step.carpet}`;
+  const passes = step.repeat > 1 ? ` · ${step.repeat} passes` : "";
+  return `${STEP_MODE_WORDS[step.mode] || step.mode} · ${where} · carpet ${CARPET_WORDS[step.carpet] || step.carpet}${passes}`;
 }
 
 async function refreshSequences() {
@@ -2557,12 +2699,15 @@ function renderSequences() {
       </div>`;
     return;
   }
-  const busy = !!(lastRun && lastRun.running);
+  const busy = robotBusy();
+  sequencesRenderedBusy = busy;
   el.innerHTML = sequencesCache.map((q) => `<div class="sched-row">
       <div class="row-top"><b>${esc(q.name)}</b><span class="pill">${plural(q.steps.length, "step")}</span></div>
       ${q.steps.map((step, i) => `<div class="sched-sub">${i + 1}. ${esc(stepSummary(step))}</div>`).join("")}
       <div class="row-top" style="margin-top: 2px">
-        <button class="reset-btn go seq-run-btn" title="Run this Sequence now" onclick="runSequence(${q.id})" ${busy ? "disabled" : ""}>Run</button>
+        ${busy
+          ? `<button class="reset-btn go seq-run-btn" title="Add this Sequence to Up next; it starts once the robot is home" onclick="queueSequence(${q.id})">Add to Up next</button>`
+          : `<button class="reset-btn go seq-run-btn" title="Run this Sequence now" onclick="runSequence(${q.id})">Run</button>`}
         <button class="reset-btn" title="Edit this Sequence" onclick="editSequence(${q.id})">Edit</button>
         <button class="reset-btn" title="Delete this Sequence" onclick="deleteSequence(${q.id})">Delete</button>
       </div>
@@ -2742,6 +2887,14 @@ async function runSequence(id) {
   $("seq-run-card").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+async function queueSequence(id) {
+  listError(null);
+  const res = await api("/queue", "POST", { sequence_id: id });
+  if (!res.ok) { listError(res.detail); toast(res.detail, true); return; }
+  toast(`"${sequenceName(id)}" added to Up next`);
+  refreshQueue();
+}
+
 async function cancelRun() {
   const res = await api("/sequences/cancel", "POST");
   if (!res.ok) toast(res.detail, true);
@@ -2779,10 +2932,11 @@ function renderSequenceRun(st) {
   $("seq-run-source").hidden = st.source !== "scheduler";
   $("seq-run-pill").className = "pill " + pillClass;
   $("seq-run-pill").textContent = pillText;
-  const known = sequencesCache.find((q) => q.id === st.sequence_id);
-  // The saved Sequence may have been edited since this run started; fall back to plain
-  // step numbers rather than describing Steps the run is not running.
-  const steps = known && known.steps.length === st.step_count ? known.steps : null;
+  // The run carries the Steps it is actually running (an edit to the saved Sequence
+  // after the start must not relabel them); older progress records without them fall
+  // back to the saved Sequence, then to plain step numbers.
+  const known = st.sequence_id == null ? null : sequencesCache.find((q) => q.id === st.sequence_id);
+  const steps = st.steps || (known && known.steps.length === st.step_count ? known.steps : null);
   const rows = [];
   for (let i = 0; i < st.step_count; i++) {
     const current = i === st.step;
@@ -2804,7 +2958,7 @@ function renderSequenceRun(st) {
   err.textContent = st.error ? `⚠ Step ${st.step + 1}: ${st.error}` : "";
   $("seq-run-cancel").hidden = !st.running;
   // A run the scheduler started may name a Sequence this page has not loaded yet.
-  if (!known && seqFetchedFor !== st.sequence_id) {
+  if (st.sequence_id != null && !known && seqFetchedFor !== st.sequence_id) {
     seqFetchedFor = st.sequence_id;
     refreshSequences();
   }
@@ -2953,6 +3107,7 @@ async function boot() {
     if (btn) setRuleAction(btn.dataset.v);
   });
   $("seq-steps").addEventListener("click", onStepClick);
+  $("queue-list").addEventListener("click", onQueueClick);
   $("seg-rule-scope").addEventListener("click", (e) => {
     const btn = e.target.closest("button");
     if (!btn) return;
@@ -2967,6 +3122,8 @@ async function boot() {
   window.addEventListener("online", refreshStatus);
   setInterval(refreshStatus, 5000);
   setInterval(() => { if (!runTimer) pollRun(); }, 5000);
+  refreshQueue();
+  setInterval(refreshQueue, 5000);
   refreshMap();
   // Keep the schedule cards live (a firing shows up as it happens), but only while visible.
   setInterval(() => {

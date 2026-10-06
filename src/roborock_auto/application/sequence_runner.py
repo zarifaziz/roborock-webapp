@@ -276,7 +276,7 @@ def _depart_for(gw: SequencePorts, step: Step) -> Callable[[], Awaitable[None]]:
     if step.segment_ids is None:
         return gw.start
     segments = list(step.segment_ids)
-    return lambda: gw.clean_rooms(segments)
+    return lambda: gw.clean_rooms(segments, repeat=step.repeat)
 
 
 async def _recover_after_abort(gw: SequencePorts, *, log: Callable[[str], None]) -> None:

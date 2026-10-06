@@ -21,7 +21,7 @@ from roborock_auto.adapters.sqlite import (
 )
 from roborock_auto.application.run_slot import RunSlot
 from roborock_auto.application.scheduler import Scheduler, readiness_block
-from roborock_auto.application.sequence_launch import SequenceLauncher
+from roborock_auto.application.sequence_launch import SequenceLauncher, step_body
 from roborock_auto.config import Config
 from roborock_auto.domain.models import (
     CarpetMode,
@@ -512,6 +512,7 @@ async def test_a_scheduled_sequence_runs_every_step_and_is_fired_on_its_first_de
         "source": "scheduler",
         "step": 1,
         "step_count": 2,
+        "steps": [step_body(step) for step in BATHROOMS_THEN_HOUSE],
         "phase": "done",
     }
 
@@ -651,6 +652,7 @@ async def test_a_failed_fired_mark_is_logged_and_step_one_never_fires_again(capl
         "source": "scheduler",
         "step": 1,
         "step_count": 2,
+        "steps": [step_body(step) for step in BATHROOMS_THEN_HOUSE],
         "phase": "departing",
     }
 

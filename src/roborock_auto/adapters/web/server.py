@@ -33,14 +33,15 @@ from roborock_auto.adapters.sqlite import (
 )
 from roborock_auto.adapters.web.assistant_api import router as assistant_router
 from roborock_auto.adapters.web.cleaning_context import RecentCleaning
+from roborock_auto.application.clean_queue import STOPPED_BY_USER, CleanQueue
 from roborock_auto.application.materialise import MATERIALISATION_HORIZON, materialise
 from roborock_auto.application.overdue import clean_overdue, overdue_view
 from roborock_auto.application.run_slot import RunSlot
 from roborock_auto.application.scheduler import Scheduler, readiness_block
-from roborock_auto.application.sequence_launch import SequenceLauncher
+from roborock_auto.application.sequence_launch import SequenceLauncher, step_body
 from roborock_auto.application.sequence_runner import RunCancelled
 from roborock_auto.application.start_clean import SettingsNotConfirmed, start_clean, utc_now
-from roborock_auto.application.two_stage_clean import run_two_stage
+from roborock_auto.application.two_stage_clean import run_two_stage, two_stage_steps
 from roborock_auto.config import Config
 from roborock_auto.domain.capabilities import QREVO_L_PRO
 from roborock_auto.domain.models import (
@@ -53,6 +54,7 @@ from roborock_auto.domain.models import (
     MopMode,
     Occurrence,
     OccurrenceState,
+    QueuedClean,
     RoomInterval,
     ScheduleRule,
     SegmentOverdue,
@@ -119,6 +121,13 @@ async def lifespan(app: FastAPI):
         now=lambda: app.state.now(),
         log=_LOGGER.info,
     )
+    app.state.clean_queue = CleanQueue(
+        gw,
+        slot=app.state.run_slot,
+        launcher=app.state.sequence_launcher,
+        interval=config.poll_interval_sec,
+        log=_LOGGER.info,
+    )
     app.state.scheduler = Scheduler(
         gw,
         rules=app.state.schedule_rules,
@@ -136,9 +145,9 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         app.state.scheduler_task.cancel()
-        task = app.state.run_slot.task
-        if task is not None:
-            task.cancel()
+        for task in (app.state.clean_queue.task, app.state.run_slot.task):
+            if task is not None:
+                task.cancel()
         await gw.close()
         db.close()
 
@@ -311,14 +320,18 @@ async def pause(request: Request):
     return {"ok": True}
 
 
+# Stop, Dock and both Cancels put Up next on hold: the user is sending the robot home,
+# and a queued Clean must not send it straight back out.
 @app.post("/stop")
 async def stop(request: Request):
+    request.app.state.clean_queue.hold(STOPPED_BY_USER)
     await _gw(request).stop()
     return {"ok": True}
 
 
 @app.post("/dock")
 async def dock(request: Request):
+    request.app.state.clean_queue.hold(STOPPED_BY_USER)
     await _gw(request).dock()
     return {"ok": True}
 
@@ -774,6 +787,7 @@ async def clean_two_stage_cancel(request: Request):
     slot = request.app.state.run_slot
     if not slot.running:
         raise HTTPException(409, "no two-stage clean is running")
+    request.app.state.clean_queue.hold(STOPPED_BY_USER)
     slot.cancel.set()
     return {"ok": True}
 
@@ -792,11 +806,15 @@ def _parse_step(body) -> Step:
         not isinstance(segment_ids, list) or not all(isinstance(s, int) for s in segment_ids)
     ):
         raise HTTPException(422, "a Step's segment_ids must be a list of Segment numbers or null")
+    repeat = body.get("repeat", 1)
+    if not isinstance(repeat, int) or isinstance(repeat, bool):
+        raise HTTPException(422, "a Step's repeat must be a whole number")
     try:
         return Step(
             mode=_parse(CleaningMode, body.get("mode")),
             carpet=_parse(CarpetMode, body.get("carpet")),
             segment_ids=None if segment_ids is None else tuple(segment_ids),
+            repeat=repeat,
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc))
@@ -817,14 +835,7 @@ def _sequence_body(sequence: Sequence) -> dict:
     return {
         "id": sequence.id,
         "name": sequence.name,
-        "steps": [
-            {
-                "mode": step.mode.value,
-                "carpet": step.carpet.value,
-                "segment_ids": None if step.segment_ids is None else list(step.segment_ids),
-            }
-            for step in sequence.steps
-        ],
+        "steps": [step_body(step) for step in sequence.steps],
     }
 
 
@@ -847,6 +858,7 @@ async def sequences_cancel(request: Request):
     slot = request.app.state.run_slot
     if not slot.running:
         raise HTTPException(409, "nothing is running")
+    request.app.state.clean_queue.hold(STOPPED_BY_USER)
     slot.cancel.set()
     return {"ok": True}
 
@@ -919,8 +931,99 @@ async def sequences_run(request: Request, sequence_id: int):
     if reason is not None:
         slot.release()
         raise HTTPException(409, reason)
-    request.app.state.sequence_launcher.launch(sequence, source=CleanSource.APP)
+    request.app.state.sequence_launcher.launch(
+        sequence.steps, name=sequence.name, sequence_id=sequence.id, source=CleanSource.APP
+    )
     return {"ok": True}
+
+
+def _queue_entry_body(entry: QueuedClean) -> dict:
+    return {
+        "id": entry.id,
+        "label": entry.label,
+        "sequence_id": entry.sequence_id,
+        "steps": [step_body(step) for step in entry.steps],
+    }
+
+
+def _queue_body(queue: CleanQueue) -> dict:
+    return {
+        "held": queue.held,
+        "hold_reason": queue.hold_reason,
+        "waiting_for": queue.waiting_for,
+        "entries": [_queue_entry_body(entry) for entry in queue.entries],
+    }
+
+
+@app.get("/queue")
+async def queue_read(request: Request):
+    return _queue_body(request.app.state.clean_queue)
+
+
+@app.post("/queue")
+async def queue_add(
+    request: Request,
+    label: object = Body(None, embed=True),
+    steps: object = Body(None, embed=True),
+    sequence_id: object = Body(None, embed=True),
+    preset: object = Body(None, embed=True),
+    segment_ids: object = Body(None, embed=True),
+):
+    """Add a Clean to Up next: `steps` under a `label`, the Two-Stage `preset` over
+    `segment_ids`, or a saved Sequence's Steps by `sequence_id`. Steps are copied, so
+    editing the Sequence later leaves the queued entry as it was requested."""
+    if preset is not None:
+        if preset != "two-stage":
+            raise HTTPException(422, "the only preset is 'two-stage'")
+        if not isinstance(label, str):
+            raise HTTPException(422, "a queued Clean needs a label")
+        if segment_ids is not None and (
+            not isinstance(segment_ids, list) or not all(isinstance(s, int) for s in segment_ids)
+        ):
+            raise HTTPException(422, "segment_ids must be a list of Segment numbers or null")
+        parsed, origin = two_stage_steps(segment_ids), None
+    elif sequence_id is not None:
+        if not isinstance(sequence_id, int) or isinstance(sequence_id, bool):
+            raise HTTPException(422, "sequence_id must be a Sequence number")
+        sequence = await _sequence_or_404(request, sequence_id)
+        label, parsed, origin = sequence.name, sequence.steps, sequence.id
+    else:
+        if not isinstance(label, str):
+            raise HTTPException(422, "a queued Clean needs a label")
+        if not isinstance(steps, list):
+            raise HTTPException(422, "steps must be a list of Steps")
+        parsed, origin = tuple(_parse_step(step) for step in steps), None
+    try:
+        entry = request.app.state.clean_queue.add(label, parsed, sequence_id=origin)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    return _queue_entry_body(entry)
+
+
+@app.post("/queue/resume")
+async def queue_resume(request: Request):
+    request.app.state.clean_queue.resume()
+    return _queue_body(request.app.state.clean_queue)
+
+
+@app.post("/queue/clear")
+async def queue_clear(request: Request):
+    request.app.state.clean_queue.clear()
+    return _queue_body(request.app.state.clean_queue)
+
+
+@app.delete("/queue/{entry_id}")
+async def queue_remove(request: Request, entry_id: int):
+    if not request.app.state.clean_queue.remove(entry_id):
+        raise HTTPException(404, f"nothing queued as {entry_id}")
+    return _queue_body(request.app.state.clean_queue)
+
+
+@app.post("/queue/{entry_id}/move")
+async def queue_move(request: Request, entry_id: int, to: int = Body(..., embed=True)):
+    if not request.app.state.clean_queue.move(entry_id, to):
+        raise HTTPException(404, f"nothing queued as {entry_id}")
+    return _queue_body(request.app.state.clean_queue)
 
 
 @app.get("/")

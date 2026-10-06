@@ -22,6 +22,7 @@ def _encode_steps(steps: tuple[Step, ...]) -> str:
                 "mode": step.mode.value,
                 "carpet": step.carpet.value,
                 "segment_ids": None if step.segment_ids is None else list(step.segment_ids),
+                "repeat": step.repeat,
             }
             for step in steps
         ]
@@ -34,6 +35,8 @@ def _parse_steps(steps_json: str) -> tuple[Step, ...]:
             mode=CleaningMode(payload["mode"]),
             carpet=CarpetMode(payload["carpet"]),
             segment_ids=None if payload["segment_ids"] is None else tuple(payload["segment_ids"]),
+            # Rows written before Steps had passes carry no key and ran one pass.
+            repeat=payload.get("repeat", 1),
         )
         for payload in json.loads(steps_json)
     )

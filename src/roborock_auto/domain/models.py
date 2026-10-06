@@ -213,12 +213,17 @@ class Step:
     mode: CleaningMode
     carpet: CarpetMode
     segment_ids: tuple[int, ...] | None
+    repeat: int = 1  # passes per room; the firmware only repeats room cleans
 
     def __post_init__(self) -> None:
         if self.carpet not in (CarpetMode.RISE, CarpetMode.AVOID):
             raise ValueError("a Step's carpet mode must be rise or avoid")
         if self.segment_ids is not None and not self.segment_ids:
             raise ValueError("an empty Segment list is ambiguous; use null for the whole house")
+        if not 1 <= self.repeat <= 3:
+            raise ValueError("a Step's repeat must be between 1 and 3")
+        if self.repeat != 1 and self.segment_ids is None:
+            raise ValueError("a whole-house Step runs one pass; repeat needs chosen rooms")
 
 
 @dataclass(frozen=True)
@@ -235,6 +240,25 @@ class Sequence:
             raise ValueError("a Sequence needs a name")
         if not self.steps:
             raise ValueError("a Sequence needs at least one Step")
+
+
+@dataclass(frozen=True)
+class QueuedClean:
+    """One request waiting in Up next: the Steps to run once the robot is home, idle and
+    nothing else holds the RunSlot. `label` is how the user described it; `sequence_id`
+    is set when the Steps were copied from a saved Sequence, for display only, so a later
+    edit to that Sequence does not change what was queued."""
+
+    id: int
+    label: str
+    steps: tuple[Step, ...]
+    sequence_id: int | None = None
+
+    def __post_init__(self) -> None:
+        if not self.label.strip():
+            raise ValueError("a queued Clean needs a label")
+        if not self.steps:
+            raise ValueError("a queued Clean needs at least one Step")
 
 
 @dataclass(frozen=True)

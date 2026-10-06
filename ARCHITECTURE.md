@@ -197,6 +197,12 @@ At most one run drives the robot at a time. `application/run_slot.py` holds it: 
 process creates one RunSlot and hands the same instance to every endpoint and to the
 scheduler, so a run started anywhere is visible, and cancellable, from everywhere.
 
+A request made while the robot is busy does not fail: it waits in Up next
+(`application/clean_queue.py`), an in-memory ordered list of Steps that starts its head
+entry through the launcher once the robot is home, idle and error-free and the slot is
+free. It advances only after a success; a failure, a cancel, or the user sending the
+robot home puts it on hold until the user resumes or clears it (ADR 0009).
+
 **Capabilities** — one value object pins us to the Qrevo L Pro without pretending to be
 model-generic:
 
@@ -229,7 +235,8 @@ commands. HTTP knows nothing about retries; adapters know nothing about sequenci
 ```
 application/
   sequence_runner.py  # runs N Steps; waits expressed over domain policies
-  sequence_launch.py  # starts a saved Sequence as a background run in the RunSlot
+  sequence_launch.py  # starts a list of Steps as a background run in the RunSlot
+  clean_queue.py      # Up next: requests waiting for the robot, started in order
   run_slot.py         # the one-run-at-a-time slot, with progress and cancel
   two_stage_clean.py  # the two-Step preset over the runner
   retry.py            # workflow-level retry helper + AutomationError
@@ -297,7 +304,8 @@ src/roborock_auto/
     sequences.py        # SequencePort (CONTROL: saved Sequences)
   application/
     sequence_runner.py   # an ordered list of Steps, one Clean each, with depart/return waits
-    sequence_launch.py   # a saved Sequence as a background run in the RunSlot
+    sequence_launch.py   # a list of Steps as a background run in the RunSlot
+    clean_queue.py       # Up next: the queue of Cleans waiting for the robot
     run_slot.py          # at most one run drives the robot; shared by web and scheduler
     two_stage_clean.py   # the two-Step preset
     retry.py

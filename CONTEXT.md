@@ -43,6 +43,14 @@ the one before. Every Sequence ends with carpet mode Avoid. The Two-Stage Clean 
 two-Step preset: vacuum with Rise, then mop with Avoid.
 _Avoid_: Routine (the official app's saved routines), Recipe, Program, Chain
 
+**Up next**:
+The ordered list of Cleans the user asked for while the robot was busy. Each entry is a
+list of Steps copied at the moment of the request (a plain Clean, the Two-Stage Clean, or a
+saved Sequence's Steps). The head entry starts once the robot is home, idle and error-free
+and no run holds the RunSlot. The list advances only after a success; a failure, a cancel,
+or the user sending the robot home puts it on hold until the user resumes or clears it.
+_Avoid_: Queue (in the UI), backlog, pending jobs, stack
+
 **Departure**:
 The robot having actually left the dock for the current job, as distinct from the dock
 servicing itself after the previous one.

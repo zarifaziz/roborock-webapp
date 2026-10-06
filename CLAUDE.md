@@ -60,7 +60,8 @@ that adds it to the live adapter.
 
 **Use cases exist only where there is real orchestration.** `application/sequence_runner.py`
 is the one long-running process (the Two-Stage Clean is a two-Step preset over it, and one
-`RunSlot` keeps every run, web or scheduled, to one at a time); trivial one-command endpoints go straight from the web
+`RunSlot` keeps every run, web or scheduled, to one at a time, and `application/clean_queue.py`
+is Up next, the in-memory list of requests waiting for the robot); trivial one-command endpoints go straight from the web
 adapter to the port. Transport retry lives in the adapter (it deliberately does not
 reconnect per failure, the cloud login endpoint is rate limited); workflow retry lives in
 `application/retry.py`.

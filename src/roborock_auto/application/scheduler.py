@@ -281,7 +281,9 @@ class Scheduler:
                 await self._recorder.failed_attempt(occurrence, str(error), self._now())
 
         self._launcher.launch(
-            sequence,
+            sequence.steps,
+            name=sequence.name,
+            sequence_id=sequence.id,
             source=CleanSource.SCHEDULER,
             on_first_departure=on_first_departure,
             on_end=on_end,

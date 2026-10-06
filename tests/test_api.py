@@ -966,8 +966,12 @@ _TWO_STAGE = {
 }
 
 
+def _step_doc(step: dict) -> dict:
+    return {"repeat": 1, **step}
+
+
 def _sequence_doc(id, body) -> dict:
-    return {"id": id, **body}
+    return {"id": id, **body, "steps": [_step_doc(step) for step in body["steps"]]}
 
 
 def test_sequence_crud_snapshot(client):
@@ -1069,6 +1073,7 @@ def test_run_then_cancel_recovers_the_robot_and_reports_the_step_it_stopped_at(c
         "source": "app",
         "step": 0,
         "step_count": 2,
+        "steps": [_step_doc(step) for step in _BATHROOMS_THEN_HOUSE["steps"]],
         "phase": "departing",
     }
     assert client.app.state.gateway.commands == [
@@ -1330,3 +1335,141 @@ def test_control_invalidates_status_even_within_display_cache_ttl(client):
     assert client.post('/stop').status_code == 200
     states.append(client.get('/status').json()['in_cleaning'])
     assert states == [False, True, False]
+
+
+# ---------------------------------------------------------------------------
+# Up next: the queue of Cleans waiting for the robot
+# ---------------------------------------------------------------------------
+
+_EMPTY_QUEUE = {"held": False, "hold_reason": None, "waiting_for": None, "entries": []}
+_KITCHEN_TWICE = {
+    "label": "Kitchen · Vacuum · 2 passes",
+    "steps": [{"mode": "vacuum", "carpet": "avoid", "segment_ids": [17], "repeat": 2}],
+}
+
+
+def _queued(id, label, steps, sequence_id=None) -> dict:
+    return {"id": id, "label": label, "sequence_id": sequence_id, "steps": steps}
+
+
+def _wait_for_queue_waiting(client) -> dict:
+    deadline = time.monotonic() + 5.0
+    body = client.get("/queue").json()
+    while body["waiting_for"] is None and time.monotonic() < deadline:
+        time.sleep(0.02)
+        body = client.get("/queue").json()
+    return body
+
+
+def test_queue_add_snapshot(client):
+    assert client.get("/queue").json() == _EMPTY_QUEUE
+    client.post("/sequences", json=_TWO_STAGE)
+    assert client.post("/start", json={"mode": "vacuum"}).json() == {"ok": True}
+    kitchen = _queued(1, "Kitchen · Vacuum · 2 passes", _KITCHEN_TWICE["steps"])
+    assert client.post("/queue", json=_KITCHEN_TWICE).json() == kitchen
+    two_stage = _queued(2, "Two-stage", _sequence_doc(1, _TWO_STAGE)["steps"], sequence_id=1)
+    assert client.post("/queue", json={"sequence_id": 1}).json() == two_stage
+    assert _wait_for_queue_waiting(client) == {
+        "held": False,
+        "hold_reason": None,
+        "waiting_for": "the robot is mid-job",
+        "entries": [kitchen, two_stage],
+    }
+    # Nothing reached the robot beyond the Clean that was already under way.
+    assert client.app.state.gateway.commands == [
+        ("connect",), ("set_cleaning_mode", CleaningMode.VACUUM), ("start",),
+    ]
+
+
+def test_queue_takes_the_two_stage_preset_and_builds_its_steps_on_the_server(client):
+    client.post("/start", json={"mode": "vacuum"})
+    body = {"label": "Kitchen · Vacuum, then mop", "preset": "two-stage", "segment_ids": [17]}
+    assert client.post("/queue", json=body).json() == _queued(
+        1, "Kitchen · Vacuum, then mop", [
+            {"mode": "vacuum", "carpet": "rise", "segment_ids": [17], "repeat": 1},
+            {"mode": "mop", "carpet": "avoid", "segment_ids": [17], "repeat": 1},
+        ],
+    )
+    whole = {"label": "Whole floor · Vacuum, then mop", "preset": "two-stage"}
+    assert [s["segment_ids"] for s in client.post("/queue", json=whole).json()["steps"]] == [None, None]
+    r = client.post("/queue", json={"label": "x", "preset": "deep"})
+    assert (r.status_code, r.json()) == (422, {"detail": "the only preset is 'two-stage'"})
+
+
+def test_queue_move_remove_and_clear(client):
+    client.post("/start", json={"mode": "vacuum"})
+    kitchen = client.post("/queue", json=_KITCHEN_TWICE).json()
+    hall = client.post("/queue", json={**_KITCHEN_TWICE, "label": "Hall"}).json()
+    moved = client.post("/queue/2/move", json={"to": 0}).json()
+    assert moved["entries"] == [hall, kitchen]
+    assert client.delete("/queue/2").json()["entries"] == [kitchen]
+    assert client.delete("/queue/2").status_code == 404
+    assert client.post("/queue/2/move", json={"to": 0}).status_code == 404
+    assert client.post("/queue/clear").json() == _EMPTY_QUEUE
+
+
+@pytest.mark.parametrize(
+    ("body", "detail"),
+    [
+        ({"steps": _KITCHEN_TWICE["steps"]}, "a queued Clean needs a label"),
+        ({"label": "x", "steps": "no"}, "steps must be a list of Steps"),
+        ({"label": "x", "steps": []}, "a queued Clean needs at least one Step"),
+        ({"label": " ", "steps": _KITCHEN_TWICE["steps"]}, "a queued Clean needs a label"),
+        ({"sequence_id": 99}, "no Sequence 99"),
+        ({"sequence_id": "1"}, "sequence_id must be a Sequence number"),
+        (
+            {"label": "x", "steps": [{"mode": "vacuum", "carpet": "avoid", "segment_ids": [17], "repeat": 4}]},
+            "a Step's repeat must be between 1 and 3",
+        ),
+        (
+            {"label": "x", "steps": [{"mode": "vacuum", "carpet": "avoid", "segment_ids": None, "repeat": 2}]},
+            "a whole-house Step runs one pass; repeat needs chosen rooms",
+        ),
+        (
+            {"label": "x", "steps": [{"mode": "vacuum", "carpet": "avoid", "segment_ids": [17], "repeat": "2"}]},
+            "a Step's repeat must be a whole number",
+        ),
+    ],
+)
+def test_queue_add_rejects_bad_requests(client, body, detail):
+    r = client.post("/queue", json=body)
+    assert (r.status_code, r.json()) == (404 if "no Sequence" in detail else 422, {"detail": detail})
+    assert client.get("/queue").json() == _EMPTY_QUEUE
+
+
+def test_stop_puts_the_queue_on_hold_and_resume_lifts_it(client):
+    client.post("/start", json={"mode": "vacuum"})
+    kitchen = client.post("/queue", json=_KITCHEN_TWICE).json()
+    assert client.post("/stop").json() == {"ok": True}
+    held = {
+        "held": True,
+        "hold_reason": "you sent the robot home",
+        "waiting_for": None,
+        "entries": [kitchen],
+    }
+    assert client.get("/queue").json() == held
+    resumed = client.post("/queue/resume").json()
+    assert (resumed["held"], resumed["hold_reason"], resumed["entries"]) == (False, None, [kitchen])
+
+
+def test_dock_and_both_cancels_put_the_queue_on_hold(client):
+    client.post("/start", json={"mode": "vacuum"})
+    client.post("/queue", json=_KITCHEN_TWICE)
+    client.post("/dock")
+    assert client.get("/queue").json()["hold_reason"] == "you sent the robot home"
+    client.post("/queue/resume")
+    client.post("/clean/two-stage")
+    client.post("/clean/two-stage/cancel")
+    assert client.get("/queue").json()["hold_reason"] == "you sent the robot home"
+    _wait_until_idle(client)
+    client.post("/queue/resume")
+    client.post("/sequences", json=_TWO_STAGE)
+    client.post("/sequences/1/run")
+    client.post("/sequences/cancel")
+    assert client.get("/queue").json()["hold_reason"] == "you sent the robot home"
+
+
+def test_stop_with_nothing_queued_leaves_the_queue_idle(client):
+    client.post("/start", json={"mode": "vacuum"})
+    client.post("/stop")
+    assert client.get("/queue").json() == _EMPTY_QUEUE

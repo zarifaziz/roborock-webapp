@@ -32,6 +32,7 @@ __all__ = [
     "STATUS_FAULT_BUDGET",
     "RunCancelled",
     "run_two_stage",
+    "two_stage_steps",
     "wait_for_departure",
     "wait_for_return",
 ]
@@ -45,6 +46,17 @@ _STAGES = {
     (1, Phase.DEPARTING): "mopping",
     (1, Phase.CLEANING): "mop_waiting",
 }
+
+
+def two_stage_steps(segment_ids: list[int] | None) -> tuple[Step, Step]:
+    """The preset's two Steps over the same Segments: vacuum with Rise, mop with Avoid.
+    The one definition, used by the run and by Up next, so a queued Two-Stage Clean can
+    never drift from the one the button starts."""
+    segments = tuple(segment_ids) if segment_ids else None
+    return (
+        Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=segments),
+        Step(mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=segments),
+    )
 
 
 async def run_two_stage(
@@ -62,11 +74,7 @@ async def run_two_stage(
     on_stage: Callable[[str], None] = lambda _stage: None,
     cancel: asyncio.Event | None = None,
 ) -> None:
-    segments = tuple(segment_ids) if segment_ids else None
-    steps = (
-        Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=segments),
-        Step(mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=segments),
-    )
+    steps = two_stage_steps(segment_ids)
     last_stage: str | None = None
 
     def on_progress(index: int, phase: Phase) -> None:

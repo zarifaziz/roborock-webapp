@@ -548,3 +548,62 @@ async def test_robot_address_learned_after_connect_reaches_disk_without_close(li
     assert pickle.loads((tmp_path / "roborock_cache.pkl").read_bytes()) == _cache_with_lan_ip(
         "192.168.1.20"
     )
+
+
+_INIT_STATUS = [{"local_info": {"location": "us"}, "feature_info": [111, 112],
+                 "new_feature_info": 2247397454282751, "new_feature_info_str": "0000000000002000"}]
+
+
+def _rpc_channel_answering(response):
+    """The library's own RpcChannel, built the way V1Channel.rpc_channel builds it: around
+    a closure local to that property, which pickle cannot reach by name."""
+    from roborock.devices.rpc.v1_channel import RpcChannel
+    from roborock.util import RoborockLoggerAdapter
+
+    def rpc_strategies_cb():
+        return []
+
+    channel = RpcChannel(rpc_strategies_cb, RoborockLoggerAdapter(duid="DUID1"))
+    channel.send_command = AsyncMock(return_value=response)
+    return channel
+
+
+async def test_discovered_device_features_reach_disk_as_plain_features(library, tmp_path):
+    from roborock.data import HomeDataProduct, RoborockCategory
+    from roborock.device_features import DeviceFeatures
+    from roborock.devices.cache import CacheData, DeviceCache, DeviceCacheData
+    from roborock.devices.traits.v1.device_features import DeviceFeaturesTrait
+
+    await RoborockCloudAdapter(_config()).connect()
+    # The library's feature discovery stores the live trait object itself in the cache.
+    product = HomeDataProduct(id="p1", name="Qrevo", model="roborock.vacuum.a1", category=RoborockCategory.VACUUM)
+    trait = DeviceFeaturesTrait(product, DeviceCache("DUID1", library.cache))
+    trait._rpc_channel = _rpc_channel_answering(_INIT_STATUS)
+    await trait.refresh()
+
+    status = _INIT_STATUS[0]
+    assert pickle.loads((tmp_path / "roborock_cache.pkl").read_bytes()) == CacheData(
+        device_info={"DUID1": DeviceCacheData(device_features=DeviceFeatures.from_feature_flags(
+            new_feature_info=status["new_feature_info"],
+            new_feature_info_str=status["new_feature_info_str"],
+            feature_info=status["feature_info"],
+            product_nickname=product.product_nickname,
+        ))}
+    )
+
+
+async def test_cache_write_failure_is_logged_and_does_not_stop_the_caller(tmp_path, caplog):
+    from roborock.devices.cache import CacheData
+
+    from roborock_auto.adapters.roborock_cloud.adapter import WriteThroughFileCache
+
+    cache = WriteThroughFileCache(tmp_path / "roborock_cache.pkl")
+    unpicklable = CacheData(trait_data={"cb": lambda: None})
+    with caplog.at_level("WARNING", logger="roborock_auto.adapters.roborock_cloud.adapter"):
+        await cache.set(unpicklable)
+        await cache.flush()
+
+    assert (await cache.get() is unpicklable, [(r.levelname, r.getMessage()) for r in caplog.records]) == (
+        True,
+        [("WARNING", f"could not write roborock cache {tmp_path / 'roborock_cache.pkl'}; carrying on")] * 2,
+    )

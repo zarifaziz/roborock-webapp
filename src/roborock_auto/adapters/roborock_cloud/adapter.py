@@ -13,11 +13,15 @@ differ, and keeping them here means a mismatch can't reach the rest of the app. 
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+import pickle
+from dataclasses import fields
 from pathlib import Path
 from typing import Any
 
 from roborock import RoborockCommand
+from roborock.device_features import DeviceFeatures
 from roborock.devices.cache import CacheData
 from roborock.devices.file_cache import FileCache
 from roborock.map.map_parser import MapParserConfig
@@ -68,7 +72,7 @@ class WriteThroughFileCache(FileCache):
     address whenever a background reconnect succeeds, long after connect() returns."""
 
     def __init__(self, file_path: Path) -> None:
-        super().__init__(file_path)
+        super().__init__(file_path, serialize_fn=_pickle_cache)
         self._write_lock = asyncio.Lock()
 
     async def set(self, value: CacheData) -> None:
@@ -78,7 +82,29 @@ class WriteThroughFileCache(FileCache):
     async def flush(self) -> None:
         # Two overlapping writes to one file could interleave into an unreadable pickle.
         async with self._write_lock:
-            await super().flush()
+            try:
+                await super().flush()
+            except Exception:
+                # Only a speed-up: a failed write must not stop a connect or a command.
+                _LOGGER.warning(
+                    "could not write roborock cache %s; carrying on", self._file_path,
+                    exc_info=True,
+                )
+
+
+class _CachePickler(pickle.Pickler):
+    def reducer_override(self, obj: Any) -> Any:
+        # Feature discovery caches the live DeviceFeaturesTrait, whose RPC channel holds a
+        # closure; only its DeviceFeatures fields are what a later refresh reads back.
+        if isinstance(obj, DeviceFeatures) and type(obj) is not DeviceFeatures:
+            return DeviceFeatures, tuple(getattr(obj, f.name) for f in fields(DeviceFeatures))
+        return NotImplemented
+
+
+def _pickle_cache(data: CacheData) -> bytes:
+    buffer = io.BytesIO()
+    _CachePickler(buffer).dump(data)
+    return buffer.getvalue()
 
 
 class RoborockCloudAdapter:

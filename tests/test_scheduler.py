@@ -528,8 +528,8 @@ async def test_a_cancel_before_the_first_departure_fails_the_occurrence_for_good
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
         ("clean_rooms", (16, 17)),
-        ("dock",),
         ("set_carpet_mode", CarpetMode.AVOID),
+        ("dock",),
     ]
     cancelled = _occ(
         1, rule_name="Saturday deep clean", state=OccurrenceState.FAILED, attempts=1,
@@ -725,8 +725,8 @@ async def test_a_failed_cleaning_run_write_after_departure_still_fires_and_never
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
         ("clean_rooms", (16, 17)),
-        ("dock",),
         ("set_carpet_mode", CarpetMode.AVOID),
+        ("dock",),
     ]
     assert h.robot.commands == step_one_then_recovery
     assert await h.occurrences.list_occurrences() == [

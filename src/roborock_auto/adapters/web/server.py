@@ -71,6 +71,8 @@ from roborock_auto.ports.auth import AuthPort
 
 STATIC_DIR = Path(__file__).parent / "static"
 _LOGGER = logging.getLogger("roborock_auto.two_stage")
+# Under launchd's 20s default between SIGTERM and SIGKILL.
+_SHUTDOWN_RECOVERY_SEC = 10.0
 
 # Human-readable message per two-stage stage token, surfaced on the status endpoint.
 _STAGE_MESSAGES = {
@@ -145,9 +147,16 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         app.state.scheduler_task.cancel()
-        for task in (app.state.clean_queue.task, app.state.run_slot.task):
-            if task is not None:
-                task.cancel()
+        runs = [
+            task for task in (app.state.clean_queue.task, app.state.run_slot.task)
+            if task is not None
+        ]
+        for task in runs:
+            task.cancel()
+        # A cancelled run docks the robot and resets carpet mode on its way out, which needs
+        # the gateway still open. Bounded, so a hung cloud call cannot stall the restart.
+        if runs:
+            await asyncio.wait(runs, timeout=_SHUTDOWN_RECOVERY_SEC)
         await gw.close()
         db.close()
 

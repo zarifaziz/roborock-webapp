@@ -267,8 +267,10 @@ async def run_sequence(
                 gw, CarpetMode.AVOID, sleep=sleep,
                 consequence="the clean finished but carpet may still be at Rise",
             )
-    except Exception:
-        await _recover_after_abort(gw, log=log)
+    # CancelledError is not an Exception; it is how a server shutdown ends the run, and
+    # that leaves the robot just as stranded as any other abort.
+    except (Exception, asyncio.CancelledError):
+        await _recover_uninterrupted(gw, log=log)
         raise
 
 
@@ -279,18 +281,34 @@ def _depart_for(gw: SequencePorts, step: Step) -> Callable[[], Awaitable[None]]:
     return lambda: gw.clean_rooms(segments, repeat=step.repeat)
 
 
+async def _recover_uninterrupted(gw: SequencePorts, *, log: Callable[[str], None]) -> None:
+    """Run abort recovery to the end even if the run is cancelled again meanwhile, as a
+    shutdown landing mid-recovery would otherwise skip the rest of it; then let that
+    cancellation through."""
+    recovery = asyncio.create_task(_recover_after_abort(gw, log=log))
+    cancelled = False
+    while not recovery.done():
+        try:
+            await asyncio.shield(recovery)
+        except asyncio.CancelledError:
+            cancelled = True
+    if cancelled:
+        raise asyncio.CancelledError
+
+
 async def _recover_after_abort(gw: SequencePorts, *, log: Callable[[str], None]) -> None:
-    """Best-effort abort recovery: send the robot home and latch carpet mode to the safe
-    Avoid (never wets carpet). Each step swallows its own failure — recovery must never
-    mask the error that aborted the run."""
-    try:
-        await gw.dock()
-    except Exception as exc:  # noqa: BLE001 - recovery must never mask the original error
-        log(f"abort recovery: dock command failed: {exc}")
+    """Best-effort abort recovery: latch carpet mode to the safe Avoid (never wets carpet),
+    then send the robot home. Avoid goes first because it also covers the drive home, and a
+    shutdown's wait may run out on a slow dock reply. Each step swallows its own failure —
+    recovery must never mask the error that aborted the run."""
     try:
         await gw.set_carpet_mode(CarpetMode.AVOID)
     except Exception as exc:  # noqa: BLE001 - recovery must never mask the original error
         log(f"abort recovery: carpet reset failed: {exc}")
+    try:
+        await gw.dock()
+    except Exception as exc:  # noqa: BLE001 - recovery must never mask the original error
+        log(f"abort recovery: dock command failed: {exc}")
 
 
 async def _depart_and_confirm(

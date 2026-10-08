@@ -71,7 +71,7 @@ async def test_sequence_never_departs_with_unconfirmed_cleaning_mode():
                            clock=iter(range(0, 100000, 10)).__next__, sleep=AsyncMock())
     assert gateway.commands == [
         ("set_carpet_mode", CarpetMode.RISE), ("set_cleaning_mode", CleaningMode.VACUUM),
-        ("dock",), ("set_carpet_mode", CarpetMode.AVOID),
+        ("set_carpet_mode", CarpetMode.AVOID), ("dock",),
     ]
     log.record_run.assert_not_awaited()
 

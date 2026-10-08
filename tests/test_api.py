@@ -1081,8 +1081,8 @@ def test_run_then_cancel_recovers_the_robot_and_reports_the_step_it_stopped_at(c
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
         ("clean_rooms", (16, 17)),
-        ("dock",),
         ("set_carpet_mode", CarpetMode.AVOID),
+        ("dock",),
     ]
     assert _runs(client) == []
 
@@ -1209,6 +1209,56 @@ def test_shutdown_cancels_a_run_the_scheduler_started(monkeypatch):
         robot = client.app.state.gateway
     assert robot.run_cancelled_before_close is True
     assert task.cancelled()
+
+
+def test_shutdown_mid_run_docks_the_robot_and_restores_carpet_before_closing(monkeypatch):
+    """A server restart mid-Sequence ends the run, so it must leave the robot as safe as any
+    other abort: docked, carpet back at Avoid, both sent before the gateway closes."""
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("DATABASE_PATH", ":memory:")
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
+    with TestClient(app) as client:
+        client.post("/sequences", json=_BATHROOMS_THEN_HOUSE)
+        assert client.post("/sequences/1/run").json() == {"ok": True}
+        robot = client.app.state.gateway
+    assert robot.commands == [
+        ("connect",),
+        ("set_carpet_mode", CarpetMode.RISE),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("clean_rooms", (16, 17)),
+        ("set_carpet_mode", CarpetMode.AVOID),
+        ("dock",),
+        ("close",),
+    ]
+
+
+def test_shutdown_stops_waiting_on_a_recovery_that_hangs(monkeypatch):
+    """launchd kills a server that does not exit in time, so a cloud call that never answers
+    must not hold the gateway open past the shutdown budget."""
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("DATABASE_PATH", ":memory:")
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
+    monkeypatch.setattr(server, "_SHUTDOWN_RECOVERY_SEC", 0.05)
+
+    class HangingDockRobot(FakeRobot):
+        async def dock(self) -> None:
+            self.commands.append(("dock",))
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(server, "get_gateway", lambda _config: HangingDockRobot())
+    with TestClient(app) as client:
+        client.post("/sequences", json=_BATHROOMS_THEN_HOUSE)
+        client.post("/sequences/1/run")
+        robot = client.app.state.gateway
+    assert robot.commands == [
+        ("connect",),
+        ("set_carpet_mode", CarpetMode.RISE),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("clean_rooms", (16, 17)),
+        ("set_carpet_mode", CarpetMode.AVOID),
+        ("dock",),
+        ("close",),
+    ]
 
 
 def test_a_readiness_check_that_raises_still_frees_the_slot(client):

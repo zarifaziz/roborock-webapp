@@ -514,8 +514,8 @@ async def test_two_stage_cancel_mid_vacuum_docks_and_restores_carpet():
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
         ("start",),
-        ("dock",),
         ("set_carpet_mode", CarpetMode.AVOID),
+        ("dock",),
     ]
 
 
@@ -594,7 +594,7 @@ HOUSE_AVOID = Step(mode=CleaningMode.VAC_AND_MOP, carpet=CarpetMode.AVOID, segme
 KITCHEN_MOP = Step(mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=(17,))
 
 END_RESET = [("set_carpet_mode", CarpetMode.AVOID)]
-ABORT_RECOVERY = [("dock",), ("set_carpet_mode", CarpetMode.AVOID)]
+ABORT_RECOVERY = [("set_carpet_mode", CarpetMode.AVOID), ("dock",)]
 
 
 def _step_commands(step: Step) -> list[tuple]:
@@ -673,6 +673,64 @@ async def test_a_failure_in_a_later_step_recovers_and_records_only_the_steps_tha
     )
     assert progress == _phases(0) + [(1, Phase.SETTING_UP)]
     assert await log.list_runs() == [_run_of(BATHROOMS_RISE, departed_at=10)]
+
+
+async def test_a_task_cancelled_mid_step_recovers_and_ends_cancelled():
+    """Server shutdown ends a run by cancelling its task, not through the cancel Event, and
+    the robot is left just as far from home with carpet at Rise."""
+    clock = FakeClock()
+    gw = FakeRobot(clock=clock)
+    run: dict[str, asyncio.Task] = {}
+
+    async def yielding_sleep(seconds: float) -> None:
+        # The fake clock never suspends, and a cancel only lands at a suspension point.
+        await clock.sleep(seconds)
+        await asyncio.sleep(0)
+
+    def on_progress(index: int, phase: Phase) -> None:
+        if (index, phase) == (0, Phase.CLEANING):
+            run["task"].cancel()
+
+    run["task"] = asyncio.create_task(
+        _run_steps(
+            gw, clock, (BATHROOMS_RISE, HOUSE_AVOID),
+            sleep=yielding_sleep, on_progress=on_progress,
+        )
+    )
+    with pytest.raises(asyncio.CancelledError):
+        await run["task"]
+    assert run["task"].cancelled()
+    assert gw.commands == _step_commands(BATHROOMS_RISE) + ABORT_RECOVERY
+
+
+class _CancelledDuringRecoveryRobot(_MopRefusedRobot):
+    """Cancels the run from inside the first recovery command, as a shutdown would if it
+    landed while the run was already recovering from another error."""
+
+    run: asyncio.Task | None = None
+    recovering = False
+
+    async def set_cleaning_mode(self, mode: CleaningMode) -> None:
+        self.recovering = True
+        await super().set_cleaning_mode(mode)
+
+    async def set_carpet_mode(self, mode: CarpetMode) -> None:
+        await super().set_carpet_mode(mode)
+        if self.recovering:
+            self.recovering = False
+            self.run.cancel()
+            await asyncio.sleep(0)
+
+
+async def test_a_cancel_during_recovery_still_finishes_recovery_and_ends_cancelled():
+    clock = FakeClock()
+    gw = _CancelledDuringRecoveryRobot(clock=clock)
+    mop_house = Step(mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=None)
+    gw.run = asyncio.create_task(_run_steps(gw, clock, (mop_house,)))
+    with pytest.raises(asyncio.CancelledError):
+        await gw.run
+    assert gw.run.cancelled()
+    assert gw.commands == [("set_carpet_mode", CarpetMode.AVOID)] + ABORT_RECOVERY
 
 
 async def test_cancel_mid_step_recovers_and_keeps_the_runs_of_every_departed_step():

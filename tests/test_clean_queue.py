@@ -157,8 +157,8 @@ async def test_a_cancelled_run_holds_the_queue_with_the_rest_still_queued():
     }
     assert h.robot.commands == [
         *KITCHEN_TWICE_COMMANDS,
-        ("dock",),
         ("set_carpet_mode", CarpetMode.AVOID),
+        ("dock",),
     ]
     h.queue.resume()
     await h.drain()

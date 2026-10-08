@@ -80,4 +80,7 @@ run writes `sequence_id`, which is how the UI decides which card shows a run.
 Every Sequence ends with a verified carpet Avoid, even after a successful one whose last
 Step used Rise, because plain Cleans never touch carpet mode.
 
-Run progress lives in memory: it survives closing the app, not a server restart.
+Run progress lives in memory: it survives closing the app, not a server restart. A restart
+mid-run ends the run with the same abort recovery (carpet Avoid, then dock) before the gateway
+closes, and `scripts/update-local-server.sh` waits in the background until no run is going and
+Up next is empty or held before it restarts the server, so a merge does not cut a run short.

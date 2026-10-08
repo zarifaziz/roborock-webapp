@@ -1,5 +1,6 @@
 # Secrets and session
 user_data.json
+roborock_cache.pkl
 .env
 .env.*
 !.env.example

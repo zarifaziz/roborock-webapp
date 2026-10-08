@@ -6,8 +6,10 @@ RoborockCommand and params. This is the only check possible without a real devic
 
 from __future__ import annotations
 
+import pickle
+from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from roborock import RoborockCommand
@@ -402,4 +404,120 @@ async def test_geometry_bootstraps_once_and_retains_last_success_after_failed_pn
     mc.map_data.vacuum_position = Point(40, 50)
     assert (await gw.get_map_png(), await gw.get_map_data(), gw.map_ok()) == (
         b"new-png", MapData(robot=Point(40, 50), image_width=100, image_height=80), True,
+    )
+
+
+# --- connection --------------------------------------------------------------
+
+_USER_DATA = object()
+
+
+@pytest.fixture
+def library(monkeypatch, tmp_path):
+    """The vendor entry points connect() calls, stubbed; the cache the adapter hands the
+    library is real, so a test can play the library's part and write to it."""
+    from roborock import web_api
+    from roborock.devices import device_manager
+
+    from roborock_auto.adapters.roborock_cloud import adapter as adapter_module
+    from roborock_auto.adapters.roborock_cloud import palette
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(adapter_module, "load_user_data", lambda path: _USER_DATA)
+    monkeypatch.setattr(palette, "install_calm_palette", lambda: None)
+    monkeypatch.setattr(web_api, "RoborockApiClient", Mock())
+    lib = SimpleNamespace(cache=None, on_discover=AsyncMock())
+
+    async def get_devices():
+        # Device discovery is where the library first reads its cache.
+        await lib.cache.get()
+        await lib.on_discover(lib.cache)
+        return [SimpleNamespace(duid="DUID1")]
+
+    async def create(params, *, cache=None, map_parser_config=None):
+        lib.cache = cache
+        return SimpleNamespace(get_devices=get_devices, close=AsyncMock())
+
+    lib.create = AsyncMock(side_effect=create)
+    monkeypatch.setattr(device_manager, "create_device_manager", lib.create)
+    return lib
+
+
+def _cache_with_lan_ip(ip: str):
+    from roborock.data import NetworkInfo
+    from roborock.devices.cache import CacheData, DeviceCacheData
+
+    return CacheData(device_info={"DUID1": DeviceCacheData(network_info=NetworkInfo(ip=ip))})
+
+
+async def test_connect_hands_the_library_a_file_cache_at_the_configured_path(library):
+    from roborock.devices.device_manager import UserParams
+
+    from roborock_auto.adapters.roborock_cloud.adapter import WriteThroughFileCache
+
+    await RoborockCloudAdapter(_config()).connect()
+
+    call = library.create.await_args
+    cache = call.kwargs.get("cache")
+    assert (call.args, sorted(call.kwargs), type(cache), getattr(cache, "_file_path", None)) == (
+        (UserParams(username="e@x.com", user_data=_USER_DATA),),
+        ["cache", "map_parser_config"],
+        WriteThroughFileCache,
+        Path("roborock_cache.pkl"),
+    )
+
+
+async def test_cached_robot_address_reaches_disk_after_connect_and_on_close(library, tmp_path):
+    async def library_learns_the_lan_ip(cache):
+        await cache.set(_cache_with_lan_ip("192.168.1.20"))
+
+    library.on_discover.side_effect = library_learns_the_lan_ip
+    gw = RoborockCloudAdapter(_config())
+    await gw.connect()
+    after_connect = pickle.loads((tmp_path / "roborock_cache.pkl").read_bytes())
+    await library.cache.set(_cache_with_lan_ip("192.168.1.21"))
+    await gw.close()
+    after_close = pickle.loads((tmp_path / "roborock_cache.pkl").read_bytes())
+
+    assert (after_connect, after_close) == (
+        _cache_with_lan_ip("192.168.1.20"), _cache_with_lan_ip("192.168.1.21"),
+    )
+
+
+async def test_unreadable_cache_is_discarded_and_connect_starts_with_an_empty_one(
+    library, tmp_path, caplog,
+):
+    from roborock.devices.cache import CacheData
+
+    from roborock_auto.adapters.roborock_cloud.adapter import WriteThroughFileCache
+
+    (tmp_path / "roborock_cache.pkl").write_bytes(b"not a pickle")
+    with caplog.at_level("WARNING", logger="roborock_auto.adapters.roborock_cloud.adapter"):
+        await RoborockCloudAdapter(_config()).connect()
+
+    cache = library.create.await_args.kwargs["cache"]
+    assert (
+        type(cache), cache._file_path, await cache.get(),
+        pickle.loads((tmp_path / "roborock_cache.pkl").read_bytes()),
+        [(r.levelname, r.getMessage()) for r in caplog.records],
+    ) == (
+        WriteThroughFileCache, Path("roborock_cache.pkl"), CacheData(), CacheData(),
+        [("WARNING", "unreadable roborock cache roborock_cache.pkl; starting with an empty one")],
+    )
+
+
+async def test_robot_address_learned_after_connect_reaches_disk_without_close(library, tmp_path):
+    from roborock.data import NetworkInfo
+    from roborock.devices.cache import DeviceCache
+
+    await RoborockCloudAdapter(_config()).connect()
+    # The library's background reconnect stores the address once the robot answers, the
+    # way its v1 channel does.
+    device_cache = DeviceCache("DUID1", library.cache)
+    learned = await device_cache.get()
+    learned.network_info = NetworkInfo(ip="192.168.1.20")
+    await device_cache.set(learned)
+
+    assert pickle.loads((tmp_path / "roborock_cache.pkl").read_bytes()) == _cache_with_lan_ip(
+        "192.168.1.20"
     )

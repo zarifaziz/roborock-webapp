@@ -121,12 +121,36 @@ async def test_unavailable_initial_map_is_coalesced_and_retried_after_ttl(monkey
     assert ([(r.status_code, r.body) for r in responses], gateway.get_map_png.await_count) == (
         [(503, b"")] * 3, 1,
     )
-    clock.value += 3
+    clock.value += 30
     gateway.map_ok.return_value = True
     recovered = await server.map_png(request)
     assert (recovered.status_code, recovered.body, recovered.headers["x-map-stale"],
             gateway.get_map_png.await_count) == (200, b"recovered", "false", 2)
 
+
+async def test_after_a_failed_fetch_the_retained_map_is_served_for_thirty_seconds(monkeypatch):
+    # A map call over an unresponsive cloud link holds the device lock until it times out,
+    # so a viewer polling every two seconds must not keep status and commands waiting.
+    clock = SimpleNamespace(value=100.0)
+    monkeypatch.setattr(server, "time", SimpleNamespace(monotonic=lambda: clock.value))
+    fetched_at = []
+
+    async def read_map():
+        fetched_at.append(clock.value)
+        gateway.map_ok.return_value = len(fetched_at) == 1
+        return b"last-real-map"
+
+    gateway = SimpleNamespace(get_map_png=AsyncMock(side_effect=read_map), map_ok=Mock())
+    request = _request(gateway)
+    served = set()
+    for _ in range(61):
+        response = await server.map_png(request)
+        served.add((response.status_code, response.body))
+        clock.value += 2.0
+
+    assert (fetched_at, served) == (
+        [100.0, 102.0, 132.0, 162.0, 192.0], {(200, b"last-real-map")},
+    )
 
 
 @pytest.mark.parametrize('first_route', ['png', 'metadata'])

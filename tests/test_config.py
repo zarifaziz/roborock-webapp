@@ -54,6 +54,18 @@ def test_database_path_is_configurable(monkeypatch):
     assert Config.from_env().database_path == "/data/cleans.db"
 
 
+def test_cache_path_defaults_beside_the_session_file(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.delenv("CACHE_PATH", raising=False)
+    assert Config.from_env().cache_path == "roborock_cache.pkl"
+
+
+def test_cache_path_is_configurable(monkeypatch):
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("CACHE_PATH", "/data/roborock_cache.pkl")
+    assert Config.from_env().cache_path == "/data/roborock_cache.pkl"
+
+
 def test_timezone_is_required_in_every_mode_and_the_error_names_the_setting(monkeypatch):
     # "System local" is no default: it resolves to UTC inside a container and shifts
     # every schedule silently.

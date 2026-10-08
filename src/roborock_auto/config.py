@@ -66,6 +66,9 @@ class Config:
     database_path: str      # SQLite file recording what this app did (cleaning runs)
     timezone: str           # IANA zone name Schedule Rules are interpreted in; no default
 
+    # The vendor library's device cache (pickled), including the robot's LAN address, so a
+    # local reconnect does not depend on asking the cloud for it.
+    cache_path: str = "roborock_cache.pkl"
     assistant_enabled: bool = False
     assistant_model: str = "sonnet"
 
@@ -88,6 +91,7 @@ class Config:
             session_path=_get("SESSION_PATH", "user_data.json"),
             database_path=_get("DATABASE_PATH", "roborock.db"),
             timezone=_require_timezone(),
+            cache_path=_get("CACHE_PATH", "roborock_cache.pkl"),
             assistant_enabled=_get("ASSISTANT_ENABLED", "false").lower() == "true",
             assistant_model=_get("ASSISTANT_MODEL", "sonnet"),
         )

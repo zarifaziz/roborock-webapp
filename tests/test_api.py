@@ -52,6 +52,17 @@ def test_carpet_readback(client):
     assert client.get("/carpet").json() == {"mode": "rise"}
 
 
+def test_carpet_read_reports_an_unreachable_robot_as_503(client, monkeypatch):
+    async def unreachable():
+        raise TimeoutError("no reply from the robot")
+
+    monkeypatch.setattr(client.app.state.gateway, "get_carpet_mode", unreachable)
+    response = client.get("/carpet")
+    assert (response.status_code, response.json()) == (
+        503, {"detail": "Carpet mode temporarily unavailable"},
+    )
+
+
 def test_map_txt_served(client):
     r = client.get("/map.txt")
     assert r.status_code == 200

@@ -1981,7 +1981,9 @@ async function refreshStatusOnce() {
   if (lastStatus && (lastStatus.cleaning || lastStatus.in_cleaning) && !s.cleaning && !s.in_cleaning) {
     refreshRecentCleaning(); refreshCarpetReadback();
   }
+  const wasParked = robotParked(lastStatus);
   lastStatus = s;
+  if (wasParked && !robotParked(s)) refreshMap();
   $('recent-clean-dock').textContent = `Robot now: ${activityForStatus(s).label}`;
   renderFreshness();
   setRobotActivity(activityForStatus(s));
@@ -2091,8 +2093,13 @@ async function refreshMap() {
   finally {
     if (nextUrl) URL.revokeObjectURL(nextUrl);
     mapLoading = false;
-    mapRefreshTimer = setTimeout(refreshMap, 3000);
+    mapRefreshTimer = setTimeout(refreshMap, robotParked(lastStatus) ? 60000 : 3000);
   }
+}
+// Every map read goes through the cloud and holds the robot's command line; a parked robot's
+// map barely changes, so it is polled rarely.
+function robotParked(s) {
+  return !!s && s.docked && !s.cleaning && !s.in_cleaning;
 }
 
 /* ---------- connect ---------- */

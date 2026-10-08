@@ -186,6 +186,30 @@ class MapInteractions(unittest.IsolatedAsyncioTestCase):
         await self.page.route("**/status", lambda route: route.fulfill(content_type="application/json", body=json.dumps(status)))
         await self.page.evaluate("appDataLoaded = true; refreshStatus()")
 
+    async def test_map_polls_once_a_minute_while_docked_and_every_three_seconds_while_cleaning(self):
+        await self.page.clock.install()
+        await self.page.reload()
+        await self.page.wait_for_function("document.getElementById('map').naturalWidth === 600 && !mapLoading")
+        await self.page.clock.pause_at(await self.page.evaluate("Date.now() + 1000"))
+        await self.status_response()
+        await self.page.evaluate("refreshMap()")
+        before = self.map_requests
+        fetched = []
+
+        async def advance(ms):
+            await self.page.clock.run_for(ms)
+            await self.page.wait_for_function("!mapLoading", polling=20)
+            fetched.append(self.map_requests - before)
+
+        await advance(59_999)
+        await advance(1)
+        await self.status_response(state_name="segment_cleaning", docked=False, cleaning=True, in_cleaning=True)
+        await advance(0)
+        await advance(2_999)
+        await advance(1)
+        await advance(3_000)
+        self.assertEqual(fetched, [0, 1, 2, 2, 3, 4])
+
     async def test_map_fits_mobile_before_resize_handler_runs(self):
         await self.page.evaluate("window.removeEventListener('resize', sizeMap)")
         await self.page.set_viewport_size({"width":393,"height":852})

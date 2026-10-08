@@ -16,9 +16,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 from roborock import RoborockCommand
+from roborock.devices.cache import CacheData
+from roborock.devices.file_cache import FileCache
 from roborock.map.map_parser import MapParserConfig
 from vacuum_map_parser_base.config.drawable import Drawable
 
@@ -61,11 +64,30 @@ from roborock_auto.domain.models import (
 _LOGGER = logging.getLogger(__name__)
 
 
+class WriteThroughFileCache(FileCache):
+    """FileCache only reaches disk on flush(), but the library learns the robot's LAN
+    address whenever a background reconnect succeeds, long after connect() returns."""
+
+    def __init__(self, file_path: Path) -> None:
+        super().__init__(file_path)
+        self._write_lock = asyncio.Lock()
+
+    async def set(self, value: CacheData) -> None:
+        await super().set(value)
+        await self.flush()
+
+    async def flush(self) -> None:
+        # Two overlapping writes to one file could interleave into an unreadable pickle.
+        async with self._write_lock:
+            await super().flush()
+
+
 class RoborockCloudAdapter:
     def __init__(self, config: Config):
         self._config = config
         self._lock = asyncio.Lock()
         self._manager: Any = None
+        self._cache: Any = None
         self._device: Any = None
         self._web: Any = None
         self._user_data: Any = None
@@ -115,13 +137,32 @@ class RoborockCloudAdapter:
             ],
         )
         self._map_config = map_config
-        self._manager = await create_device_manager(params, map_parser_config=map_config)
+        cache_path = Path(self._config.cache_path)
+        self._cache = WriteThroughFileCache(cache_path)
+        try:
+            await self._cache.get()
+        except Exception:
+            # Only a speed-up: a corrupt file, or one pickled by another library version,
+            # must not stop the server starting.
+            _LOGGER.warning(
+                "unreadable roborock cache %s; starting with an empty one", cache_path,
+                exc_info=True,
+            )
+            cache_path.unlink(missing_ok=True)
+            self._cache = WriteThroughFileCache(cache_path)
+        self._manager = await create_device_manager(
+            params, cache=self._cache, map_parser_config=map_config
+        )
         devices = await self._manager.get_devices()
         self._device = _pick_device(devices, self._config.duid)
+        # set() writes through, but the library also edits cached data in place.
+        await self._cache.flush()
 
     async def close(self) -> None:
         if self._manager is not None:
             await self._manager.close()
+        if self._cache is not None:
+            await self._cache.flush()
 
     @property
     def _v1(self) -> Any:

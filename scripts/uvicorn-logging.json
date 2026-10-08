@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "default": {
+      "format": "%(asctime)s %(levelname)s %(name)s: %(message)s"
+    },
+    "access": {
+      "()": "uvicorn.logging.AccessFormatter",
+      "fmt": "%(asctime)s %(levelname)s %(client_addr)s - \"%(request_line)s\" %(status_code)s",
+      "use_colors": false
+    }
+  },
+  "handlers": {
+    "default": {
+      "class": "logging.StreamHandler",
+      "formatter": "default",
+      "stream": "ext://sys.stderr"
+    },
+    "access": {
+      "class": "logging.StreamHandler",
+      "formatter": "access",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "loggers": {
+    "uvicorn": {"level": "INFO"},
+    "uvicorn.access": {"handlers": ["access"], "level": "INFO", "propagate": false},
+    "roborock": {"level": "INFO"},
+    "roborock_auto": {"level": "INFO"}
+  },
+  "root": {"handlers": ["default"], "level": "WARNING"}
+}

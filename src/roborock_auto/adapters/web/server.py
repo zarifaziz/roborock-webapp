@@ -230,6 +230,8 @@ async def map_txt(request: Request):
 
 
 _MAP_TTL_SEC = 2.0
+# A failed fetch can hold the device lock for its full timeout, so back off before the next.
+_MAP_RETRY_AFTER_FAILURE_SEC = 30.0
 
 
 @app.get("/map.png")
@@ -238,7 +240,8 @@ async def map_png(request: Request):
     # starts after completion so a slow fetch still gives queued commands breathing room.
     cache = request.app.state.map_cache
     async with request.app.state.map_lock:
-        if "stale" not in cache or time.monotonic() - cache["at"] >= _MAP_TTL_SEC:
+        ttl = _MAP_RETRY_AFTER_FAILURE_SEC if cache.get("stale") else _MAP_TTL_SEC
+        if "stale" not in cache or time.monotonic() - cache["at"] >= ttl:
             gateway = _gw(request)
             cache["png"] = await gateway.get_map_png()
             cache["stale"] = not gateway.map_ok()
@@ -383,7 +386,12 @@ async def water(request: Request, mode: str = Body(..., embed=True)):
 async def carpet_get(request: Request):
     # One boot-time read so the Setup carpet toggle can show the device's current setting;
     # deliberately NOT part of the status poll (it costs a device command each call).
-    return {"mode": (await _gw(request).get_carpet_mode()).value}
+    try:
+        mode = await _gw(request).get_carpet_mode()
+    except Exception:
+        _LOGGER.warning("carpet mode read failed", exc_info=True)
+        raise HTTPException(503, "Carpet mode temporarily unavailable")
+    return {"mode": mode.value}
 
 
 @app.post("/carpet")

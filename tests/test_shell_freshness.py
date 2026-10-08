@@ -12,6 +12,7 @@ from roborock_auto.adapters.web import server
 def fake_gateway(monkeypatch):
     monkeypatch.setenv("GATEWAY", "fake")
     monkeypatch.setenv("DATABASE_PATH", ":memory:")
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
 
 
 def test_index_revalidates_on_navigation():

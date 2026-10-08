@@ -328,6 +328,14 @@ class Room:
 
 
 @dataclass(frozen=True)
+class AccountDevice:
+    """A device on the Roborock account, listed so the user can pick ROBOROCK_DUID."""
+    duid: str
+    name: str
+    model: str
+
+
+@dataclass(frozen=True)
 class Routine:
     id: int
     name: str

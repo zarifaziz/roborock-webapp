@@ -193,17 +193,32 @@ def test_water_roundtrip(client):
     assert client.post("/water", json={"mode": "bogus"}).status_code == 422
 
 
+def _box(x0, y0, x1, y1):
+    """Fake floor-plan room bounds (10 cm units, 3-unit margin, 980 px image) -> bbox."""
+    return [round((v + 3) * 10 / 980, 4) for v in (x0, y0, x1, y1)]
+
+
 def test_map_data_shape(client):
     assert client.get("/map-data").json() == {
         "rooms": [
-            {"segment_id": 16, "name": "Living Room", "bbox": [0.0, 0.0, 0.5, 0.5], "color": None},
-            {"segment_id": 17, "name": "Kitchen", "bbox": [0.5, 0.0, 1.0, 0.5], "color": None},
-            {"segment_id": 18, "name": "Bedroom", "bbox": [0.0, 0.5, 0.5, 1.0], "color": None},
-            {"segment_id": 19, "name": "Hallway", "bbox": [0.5, 0.5, 1.0, 1.0], "color": None},
+            {"segment_id": 16, "name": "Living Room", "bbox": _box(0, 48, 58, 92),
+             "color": "#16d5cb"},
+            {"segment_id": 17, "name": "Kitchen", "bbox": _box(58, 48, 92, 92),
+             "color": "#ffaf97"},
+            {"segment_id": 18, "name": "Bedroom", "bbox": _box(0, 0, 40, 36),
+             "color": "#9ccaff"},
+            {"segment_id": 19, "name": "Hallway", "bbox": _box(14, 36, 92, 48),
+             "color": "#ffdd5e"},
+            {"segment_id": 20, "name": "Study", "bbox": _box(60, 0, 92, 36),
+             "color": "#9ccaff"},
+            {"segment_id": 21, "name": "Bathroom", "bbox": _box(40, 0, 60, 22),
+             "color": "#16d5cb"},
+            {"segment_id": 22, "name": "Laundry", "bbox": _box(40, 22, 60, 36),
+             "color": "#ffaf97"},
         ],
-        "robot": {"x": 50, "y": 50},
-        "image_width": 100,
-        "image_height": 100,
+        "robot": {"x": 470, "y": 925},  # on the dock
+        "image_width": 980,
+        "image_height": 980,
     }
 
 
@@ -296,6 +311,9 @@ def test_auth_discover_shape(client):
             {"segment_id": 17, "name": "Kitchen", "bbox": None, "color": None},
             {"segment_id": 18, "name": "Bedroom", "bbox": None, "color": None},
             {"segment_id": 19, "name": "Hallway", "bbox": None, "color": None},
+            {"segment_id": 20, "name": "Study", "bbox": None, "color": None},
+            {"segment_id": 21, "name": "Bathroom", "bbox": None, "color": None},
+            {"segment_id": 22, "name": "Laundry", "bbox": None, "color": None},
         ],
         "routines": [
             {"id": 1001, "name": "Vacuum whole house"},

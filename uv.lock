@@ -800,6 +800,7 @@ source = { editable = "." }
 dependencies = [
     { name = "claude-agent-sdk" },
     { name = "fastapi" },
+    { name = "pillow" },
     { name = "python-roborock" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -817,6 +818,7 @@ requires-dist = [
     { name = "claude-agent-sdk", specifier = ">=0.2.159,<0.3" },
     { name = "fastapi", specifier = ">=0.110" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
+    { name = "pillow", specifier = ">=10" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "python-roborock", specifier = ">=2.0.0" },

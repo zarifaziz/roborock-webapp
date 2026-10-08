@@ -2,9 +2,11 @@
 
     uv run python -m roborock_auto.adapters.cli.discover
 
-Works in both modes. In live mode it prints the real duid, routines, and current carpet
-value so you can fill in .env. Nothing is written to the device. Each section is independent:
-if one call fails on your firmware, the rest still print.
+Works in both modes. In live mode it needs ROBOROCK_EMAIL and a session from the login CLI.
+Without ROBOROCK_DUID it lists the devices on the account and stops; with it, it prints the
+robot's routines, rooms and raw carpet value so you can fill in .env. Nothing is written to
+the device. Each section is independent: if one call fails on your firmware, the rest
+still print.
 """
 
 from __future__ import annotations
@@ -28,9 +30,19 @@ async def _section(name: str, coro):
 
 
 async def main() -> None:
-    config = Config.from_env()
+    config = Config.from_env(require_device=False)
     gw = get_gateway(config)
     _p(f"gateway mode : {config.gateway}")
+    if config.gateway == "live" and not config.duid:
+        try:
+            devices = await gw.list_devices()
+        finally:
+            await gw.close()
+        _p("devices on this account:")
+        for device in devices:
+            _p(f"  {device.duid}  {device.name}  {device.model}")
+        _p("Set ROBOROCK_DUID in .env to your robot's duid and run discover again.")
+        return
     await gw.connect()
     try:
         status = await _section("status", gw.get_status())
@@ -38,10 +50,10 @@ async def main() -> None:
             _p(f"status       : state={status.state_name} battery={status.battery} "
                f"docked={status.docked} in_cleaning={status.in_cleaning}")
 
-        carpet = await _section("carpet", gw.get_carpet_mode())
-        if carpet:
-            _p(f"carpet mode  : {carpet.value}  "
-               f"(toggle it in the app and re-run to capture both Rise/Avoid values)")
+        carpet = await _section("carpet", gw.get_carpet_value())
+        if carpet is not None:
+            _p(f"carpet value : {carpet}  (set carpet Rise, then Avoid, in the Roborock app "
+               f"and run discover after each to capture both values)")
 
         rooms = await _section("rooms", gw.list_rooms())
         if rooms is not None:

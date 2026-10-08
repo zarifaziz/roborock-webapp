@@ -297,6 +297,7 @@ src/roborock_auto/
     mapping.py          # MapPort
     maintenance.py      # MaintenancePort
     lifecycle.py        # ConnectionPort
+    onboarding.py       # OnboardingPort (discover CLI: account devices, raw carpet value)
     cleaning_log.py     # CleaningLogPort (CONTROL: records every Clean, any entry point)
     occurrences.py      # OccurrencePort (SCHEDULING: the scheduler's store)
     room_intervals.py   # RoomIntervalPort (SCHEDULING: the Overdue view's store)
@@ -315,9 +316,8 @@ src/roborock_auto/
     scheduler.py         # the tick: materialise, select, gate, claim, fire, record
   adapters/
     __init__.py         # get_gateway(config): picks live or fake
-    sample_map.py       # placeholder PNG shared by fake and the live map fallback
     roborock_cloud/     # adapter.py  codes.py  session.py
-    fake/               # fake_robot.py (FakeRobot)
+    fake/               # fake_robot.py (FakeRobot)  floor_plan.py  map_render.py (demo apartment map)
     sqlite/             # database.py  cleaning_log.py  occurrences.py  room_intervals.py  schedule_rules.py  sequences.py
     web/                # server.py  static/
     cron/               # run.py

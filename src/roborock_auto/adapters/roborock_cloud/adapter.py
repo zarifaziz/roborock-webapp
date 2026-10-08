@@ -1,15 +1,13 @@
 """The driven adapter over python-roborock: the one package importing roborock.*.
 
 This is the anti-corruption layer. It cannot be exercised without a Roborock login, so it
-is quarantined behind the ports and covered by mock tests (test_live_mapping.py) that pin
+is quarantined behind the ports and covered by mock tests (test_cloud_adapter_mapping.py) that pin
 the command/param each method sends and the state-code -> DeviceStatus mapping. All device
 I/O is serialized by a single lock (single user, cheap). Transport-level retry lives here;
 workflow-level retry belongs to the use cases.
 
-Command NAMES below are verified against the installed python-roborock. Param SHAPES marked
-"confirm on live bring-up" are the community-common form and should be checked on the first
-real run via discover; they are isolated here so a wrong guess can't reach the rest of the
-app. Code tables and pure translation helpers live in codes.py.
+Command names and param shapes below are verified on a Qrevo L Pro; other models may
+differ, and keeping them here means a mismatch can't reach the rest of the app. Code tables and pure translation helpers live in codes.py.
 """
 
 from __future__ import annotations
@@ -47,6 +45,7 @@ from roborock_auto.adapters.roborock_cloud.session import load_user_data
 from roborock_auto.config import Config
 from roborock_auto.domain.cleaning_history import CleanRecord
 from roborock_auto.domain.models import (
+    AccountDevice,
     CarpetMode,
     CleaningMode,
     ConsumablePart,
@@ -98,6 +97,13 @@ class RoborockCloudAdapter:
 
     # --- lifecycle --------------------------------------------------------
     async def connect(self) -> None:
+        await self._open_manager()
+        devices = await self._manager.get_devices()
+        self._device = _pick_device(devices, self._config.duid)
+        # set() writes through, but the library also edits cached data in place.
+        await self._cache.flush()
+
+    async def _open_manager(self) -> None:
         from roborock.devices.device_manager import UserParams, create_device_manager
         from roborock.web_api import RoborockApiClient
 
@@ -153,10 +159,12 @@ class RoborockCloudAdapter:
         self._manager = await create_device_manager(
             params, cache=self._cache, map_parser_config=map_config
         )
+
+    async def list_devices(self) -> list[AccountDevice]:
+        if self._manager is None:
+            await self._open_manager()
         devices = await self._manager.get_devices()
-        self._device = _pick_device(devices, self._config.duid)
-        # set() writes through, but the library also edits cached data in place.
-        await self._cache.flush()
+        return [AccountDevice(d.duid, d.name, d.product.model) for d in devices]
 
     async def close(self) -> None:
         if self._manager is not None:
@@ -384,9 +392,7 @@ class RoborockCloudAdapter:
         return await self._locked_retry(read)
 
     async def get_carpet_mode(self) -> CarpetMode:
-        # This firmware returns [{"carpet_clean_mode": <int>}].
-        resp = await self._send(RoborockCommand.GET_CARPET_CLEAN_MODE)
-        value = extract_carpet_value(resp)
+        value = await self.get_carpet_value()
         if value == self._config.carpet_rise_value:
             return CarpetMode.RISE
         if value == self._config.carpet_avoid_value:
@@ -430,6 +436,10 @@ class RoborockCloudAdapter:
             await self._v1.status.set_cleaning_mode(CLEANING_MODE_NAMES[mode])
 
         await self._locked_retry(do)
+
+    async def get_carpet_value(self) -> int:
+        # This firmware returns [{"carpet_clean_mode": <int>}].
+        return extract_carpet_value(await self._send(RoborockCommand.GET_CARPET_CLEAN_MODE))
 
     async def set_carpet_mode(self, mode: CarpetMode) -> None:
         if mode is CarpetMode.RISE:

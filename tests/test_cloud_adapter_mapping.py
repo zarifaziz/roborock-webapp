@@ -26,7 +26,14 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     state_name,
 )
 from roborock_auto.config import Config
-from roborock_auto.domain.models import CarpetMode, DeviceStatus, FanPower, MopMode, WaterMode
+from roborock_auto.domain.models import (
+    AccountDevice,
+    CarpetMode,
+    DeviceStatus,
+    FanPower,
+    MopMode,
+    WaterMode,
+)
 
 
 def _config(**over) -> Config:
@@ -162,6 +169,26 @@ async def test_carpet_sends_configured_value(gw):
 async def test_set_carpet_rejects_unknown(gw):
     with pytest.raises(ValueError, match="carpet mode"):
         await gw.set_carpet_mode(CarpetMode.UNKNOWN)
+
+
+async def test_carpet_value_reads_the_raw_setting_without_the_configured_values(gw):
+    gw._config = _config(carpet_rise_value=0, carpet_avoid_value=1)
+    gw._device.v1_properties.command.send.return_value = [{"carpet_clean_mode": 3}]
+    assert await gw.get_carpet_value() == 3
+    assert _last_send(gw).args[0] == RoborockCommand.GET_CARPET_CLEAN_MODE
+
+
+async def test_list_devices_reads_every_device_on_the_account():
+    gw = RoborockCloudAdapter(_config(duid=""))
+    devices = [
+        SimpleNamespace(duid="A1", name="Qrevo", product=SimpleNamespace(model="roborock.vacuum.a1")),
+        SimpleNamespace(duid="B2", name="Dyad", product=SimpleNamespace(model="roborock.wetdryvac.b2")),
+    ]
+    gw._manager = SimpleNamespace(get_devices=AsyncMock(return_value=devices))
+    assert await gw.list_devices() == [
+        AccountDevice(duid="A1", name="Qrevo", model="roborock.vacuum.a1"),
+        AccountDevice(duid="B2", name="Dyad", model="roborock.wetdryvac.b2"),
+    ]
 
 
 async def test_clean_rooms_params(gw):

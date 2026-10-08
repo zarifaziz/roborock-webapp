@@ -101,3 +101,20 @@ def test_assistant_configuration(monkeypatch, enabled, model, expected):
     monkeypatch.setenv("ASSISTANT_MODEL", model)
     config = Config.from_env()
     assert (config.assistant_enabled, config.assistant_model) == expected
+
+
+def test_live_mode_still_requires_the_duid_and_points_to_the_real_discover_module(monkeypatch):
+    # The server and cron drive the robot, so they keep refusing to start without it.
+    monkeypatch.setenv("GATEWAY", "live")
+    monkeypatch.setenv("ROBOROCK_EMAIL", "e@x.com")
+    monkeypatch.setenv("CARPET_RISE_VALUE", "2")
+    monkeypatch.setenv("CARPET_AVOID_VALUE", "0")
+    monkeypatch.delenv("ROBOROCK_DUID", raising=False)
+    with pytest.raises(ConfigError) as error:
+        Config.from_env()
+    assert str(error.value) == (
+        "ROBOROCK_DUID must be set for live mode. Run "
+        "`uv run python -m roborock_auto.adapters.cli.login`, then "
+        "`uv run python -m roborock_auto.adapters.cli.discover`, and fill in .env "
+        "before running against the real robot."
+    )

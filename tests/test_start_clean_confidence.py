@@ -55,7 +55,8 @@ async def test_unconfirmed_carpet_never_starts_or_records():
     log.record_run.assert_not_awaited()
 
 
-async def test_sequence_never_departs_with_unconfirmed_cleaning_mode():
+async def test_sequence_never_departs_with_unconfirmed_cleaning_mode(monkeypatch):
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
     from roborock_auto.application.sequence_runner import run_sequence
     from roborock_auto.config import Config
     from roborock_auto.domain.models import Step

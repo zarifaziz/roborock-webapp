@@ -11,10 +11,11 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 
+from roborock_auto.adapters.fake import floor_plan, map_render
 from roborock_auto.adapters.map_text import TextRoom, render_map_text
-from roborock_auto.adapters.sample_map import SAMPLE_MAP_PNG
 from roborock_auto.domain.cleaning_history import CleanRecord
 from roborock_auto.domain.models import (
+    AccountDevice,
     CarpetMode,
     CleaningMode,
     ConsumablePart,
@@ -29,18 +30,19 @@ from roborock_auto.domain.models import (
     WaterMode,
 )
 
-_ROOMS = [
-    Room(16, "Living Room"),
-    Room(17, "Kitchen"),
-    Room(18, "Bedroom"),
-    Room(19, "Hallway"),
-]
-# Quadrant bboxes matching the 2x2 fake map, for the click-to-select overlay.
+_ROOMS = [Room(r.segment_id, r.name) for r in floor_plan.ROOMS]
+
+
+def _bbox(room: floor_plan.PlanRoom) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = room.bounds
+    (px0, py0), (px1, py1) = map_render.to_image((x0, y0)), map_render.to_image((x1, y1))
+    size = map_render.IMAGE_SIZE
+    return round(px0 / size, 4), round(py0 / size, 4), round(px1 / size, 4), round(py1 / size, 4)
+
+
 _MAP_ROOMS = [
-    Room(16, "Living Room", bbox=(0.0, 0.0, 0.5, 0.5)),
-    Room(17, "Kitchen", bbox=(0.5, 0.0, 1.0, 0.5)),
-    Room(18, "Bedroom", bbox=(0.0, 0.5, 0.5, 1.0)),
-    Room(19, "Hallway", bbox=(0.5, 0.5, 1.0, 1.0)),
+    Room(r.segment_id, r.name, bbox=_bbox(r), color="#{:02x}{:02x}{:02x}".format(*r.color))
+    for r in floor_plan.ROOMS
 ]
 _ROUTINES = [
     Routine(1001, "Vacuum whole house"),
@@ -67,6 +69,12 @@ class FakeRobot:
         # Scripted mode for tests: (elapsed_since_t0, DeviceStatus), evaluated against _t0.
         self._timeline: list[tuple[float, DeviceStatus]] | None = None
         self._t0 = clock()
+        # The route the current or last job drives, and how far along it a job that ended
+        # early (stop/dock) got; the map draws the driven part as the trail.
+        self._route: list[floor_plan.Pt] = [floor_plan.DOCK]
+        self._route_mop = False
+        self._route_avoids_carpet = True
+        self._ended_at = 1.0
         # Recorded commands so tests can assert what the automation sent.
         self.commands: list[tuple] = []
 
@@ -111,6 +119,7 @@ class FakeRobot:
         elapsed = self._clock() - self._job_start
         if elapsed >= CLEAN_DURATION:
             self._job_start = None
+            self._ended_at = 1.0
             return DeviceStatus("charging", self._battery, in_cleaning=False, docked=True,
                                 **settings)
         if elapsed < DEPART_DELAY:
@@ -131,14 +140,55 @@ class FakeRobot:
         return True
 
     async def get_map_png(self) -> bytes:
-        return SAMPLE_MAP_PNG
+        trail, robot = self._position()
+        return map_render.render(
+            trail, robot, mop=self._route_mop,
+            mop_lifted_on_carpet=not self._route_avoids_carpet,
+        )
 
     async def get_map_data(self) -> MapData:
-        return MapData(rooms=_MAP_ROOMS, robot=Point(50, 50), image_width=100, image_height=100)
+        robot = Point(*map_render.to_image(self._position()[1]))
+        size = map_render.IMAGE_SIZE
+        return MapData(rooms=list(_MAP_ROOMS), robot=robot, image_width=size, image_height=size)
 
     async def get_map_text(self) -> str:
+        trail, robot = self._position()
+        size = map_render.IMAGE_SIZE
+
+        def norm(p: floor_plan.Pt) -> tuple[float, float]:
+            x, y = map_render.to_image(p)
+            return x / size, y / size
+
         rooms = [TextRoom(r.name, r.bbox) for r in _MAP_ROOMS if r.bbox]
-        return render_map_text(rooms, (0.5, 0.5), [])  # robot at centre, no path in fake
+        return render_map_text(rooms, norm(robot), [norm(p) for p in floor_plan.densify(trail)])
+
+    def _progress(self) -> float:
+        """Fraction of the route driven; the robot leaves after DEPART_DELAY and is home
+        exactly at CLEAN_DURATION."""
+        if self._paused_elapsed is not None:
+            elapsed = self._paused_elapsed
+        elif self._job_start is not None:
+            elapsed = self._clock() - self._job_start
+        else:
+            return self._ended_at
+        return (elapsed - DEPART_DELAY) / (CLEAN_DURATION - DEPART_DELAY)
+
+    def _position(self) -> tuple[list[floor_plan.Pt], floor_plan.Pt]:
+        trail, robot = floor_plan.walk(self._route, self._progress())
+        if self._job_start is None and self._paused_elapsed is None:
+            robot = floor_plan.DOCK  # stop/dock end the job with the robot home
+        return trail, robot
+
+    def _begin_route(self, segment_ids: list[int] | None) -> None:
+        self._route = floor_plan.cleaning_route(
+            segment_ids, avoid_carpet=self._carpet == CarpetMode.AVOID
+        )
+        self._route_mop = self._cleaning != CleaningMode.VACUUM
+        self._route_avoids_carpet = self._carpet == CarpetMode.AVOID
+
+    def _end_early(self) -> None:
+        if self._job_start is not None or self._paused_elapsed is not None:
+            self._ended_at = max(0.0, min(1.0, self._progress()))
 
     async def list_rooms(self) -> list[Room]:
         return list(_ROOMS)
@@ -158,6 +208,14 @@ class FakeRobot:
     async def get_carpet_mode(self) -> CarpetMode:
         return self._carpet
 
+    # --- onboarding -------------------------------------------------------
+    async def list_devices(self) -> list[AccountDevice]:
+        return [AccountDevice("fake-duid", "Fake Roborock", "roborock.vacuum.fake")]
+
+    async def get_carpet_value(self) -> int:
+        # Matches the fake-mode CARPET_RISE_VALUE / CARPET_AVOID_VALUE defaults.
+        return {CarpetMode.RISE: 0, CarpetMode.AVOID: 1}[self._carpet]
+
     # --- commands ---------------------------------------------------------
     async def start(self) -> None:
         self.commands.append(("start",))
@@ -165,6 +223,7 @@ class FakeRobot:
             self._job_start = self._clock() - self._paused_elapsed
             self._paused_elapsed = None
         else:
+            self._begin_route(None)
             self._job_start = self._clock()
 
     async def pause(self) -> None:
@@ -175,11 +234,13 @@ class FakeRobot:
 
     async def stop(self) -> None:
         self.commands.append(("stop",))
+        self._end_early()
         self._job_start = None
         self._paused_elapsed = None
 
     async def dock(self) -> None:
         self.commands.append(("dock",))
+        self._end_early()
         self._job_start = None
         self._paused_elapsed = None
 
@@ -193,6 +254,7 @@ class FakeRobot:
             self.commands.append(("clean_rooms", tuple(segment_ids)))
         else:
             self.commands.append(("clean_rooms", tuple(segment_ids), repeat))
+        self._begin_route(segment_ids)
         self._job_start = self._clock()
 
     async def reset_consumable(self, part: ConsumablePart) -> None:
@@ -220,4 +282,5 @@ class FakeRobot:
 
     async def run_routine(self, routine_id: int) -> None:
         self.commands.append(("run_routine", routine_id))
+        self._begin_route(None)
         self._job_start = self._clock()

@@ -15,6 +15,7 @@ from roborock_auto.ports.lifecycle import ConnectionPort
 from roborock_auto.ports.maintenance import MaintenancePort
 from roborock_auto.ports.mapping import MapPort
 from roborock_auto.ports.occurrences import OccurrencePort
+from roborock_auto.ports.onboarding import OnboardingPort
 from roborock_auto.ports.robot import (
     CleaningControlPort,
     CleaningSettingsPort,
@@ -35,6 +36,7 @@ __all__ = [
     "MaintenancePort",
     "MapPort",
     "OccurrencePort",
+    "OnboardingPort",
     "RobotGateway",
     "RobotStatusPort",
     "RoomIntervalPort",
@@ -54,6 +56,7 @@ class RobotGateway(
     RoutinePort,
     MapPort,
     MaintenancePort,
+    OnboardingPort,
     Protocol,
 ):
     """Union of all ports; every concrete adapter implements this."""

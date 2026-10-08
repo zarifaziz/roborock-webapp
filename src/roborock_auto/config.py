@@ -30,8 +30,10 @@ def _require(name: str) -> str:
     value = os.getenv(name, "").strip()
     if not value:
         raise ConfigError(
-            f"{name} must be set for live mode. Run `uv run python -m roborock_auto.discover` "
-            f"and fill in .env before running against the real robot."
+            f"{name} must be set for live mode. Run "
+            f"`uv run python -m roborock_auto.adapters.cli.login`, then "
+            f"`uv run python -m roborock_auto.adapters.cli.discover`, and fill in .env "
+            f"before running against the real robot."
         )
     return value
 
@@ -73,17 +75,21 @@ class Config:
     assistant_model: str = "sonnet"
 
     @classmethod
-    def from_env(cls) -> Config:
+    def from_env(cls, *, require_device: bool = True) -> Config:
+        """require_device=False is for the onboarding CLIs (login, discover), which run
+        before the duid and carpet values are known. They never set the carpet mode, so
+        the placeholder carpet values they get are never sent to the robot."""
         gateway = _get("GATEWAY", "fake").lower()
         live = gateway == "live"
+        device_live = live and require_device
         # In live mode the carpet ints control mop-on-carpet behavior, so they are required,
         # not defaulted. A wrong value would wet a carpet.
-        rise = _require("CARPET_RISE_VALUE") if live else _get("CARPET_RISE_VALUE", "0")
-        avoid = _require("CARPET_AVOID_VALUE") if live else _get("CARPET_AVOID_VALUE", "1")
+        rise = _require("CARPET_RISE_VALUE") if device_live else _get("CARPET_RISE_VALUE", "0")
+        avoid = _require("CARPET_AVOID_VALUE") if device_live else _get("CARPET_AVOID_VALUE", "1")
         return cls(
             gateway=gateway,
             email=_require("ROBOROCK_EMAIL") if live else _get("ROBOROCK_EMAIL", ""),
-            duid=_require("ROBOROCK_DUID") if live else _get("ROBOROCK_DUID", ""),
+            duid=_require("ROBOROCK_DUID") if device_live else _get("ROBOROCK_DUID", ""),
             carpet_rise_value=int(rise),
             carpet_avoid_value=int(avoid),
             poll_interval_sec=float(_get("POLL_INTERVAL_SEC", "5")),

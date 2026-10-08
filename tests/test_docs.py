@@ -16,7 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 def _quickstart_code_block() -> str:
     readme = (REPO_ROOT / "README.md").read_text()
     match = re.search(
-        r"## Try it now \(fake mode, no account\)\n\n```\n(.*?)```", readme, re.DOTALL
+        r"## Quickstart \(fake mode, no account\)\n\n.*?```\n(.*?)```", readme, re.DOTALL
     )
     assert match, "README.md quickstart section not found"
     return match.group(1)
@@ -24,10 +24,11 @@ def _quickstart_code_block() -> str:
 
 def test_readme_quickstart_sets_up_env_before_launching_the_app():
     expected = (
-        "uv sync --extra dev\n"
-        "cp .env.example .env   # fake mode needs only TIMEZONE; set it to your IANA zone\n"
+        "git clone https://github.com/zarifaziz/roborock-webapp.git\n"
+        "cd roborock-webapp\n"
+        "cp .env.example .env    # fake mode needs only TIMEZONE; set it to your IANA zone\n"
+        "uv sync\n"
         "uv run uvicorn roborock_auto.adapters.web.server:app --host 127.0.0.1 --port 8000\n"
-        "# open http://127.0.0.1:8000\n"
     )
     assert _quickstart_code_block() == expected
 

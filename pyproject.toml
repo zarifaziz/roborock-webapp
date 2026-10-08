@@ -1,14 +1,17 @@
 [project]
 name = "roborock-webapp"
 version = "0.1.0"
-description = "Local web app to control a Roborock Qrevo L Pro, with a one-click carpet-aware two-stage clean"
+description = "Self-hosted web app for Roborock robot vacuums: multi-step cleaning sequences, a carpet-aware vacuum-then-mop clean, and a Claude cleaning assistant"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "python-roborock>=2.0.0",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "claude-agent-sdk>=0.2.159,<0.3",
+    "pillow>=10",
 ]
 
 [project.optional-dependencies]

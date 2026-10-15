@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 
+import pytest
 from PIL import Image
 
 from roborock_auto.adapters.fake import FakeRobot
@@ -64,6 +65,27 @@ async def test_status_reflects_setting_changes():
     await gw.set_water_mode(WaterMode.INTENSE)
     status = await gw.get_status()
     assert (status.fan_power, status.mop_route, status.water_mode) == ("turbo", "deep", "intense")
+
+
+@pytest.mark.parametrize(
+    "mode, expected",
+    [
+        (CleaningMode.VACUUM, ("balanced", None, "standard")),
+        (CleaningMode.VAC_AND_MOP, ("balanced", "standard", "standard")),
+        (CleaningMode.MOP, ("off", "standard", "standard")),
+    ],
+)
+async def test_mode_switch_overwrites_fan_water_and_route_like_the_library(mode, expected):
+    """python-roborock's SET_CLEAN_MOTOR_MODE carries fan, water and route together, so a
+    mode switch on the real robot discards what Setup chose. The fake must do the same or
+    no test can see that loss."""
+    gw = FakeRobot(clock=Clock())
+    await gw.set_fan_power(FanPower.TURBO)
+    await gw.set_mop_mode(MopMode.DEEP)
+    await gw.set_water_mode(WaterMode.INTENSE)
+    await gw.set_cleaning_mode(mode)
+    status = await gw.get_status()
+    assert (status.fan_power, status.water_mode, status.mop_route) == expected
 
 
 async def test_cleaning_status_carries_telemetry():

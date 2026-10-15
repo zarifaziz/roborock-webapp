@@ -19,7 +19,11 @@ from enum import Enum
 from typing import Any, Protocol
 
 from roborock_auto.application.retry import AutomationError, DepartRejected, Sleep, with_retry
-from roborock_auto.application.start_clean import utc_now, verify_cleaning_mode
+from roborock_auto.application.start_clean import (
+    apply_clean_settings,
+    utc_now,
+    verify_cleaning_mode,
+)
 from roborock_auto.config import Config
 from roborock_auto.domain.models import (
     CarpetMode,
@@ -34,6 +38,8 @@ from roborock_auto.domain.policies import (
     job_stalled,
     ready_to_start,
     recharging_pending,
+    settings_after_mode_switch,
+    setup_settings,
 )
 from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.robot import CleaningControlPort, CleaningSettingsPort, RobotStatusPort
@@ -219,6 +225,10 @@ async def run_sequence(
             f"robot not docked/idle at start (state={start.state_name}); aborting"
         )
 
+    # Read once, before any Step's mode switch: a vacuum Step leaves water off, which a
+    # later mopping Step would otherwise take for the Setup value.
+    setup = setup_settings(start)
+
     # Any failure past this point can leave the robot mid-floor with wet pads down and carpet
     # mode latched at Rise; recover best-effort before re-raising. Only past this point — an
     # abort before we start (e.g. an official-app job running) must not dock someone's clean.
@@ -234,6 +244,8 @@ async def run_sequence(
             # Read-back before departing: if Avoid did not stick, wet pads would cross carpet.
             await _set_carpet_verified(gw, step.carpet, sleep=sleep)
             await with_retry(lambda mode=step.mode: gw.set_cleaning_mode(mode), sleep=sleep)
+            settings = settings_after_mode_switch(step.mode, step.settings, setup)
+            await with_retry(lambda s=settings: apply_clean_settings(gw, s), sleep=sleep)
             await verify_cleaning_mode(gw, step.mode)
             on_progress(index, Phase.DEPARTING)
             await _depart_and_confirm(

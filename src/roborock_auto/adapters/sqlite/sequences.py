@@ -11,8 +11,26 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from enum import Enum
 
-from roborock_auto.domain.models import CarpetMode, CleaningMode, Sequence, Step
+from roborock_auto.domain.models import (
+    CarpetMode,
+    CleaningMode,
+    CleanSettings,
+    FanPower,
+    MopMode,
+    Sequence,
+    Step,
+    WaterMode,
+)
+
+
+def _value(setting: Enum | None) -> str | None:
+    return None if setting is None else setting.value
+
+
+def _enum[E: Enum](enum: type[E], value: str | None) -> E | None:
+    return None if value is None else enum(value)
 
 
 def _encode_steps(steps: tuple[Step, ...]) -> str:
@@ -23,6 +41,9 @@ def _encode_steps(steps: tuple[Step, ...]) -> str:
                 "carpet": step.carpet.value,
                 "segment_ids": None if step.segment_ids is None else list(step.segment_ids),
                 "repeat": step.repeat,
+                "fan_power": _value(step.settings.fan_power),
+                "water_mode": _value(step.settings.water_mode),
+                "mop_route": _value(step.settings.mop_route),
             }
             for step in steps
         ]
@@ -37,6 +58,12 @@ def _parse_steps(steps_json: str) -> tuple[Step, ...]:
             segment_ids=None if payload["segment_ids"] is None else tuple(payload["segment_ids"]),
             # Rows written before Steps had passes carry no key and ran one pass.
             repeat=payload.get("repeat", 1),
+            # Migration 6 gave every older row these keys as null, "Same as Setup".
+            settings=CleanSettings(
+                fan_power=_enum(FanPower, payload["fan_power"]),
+                water_mode=_enum(WaterMode, payload["water_mode"]),
+                mop_route=_enum(MopMode, payload["mop_route"]),
+            ),
         )
         for payload in json.loads(steps_json)
     )

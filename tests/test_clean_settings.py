@@ -18,6 +18,7 @@ from roborock_auto.config import Config
 from roborock_auto.domain.models import (
     CarpetMode,
     CleaningMode,
+    CleanSettings,
     CleanSource,
     FanPower,
     MopMode,
@@ -96,8 +97,8 @@ async def _run(gw: RecordingRobot, clock: FakeClock, steps: tuple[Step, ...]) ->
     )
 
 
-def step(mode: CleaningMode, **settings) -> Step:
-    return Step(mode=mode, carpet=CarpetMode.AVOID, segment_ids=None, **settings)
+def step(mode: CleaningMode, settings: CleanSettings = CleanSettings()) -> Step:
+    return Step(mode=mode, carpet=CarpetMode.AVOID, segment_ids=None, settings=settings)
 
 
 async def test_sequence_steps_keep_the_setup_fan_water_and_route():
@@ -116,6 +117,42 @@ async def test_sequence_steps_keep_the_setup_fan_water_and_route():
         ("turbo", None, "standard"),  # vacuum only: water stays off, route not mopping
         ("turbo", "intense", "deep"),
         ("off", "intense", "deep"),  # mop only: suction stays off
+    ]
+
+
+async def test_a_step_setting_wins_over_setup_field_by_field():
+    clock = FakeClock()
+    gw = await _robot_with_setup(clock)
+    await _run(
+        gw,
+        clock,
+        (
+            step(CleaningMode.VACUUM, settings=CleanSettings(fan_power=FanPower.MAX)),
+            step(CleaningMode.VAC_AND_MOP, settings=CleanSettings(water_mode=WaterMode.MILD)),
+            step(CleaningMode.MOP, settings=CleanSettings(mop_route=MopMode.STANDARD)),
+        ),
+    )
+    assert gw.settings_at_departure == [
+        ("max", None, "standard"),
+        ("turbo", "mild", "deep"),
+        ("off", "intense", "standard"),
+    ]
+
+
+async def test_setup_is_read_once_so_a_vacuum_step_does_not_dry_out_the_next_mop():
+    clock = FakeClock()
+    gw = await _robot_with_setup(clock)
+    await _run(gw, clock, (step(CleaningMode.VACUUM), step(CleaningMode.MOP)))
+    assert gw.commands == [
+        ("set_carpet_mode", CarpetMode.AVOID),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("set_fan_power", FanPower.TURBO),
+        ("start",),
+        ("set_carpet_mode", CarpetMode.AVOID),
+        ("set_cleaning_mode", CleaningMode.MOP),
+        ("set_water_mode", WaterMode.INTENSE),
+        ("set_mop_mode", MopMode.DEEP),
+        ("start",),
     ]
 
 

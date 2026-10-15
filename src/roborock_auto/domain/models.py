@@ -46,6 +46,24 @@ class CleaningMode(Enum):
     MOP = "mop"
     VAC_AND_MOP = "vac_and_mop"
 
+    @property
+    def vacuums(self) -> bool:
+        return self is not CleaningMode.MOP
+
+    @property
+    def mops(self) -> bool:
+        return self is not CleaningMode.VACUUM
+
+
+@dataclass(frozen=True)
+class CleanSettings:
+    """Fan power, water flow and mop route: the three settings a cleaning-mode switch
+    overwrites. None on a field means no particular value: on a Step, "Same as Setup"."""
+
+    fan_power: FanPower | None = None
+    water_mode: WaterMode | None = None
+    mop_route: MopMode | None = None
+
 
 class CleanSource(Enum):
     """Which entry point started a Clean, so recorded runs can tell the user's own
@@ -208,12 +226,14 @@ class CleanAction:
 @dataclass(frozen=True)
 class Step:
     """One Clean inside a Sequence: clean `segment_ids` (None = whole house) in `mode`,
-    with carpet mode `carpet` set and read back before the robot leaves."""
+    with carpet mode `carpet` set and read back before the robot leaves, and `settings`
+    applied over whatever Setup has."""
 
     mode: CleaningMode
     carpet: CarpetMode
     segment_ids: tuple[int, ...] | None
     repeat: int = 1  # passes per room; the firmware only repeats room cleans
+    settings: CleanSettings = CleanSettings()
 
     def __post_init__(self) -> None:
         if self.carpet not in (CarpetMode.RISE, CarpetMode.AVOID):
@@ -224,6 +244,12 @@ class Step:
             raise ValueError("a Step's repeat must be between 1 and 3")
         if self.repeat != 1 and self.segment_ids is None:
             raise ValueError("a whole-house Step runs one pass; repeat needs chosen rooms")
+        if self.settings.fan_power is not None and not self.mode.vacuums:
+            raise ValueError("a mop-only Step runs without suction; it cannot set fan power")
+        if not self.mode.mops and (
+            self.settings.water_mode is not None or self.settings.mop_route is not None
+        ):
+            raise ValueError("a vacuum-only Step does not mop; it cannot set water or mop route")
 
 
 @dataclass(frozen=True)

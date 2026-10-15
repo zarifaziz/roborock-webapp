@@ -12,13 +12,17 @@ from roborock_auto.domain.models import (
     CarpetMode,
     CleanAction,
     CleaningMode,
+    CleanSettings,
     DeviceStatus,
+    FanPower,
+    MopMode,
     Occurrence,
     OccurrenceState,
     RoomInterval,
     SegmentOverdue,
     Sequence,
     Step,
+    WaterMode,
     Weekday,
     WeeklyGrid,
 )
@@ -29,6 +33,8 @@ from roborock_auto.domain.policies import (
     occurrence_expired,
     overdue_report,
     ready_to_start,
+    settings_after_mode_switch,
+    setup_settings,
 )
 
 
@@ -275,6 +281,68 @@ def test_a_step_carpet_mode_is_rise_or_avoid_never_unknown():
     # Unknown is what the device can report, not an instruction the runner can send.
     with pytest.raises(ValueError, match="carpet mode must be rise or avoid"):
         Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.UNKNOWN, segment_ids=None)
+
+
+def test_a_step_only_sets_what_its_mode_uses():
+    Step(
+        mode=CleaningMode.VAC_AND_MOP, carpet=CarpetMode.AVOID, segment_ids=None,
+        settings=CleanSettings(FanPower.MAX, WaterMode.MILD, MopMode.DEEP),
+    )
+    with pytest.raises(ValueError, match="vacuum-only Step does not mop"):
+        Step(
+            mode=CleaningMode.VACUUM, carpet=CarpetMode.AVOID, segment_ids=None,
+            settings=CleanSettings(mop_route=MopMode.DEEP),
+        )
+    with pytest.raises(ValueError, match="mop-only Step runs without suction"):
+        Step(
+            mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=None,
+            settings=CleanSettings(fan_power=FanPower.TURBO),
+        )
+
+
+def test_setup_settings_keeps_only_values_this_app_can_send_back():
+    assert setup_settings(
+        _status(fan_power="turbo", water_mode="intense", mop_route="deep")
+    ) == CleanSettings(FanPower.TURBO, WaterMode.INTENSE, MopMode.DEEP)
+    # Suction off (mop only), water off (vacuum only), a route we have no choice for.
+    assert setup_settings(
+        _status(fan_power="off", water_mode=None, mop_route="deep_plus")
+    ) == CleanSettings()
+
+
+TURBO_INTENSE_DEEP = CleanSettings(FanPower.TURBO, WaterMode.INTENSE, MopMode.DEEP)
+
+
+@pytest.mark.parametrize(
+    ("mode", "chosen", "expected"),
+    [
+        # "Same as Setup" everywhere: the parts of Setup the mode uses.
+        (CleaningMode.VACUUM, CleanSettings(), CleanSettings(fan_power=FanPower.TURBO)),
+        (
+            CleaningMode.MOP, CleanSettings(),
+            CleanSettings(water_mode=WaterMode.INTENSE, mop_route=MopMode.DEEP),
+        ),
+        (CleaningMode.VAC_AND_MOP, CleanSettings(), TURBO_INTENSE_DEEP),
+        # A chosen value wins over Setup, field by field.
+        (
+            CleaningMode.VAC_AND_MOP, CleanSettings(fan_power=FanPower.MAX),
+            CleanSettings(FanPower.MAX, WaterMode.INTENSE, MopMode.DEEP),
+        ),
+        (
+            CleaningMode.VAC_AND_MOP,
+            CleanSettings(FanPower.QUIET, WaterMode.MILD, MopMode.STANDARD),
+            CleanSettings(FanPower.QUIET, WaterMode.MILD, MopMode.STANDARD),
+        ),
+    ],
+)
+def test_settings_after_mode_switch(mode, chosen, expected):
+    assert settings_after_mode_switch(mode, chosen, TURBO_INTENSE_DEEP) == expected
+
+
+def test_settings_after_mode_switch_with_nothing_known_sends_nothing():
+    assert settings_after_mode_switch(
+        CleaningMode.VAC_AND_MOP, CleanSettings(), CleanSettings()
+    ) == CleanSettings()
 
 
 def test_a_sequence_needs_a_name_and_at_least_one_step():

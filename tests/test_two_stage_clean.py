@@ -27,7 +27,10 @@ from roborock_auto.domain.models import (
     CleaningRun,
     CleanSource,
     DeviceStatus,
+    FanPower,
+    MopMode,
     Step,
+    WaterMode,
 )
 
 
@@ -513,6 +516,7 @@ async def test_two_stage_cancel_mid_vacuum_docks_and_restores_carpet():
     assert gw.commands == [
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM],
         ("start",),
         ("set_carpet_mode", CarpetMode.AVOID),
         ("dock",),
@@ -597,10 +601,29 @@ END_RESET = [("set_carpet_mode", CarpetMode.AVOID)]
 ABORT_RECOVERY = [("set_carpet_mode", CarpetMode.AVOID), ("dock",)]
 
 
+# The fake's Setup (Balanced fan, Standard water, Standard route), sent back after each
+# mode switch for the parts of it that mode uses.
+SETUP_KEPT = {
+    CleaningMode.VACUUM: [("set_fan_power", FanPower.BALANCED)],
+    CleaningMode.MOP: [
+        ("set_water_mode", WaterMode.STANDARD), ("set_mop_mode", MopMode.STANDARD),
+    ],
+    CleaningMode.VAC_AND_MOP: [
+        ("set_fan_power", FanPower.BALANCED),
+        ("set_water_mode", WaterMode.STANDARD),
+        ("set_mop_mode", MopMode.STANDARD),
+    ],
+}
+
+
 def _step_commands(step: Step) -> list[tuple]:
-    """What one Step sends: carpet, then mode, then the trigger for its scope."""
+    """What one Step sends: carpet, then mode and the Setup it keeps, then the trigger for
+    its scope."""
     depart = ("start",) if step.segment_ids is None else ("clean_rooms", step.segment_ids)
-    return [("set_carpet_mode", step.carpet), ("set_cleaning_mode", step.mode), depart]
+    return [
+        ("set_carpet_mode", step.carpet), ("set_cleaning_mode", step.mode),
+        *SETUP_KEPT[step.mode], depart,
+    ]
 
 
 def _phases(index: int) -> list[tuple[int, Phase]]:

@@ -2668,10 +2668,15 @@ async function refreshSchedule() {
 /* ---------- sequences ---------- */
 let sequencesCache = [];
 let seqDraft = null;
-let seqFetchedFor = null;  // the editor's working copy: { id, name, steps: [{ mode, carpet, scope, ids }] }
+let seqFetchedFor = null;  // the editor's working copy: { id, name, steps: [{ mode, carpet, scope, ids, fan_power, water_mode, mop_route }] }
 
 const STEP_MODE_WORDS = { vacuum: "Vacuum", mop: "Mop", vac_and_mop: "Vacuum + mop" };
 const CARPET_WORDS = { rise: "Rise", avoid: "Avoid" };
+const FAN_WORDS = { quiet: "Quiet", balanced: "Balanced", turbo: "Turbo", max: "Max" };
+const WATER_WORDS = { mild: "Mild", standard: "Standard", intense: "Intense" };
+const ROUTE_WORDS = { standard: "Standard", deep: "Deep" };
+// null on a Step setting is "Same as Setup"; the buttons need a value to mark active.
+const SAME_AS_SETUP = "setup";
 const mopsWithRise = (step) => step.carpet === "rise" && step.mode !== "vacuum";
 
 function sequenceName(id) {
@@ -2679,11 +2684,15 @@ function sequenceName(id) {
   return q ? q.name : `Sequence ${id}`;
 }
 
-// "Vacuum · Bathroom, Bathroom1 · carpet Rise" — segment_ids null means the whole house.
+// "Vacuum · Bathroom, Bathroom1 · carpet Rise · Turbo": segment_ids null means the whole
+// house; a setting left Same as Setup is not shown.
 function stepSummary(step) {
   const where = step.segment_ids == null ? "Whole house" : step.segment_ids.map(roomName).join(", ");
   const passes = step.repeat > 1 ? ` · ${step.repeat} passes` : "";
-  return `${STEP_MODE_WORDS[step.mode] || step.mode} · ${where} · carpet ${CARPET_WORDS[step.carpet] || step.carpet}${passes}`;
+  const fan = step.fan_power ? ` · ${FAN_WORDS[step.fan_power] || step.fan_power}` : "";
+  const water = step.water_mode ? ` · ${WATER_WORDS[step.water_mode] || step.water_mode} water` : "";
+  const route = step.mop_route ? ` · ${ROUTE_WORDS[step.mop_route] || step.mop_route} route` : "";
+  return `${STEP_MODE_WORDS[step.mode] || step.mode} · ${where} · carpet ${CARPET_WORDS[step.carpet] || step.carpet}${passes}${fan}${water}${route}`;
 }
 
 async function refreshSequences() {
@@ -2728,7 +2737,10 @@ function listError(msg) {
 }
 
 /* --- templates, filled on the client; nothing is saved until the user taps Save --- */
-const draftStep = (mode, carpet, ids) => ({ mode, carpet, scope: ids ? "rooms" : "whole", ids: ids || [] });
+const draftStep = (mode, carpet, ids, settings = {}) => ({
+  mode, carpet, scope: ids ? "rooms" : "whole", ids: ids || [],
+  fan_power: settings.fan_power || null, water_mode: settings.water_mode || null, mop_route: settings.mop_route || null,
+});
 
 function templateVacuumThenMop() {
   return { id: null, name: "Vacuum then mop", steps: [draftStep("vacuum", "rise"), draftStep("mop", "avoid")] };
@@ -2764,7 +2776,7 @@ function editSequence(id) {
   openSequenceEditor({
     id: q.id,
     name: q.name,
-    steps: q.steps.map((step) => draftStep(step.mode, step.carpet, step.segment_ids)),
+    steps: q.steps.map((step) => draftStep(step.mode, step.carpet, step.segment_ids, step)),
   });
 }
 function closeSequenceEditor() {
@@ -2808,6 +2820,21 @@ function renderDraftSteps() {
         ["rise", "Rise — vacuum carpet, lift mop", "Drive onto carpet and vacuum it; the mop lifts over it"],
         ["avoid", "Avoid — skip carpet", "Stay off carpet entirely"],
       ])}
+      ${step.mode !== "mop" ? `<div class="seg-label">Fan power</div>
+      ${segButtons("fan_power", step.fan_power || SAME_AS_SETUP, [
+        [SAME_AS_SETUP, "Same as Setup", "Use the fan power set in the Setup tab"],
+        ...Object.entries(FAN_WORDS).map(([v, label]) => [v, label, `${label} fan power for this Step`]),
+      ])}` : ""}
+      ${step.mode !== "vacuum" ? `<div class="seg-label">Water flow</div>
+      ${segButtons("water_mode", step.water_mode || SAME_AS_SETUP, [
+        [SAME_AS_SETUP, "Same as Setup", "Use the water flow set in the Setup tab"],
+        ...Object.entries(WATER_WORDS).map(([v, label]) => [v, label, `${label} water flow for this Step`]),
+      ])}
+      <div class="seg-label">Mop route</div>
+      ${segButtons("mop_route", step.mop_route || SAME_AS_SETUP, [
+        [SAME_AS_SETUP, "Same as Setup", "Use the mop route set in the Setup tab"],
+        ...Object.entries(ROUTE_WORDS).map(([v, label]) => [v, label, `${label} mop route for this Step`]),
+      ])}` : ""}
       ${mopsWithRise(step) ? `<div class="seq-warn">This Step mops with carpet Rise. Rise lifts the mop over carpet, so it is allowed, but the robot will drive onto every carpet while mopping.</div>` : ""}
     </div>`;
   }).join("");
@@ -2832,7 +2859,13 @@ function onStepClick(e) {
   } else {
     const seg = btn.closest("[data-field]");
     if (!seg) return;
-    step[seg.dataset.field] = btn.dataset.v;
+    const v = btn.dataset.v;
+    step[seg.dataset.field] = v === SAME_AS_SETUP ? null : v;
+    // Settings the new mode does not use go back to Same as Setup, as the server rejects them.
+    if (seg.dataset.field === "mode") {
+      if (v === "vacuum") step.water_mode = step.mop_route = null;
+      if (v === "mop") step.fan_power = null;
+    }
   }
   renderDraftSteps();
 }
@@ -2863,6 +2896,9 @@ async function saveSequence() {
       mode: step.mode,
       carpet: step.carpet,
       segment_ids: step.scope === "whole" ? null : step.ids,
+      fan_power: step.fan_power,
+      water_mode: step.water_mode,
+      mop_route: step.mop_route,
     })),
   };
   const creating = seqDraft.id == null;

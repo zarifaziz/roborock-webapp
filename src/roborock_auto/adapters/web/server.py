@@ -48,6 +48,7 @@ from roborock_auto.domain.models import (
     CarpetMode,
     CleanAction,
     CleaningMode,
+    CleanSettings,
     CleanSource,
     ConsumablePart,
     FanPower,
@@ -815,6 +816,11 @@ async def clean_two_stage_status(request: Request):
     return {"running": slot.running, **slot.progress}
 
 
+def _parse_optional(enum_cls, value):
+    """A Step setting: null is "Same as Setup"."""
+    return None if value is None else _parse(enum_cls, value)
+
+
 def _parse_step(body) -> Step:
     if not isinstance(body, dict):
         raise HTTPException(422, "steps must be a list of Steps")
@@ -832,6 +838,11 @@ def _parse_step(body) -> Step:
             carpet=_parse(CarpetMode, body.get("carpet")),
             segment_ids=None if segment_ids is None else tuple(segment_ids),
             repeat=repeat,
+            settings=CleanSettings(
+                fan_power=_parse_optional(FanPower, body.get("fan_power")),
+                water_mode=_parse_optional(WaterMode, body.get("water_mode")),
+                mop_route=_parse_optional(MopMode, body.get("mop_route")),
+            ),
         )
     except ValueError as exc:
         raise HTTPException(422, str(exc))

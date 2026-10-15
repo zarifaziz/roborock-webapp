@@ -95,6 +95,21 @@ MIGRATIONS: tuple[str, ...] = (
     DROP TABLE schedule_rules;
     ALTER TABLE schedule_rules_v5 RENAME TO schedule_rules;
     """,
+    # Every stored Step gains fan power, water flow and mop route as null, "Same as Setup",
+    # which is what those Steps already ran with. json_each walks the array in order.
+    """
+    UPDATE sequences SET steps_json = (
+        SELECT json_group_array(
+            json_set(
+                step.value,
+                '$.fan_power', json('null'),
+                '$.water_mode', json('null'),
+                '$.mop_route', json('null')
+            )
+        )
+        FROM json_each(sequences.steps_json) AS step
+    );
+    """,
 )
 
 

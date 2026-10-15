@@ -15,7 +15,15 @@ from roborock_auto.application.clean_queue import (
 from roborock_auto.application.run_slot import RunSlot
 from roborock_auto.application.sequence_launch import SequenceLauncher
 from roborock_auto.config import Config
-from roborock_auto.domain.models import CarpetMode, CleaningMode, DeviceStatus, QueuedClean, Step
+from roborock_auto.domain.models import (
+    CarpetMode,
+    CleaningMode,
+    DeviceStatus,
+    FanPower,
+    MopMode,
+    QueuedClean,
+    Step,
+)
 
 CONFIG = Config(
     gateway="fake",
@@ -34,11 +42,15 @@ HALL_MOP = (Step(CleaningMode.MOP, CarpetMode.AVOID, (19,)),)
 KITCHEN_TWICE_COMMANDS = [
     ("set_carpet_mode", CarpetMode.AVOID),
     ("set_cleaning_mode", CleaningMode.VACUUM),
+    ("set_fan_power", FanPower.BALANCED),  # the fake's Setup, kept across the mode switch
     ("clean_rooms", (17,), 2),
 ]
-HALL_MOP_COMMANDS = [
+# A vacuum run before it switched water off, so the robot no longer holds a Setup water
+# flow to keep; the mop runs on its mode's default water.
+HALL_MOP_AFTER_A_VACUUM_COMMANDS = [
     ("set_carpet_mode", CarpetMode.AVOID),
     ("set_cleaning_mode", CleaningMode.MOP),
+    ("set_mop_mode", MopMode.STANDARD),
     ("clean_rooms", (19,)),
 ]
 
@@ -125,7 +137,9 @@ async def test_entries_run_in_the_order_they_were_added():
     h.queue.add("Hall", HALL_MOP, sequence_id=4)
     await h.drain()
     assert _state(h.queue) == _idle()
-    assert h.robot.commands == [("start",), *KITCHEN_TWICE_COMMANDS, *HALL_MOP_COMMANDS]
+    assert h.robot.commands == [
+        ("start",), *KITCHEN_TWICE_COMMANDS, *HALL_MOP_AFTER_A_VACUUM_COMMANDS,
+    ]
     assert (h.slot.progress["sequence_name"], h.slot.progress["sequence_id"]) == ("Hall", 4)
 
 
@@ -163,7 +177,7 @@ async def test_a_cancelled_run_holds_the_queue_with_the_rest_still_queued():
     h.queue.resume()
     await h.drain()
     assert _state(h.queue) == _idle()
-    assert h.robot.commands[-3:] == HALL_MOP_COMMANDS
+    assert h.robot.commands[-4:] == HALL_MOP_AFTER_A_VACUUM_COMMANDS
 
 
 class CarpetRefusesRobot(FakeRobot):
@@ -318,7 +332,12 @@ async def test_readiness_must_hold_across_two_consecutive_polls():
     assert h.robot.commands == []
     h.robot.set_timeline([(0.0, docked)])
     await h.drain()
-    assert h.robot.commands[:3] == KITCHEN_TWICE_COMMANDS
+    # The scripted status reports no fan, water or route, so there is no Setup to keep.
+    assert h.robot.commands[:3] == [
+        ("set_carpet_mode", CarpetMode.AVOID),
+        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("clean_rooms", (17,), 2),
+    ]
 
 
 async def test_a_resume_during_the_wind_down_of_a_cancelled_run_is_not_undone():
@@ -332,4 +351,4 @@ async def test_a_resume_during_the_wind_down_of_a_cancelled_run_is_not_undone():
     h.queue.resume()  # tapped before the run has reported its cancel
     await h.drain()
     assert _state(h.queue) == _idle()
-    assert h.robot.commands[-3:] == HALL_MOP_COMMANDS
+    assert h.robot.commands[-4:] == HALL_MOP_AFTER_A_VACUUM_COMMANDS

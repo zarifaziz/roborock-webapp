@@ -7,7 +7,13 @@ import pytest
 
 from roborock_auto.adapters.fake import FakeRobot
 from roborock_auto.application.start_clean import start_clean
-from roborock_auto.domain.models import CarpetMode, CleaningMode, CleanSource, DeviceStatus
+from roborock_auto.domain.models import (
+    CarpetMode,
+    CleaningMode,
+    CleanSource,
+    DeviceStatus,
+    FanPower,
+)
 
 
 async def test_per_run_carpet_is_applied_and_verified_before_start():
@@ -19,6 +25,7 @@ async def test_per_run_carpet_is_applied_and_verified_before_start():
                       segment_ids=[7], repeat=2, now=lambda: now)
     assert gateway.commands == [
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("set_fan_power", FanPower.BALANCED),  # Setup's fan, kept across the mode switch
         ("set_carpet_mode", CarpetMode.RISE),
         ("clean_rooms", (7,), 2),
     ]
@@ -50,7 +57,8 @@ async def test_unconfirmed_carpet_never_starts_or_records():
                           mode=CleaningMode.VACUUM, carpet_mode=CarpetMode.RISE,
                           segment_ids=[7])
     assert gateway.commands == [
-        ("set_cleaning_mode", CleaningMode.VACUUM), ("set_carpet_mode", CarpetMode.RISE),
+        ("set_cleaning_mode", CleaningMode.VACUUM), ("set_fan_power", FanPower.BALANCED),
+        ("set_carpet_mode", CarpetMode.RISE),
     ]
     log.record_run.assert_not_awaited()
 
@@ -107,7 +115,7 @@ async def test_concurrent_start_is_rejected_while_first_settings_are_applying():
     release.set()
     assert await first == {"ok": True}
     assert gateway.commands == [
-        ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("set_cleaning_mode", CleaningMode.VACUUM), ("set_fan_power", FanPower.BALANCED),
         ("set_carpet_mode", CarpetMode.RISE), ("start",),
     ]
     assert state.run_slot.running is False

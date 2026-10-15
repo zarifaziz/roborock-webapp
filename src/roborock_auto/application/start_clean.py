@@ -1,4 +1,5 @@
-"""The shared clean use case: set the cleaning mode, start the clean, record the run.
+"""The shared clean use case: set the cleaning mode, put Setup's fan, water and route
+back, start the clean, record the run.
 
 Every entry point that starts a plain Clean routes through here, so the cleaning log and
 the source are required — a caller cannot start an anonymous clean and cannot skip
@@ -12,7 +13,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Protocol
 
-from roborock_auto.domain.models import CarpetMode, CleaningMode, CleaningRun, CleanSource
+from roborock_auto.domain.models import (
+    CarpetMode,
+    CleaningMode,
+    CleaningRun,
+    CleanSettings,
+    CleanSource,
+)
+from roborock_auto.domain.policies import settings_after_mode_switch, setup_settings
 from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.robot import CleaningControlPort, CleaningSettingsPort, RobotStatusPort
 
@@ -38,6 +46,15 @@ async def verify_cleaning_mode(gw: RobotStatusPort, mode: CleaningMode) -> None:
         )
 
 
+async def apply_clean_settings(gw: CleaningSettingsPort, settings: CleanSettings) -> None:
+    if settings.fan_power is not None:
+        await gw.set_fan_power(settings.fan_power)
+    if settings.water_mode is not None:
+        await gw.set_water_mode(settings.water_mode)
+    if settings.mop_route is not None:
+        await gw.set_mop_mode(settings.mop_route)
+
+
 async def start_clean(
     gw: CleanPorts,
     *,
@@ -53,7 +70,9 @@ async def start_clean(
         raise ValueError("segment_ids must be None (whole house) or name at least one segment")
     if carpet_mode is CarpetMode.UNKNOWN:
         raise ValueError("cannot set carpet mode to 'unknown'")
+    setup = setup_settings(await gw.get_status())
     await gw.set_cleaning_mode(mode)
+    await apply_clean_settings(gw, settings_after_mode_switch(mode, CleanSettings(), setup))
     if carpet_mode is not None:
         await gw.set_carpet_mode(carpet_mode)
     await verify_cleaning_mode(gw, mode)

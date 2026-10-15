@@ -30,10 +30,13 @@ from roborock_auto.domain.models import (
     CleaningRun,
     CleanSource,
     DeviceStatus,
+    FanPower,
+    MopMode,
     Occurrence,
     OccurrenceState,
     SequenceAction,
     Step,
+    WaterMode,
     Weekday,
     WeeklyGrid,
 )
@@ -140,6 +143,7 @@ async def test_a_due_occurrence_fires_the_shared_clean_and_is_recorded():
     await h.scheduler.tick()
     assert h.robot.commands == [
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("set_fan_power", FanPower.BALANCED),  # the fake's Setup, kept across the switch
         ("clean_rooms", (16, 17)),
     ]
     assert await h.occurrences.list_occurrences() == [
@@ -270,7 +274,9 @@ async def test_a_genuine_refusal_is_retried_three_times_five_minutes_apart_then_
 
     h.clock.now = FIRST + timedelta(minutes=20)  # FAILED is terminal: no fourth attempt
     await h.scheduler.tick()
-    assert h.robot.commands == [("set_cleaning_mode", CleaningMode.VACUUM)] * 3
+    assert h.robot.commands == [
+        ("set_cleaning_mode", CleaningMode.VACUUM), ("set_fan_power", FanPower.BALANCED),
+    ] * 3
     assert await h.cleaning_log.list_runs() == []
 
 
@@ -292,10 +298,13 @@ async def test_two_occurrences_due_together_fire_in_order_across_ticks():
     ]
     h.clock.now = FIRST + timedelta(minutes=5)  # the fake's job has finished
     await h.scheduler.tick()
+    # The vacuum switched water off, so the mop has only Setup's route left to keep.
     assert h.robot.commands == [
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("set_fan_power", FanPower.BALANCED),
         ("clean_rooms", (16, 17)),
         ("set_cleaning_mode", CleaningMode.MOP),
+        ("set_mop_mode", MopMode.STANDARD),
         ("start",),
     ]
     assert await h.occurrences.list_occurrences() == [
@@ -410,9 +419,13 @@ BATHROOMS_THEN_HOUSE = (
 BATHROOMS_THEN_HOUSE_COMMANDS = [
     ("set_carpet_mode", CarpetMode.RISE),
     ("set_cleaning_mode", CleaningMode.VACUUM),
+    ("set_fan_power", FanPower.BALANCED),
     ("clean_rooms", (16, 17)),
     ("set_carpet_mode", CarpetMode.AVOID),
     ("set_cleaning_mode", CleaningMode.VAC_AND_MOP),
+    ("set_fan_power", FanPower.BALANCED),
+    ("set_water_mode", WaterMode.STANDARD),
+    ("set_mop_mode", MopMode.STANDARD),
     ("start",),
 ]
 
@@ -527,6 +540,7 @@ async def test_a_cancel_before_the_first_departure_fails_the_occurrence_for_good
     assert h.robot.commands == [
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("set_fan_power", FanPower.BALANCED),
         ("clean_rooms", (16, 17)),
         ("set_carpet_mode", CarpetMode.AVOID),
         ("dock",),
@@ -542,7 +556,7 @@ async def test_a_cancel_before_the_first_departure_fails_the_occurrence_for_good
     h.clock.now = FIRST + timedelta(minutes=10)  # well past the retry spacing
     await h.scheduler.tick()
     assert h.run_slot.running is False
-    assert len(h.robot.commands) == 5
+    assert len(h.robot.commands) == 6
     assert await h.cleaning_log.list_runs() == []
     assert (await h.occurrences.list_occurrences())[0] == cancelled
 
@@ -610,7 +624,9 @@ async def test_a_plain_clean_holds_the_run_slot_from_its_readiness_check_to_its_
     await h.rule()
     h.clock.now = FIRST
     await h.scheduler.tick()
-    assert h.robot.slot_held == [("get_status", True), ("get_status", True), ("clean_rooms", True)]
+    assert h.robot.slot_held == [
+        ("get_status", True), ("get_status", True), ("get_status", True), ("clean_rooms", True),
+    ]
     assert h.run_slot.running is False
 
 
@@ -724,6 +740,7 @@ async def test_a_failed_cleaning_run_write_after_departure_still_fires_and_never
     step_one_then_recovery = [
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        ("set_fan_power", FanPower.BALANCED),
         ("clean_rooms", (16, 17)),
         ("set_carpet_mode", CarpetMode.AVOID),
         ("dock",),

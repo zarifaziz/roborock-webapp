@@ -12,9 +12,12 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
+from roborock_auto.adapters.cron import run as cron
 from roborock_auto.adapters.fake import FakeRobot
+from roborock_auto.adapters.sqlite import SqliteSetupSettings, open_database
 from roborock_auto.adapters.web import server
 from roborock_auto.adapters.web.server import app
+from roborock_auto.domain.models import CleanSettings, FanPower, MopMode, WaterMode
 
 TURBO_VACUUM = ("turbo", None, "standard")
 INTENSE_DEEP_MOP = ("off", "intense", "deep")
@@ -141,3 +144,27 @@ def test_setup_shows_the_robot_until_the_user_chooses(client):
         "water_mode": "standard",
         "mop_route": "standard",
     }
+
+
+async def test_the_cron_two_stage_clean_keeps_the_stored_setup_on_day_two(monkeypatch, tmp_path):
+    path = str(tmp_path / "roborock.db")
+    monkeypatch.setenv("GATEWAY", "fake")
+    monkeypatch.setenv("DATABASE_PATH", path)
+    monkeypatch.setenv("TIMEZONE", "Australia/Sydney")
+    monkeypatch.setenv("POLL_INTERVAL_SEC", "0.01")
+    # Rows are keyed by device; an empty id is the fake's "fake", whatever a .env says.
+    monkeypatch.setenv("ROBOROCK_DUID", "")
+    db = open_database(path)
+    await SqliteSetupSettings(db, device_id="fake").save_setup_settings(
+        CleanSettings(FanPower.TURBO, WaterMode.INTENSE, MopMode.DEEP)
+    )
+    db.close()
+    robot = TickingRobot()
+    monkeypatch.setattr(cron, "get_gateway", lambda _config: robot)
+    assert (await cron.main(), await cron.main()) == (0, 0)
+    assert robot.settings_at_departure == [
+        TURBO_VACUUM,
+        INTENSE_DEEP_MOP,
+        TURBO_VACUUM,
+        INTENSE_DEEP_MOP,
+    ]

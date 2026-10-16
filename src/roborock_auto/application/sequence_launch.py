@@ -26,6 +26,7 @@ from roborock_auto.application.start_clean import utc_now
 from roborock_auto.config import Config
 from roborock_auto.domain.models import CleanSource, Step
 from roborock_auto.ports.cleaning_log import CleaningLogPort
+from roborock_auto.ports.setup_settings import SetupSettingsPort
 
 OnEnd = Callable[[Exception | None], Awaitable[None]]
 
@@ -65,6 +66,7 @@ class SequenceLauncher:
         *,
         slot: RunSlot,
         cleaning_log: CleaningLogPort,
+        setup_store: SetupSettingsPort,
         now: Callable[[], datetime] = utc_now,
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
@@ -74,6 +76,7 @@ class SequenceLauncher:
         self._config = config
         self._slot = slot
         self._cleaning_log = cleaning_log
+        self._setup_store = setup_store
         self._now = now
         self._clock = clock
         self._sleep = sleep
@@ -132,6 +135,7 @@ class SequenceLauncher:
                     steps,
                     self._config,
                     cleaning_log=self._cleaning_log,
+                    setup_store=self._setup_store,
                     source=source,
                     clock=self._clock,
                     sleep=self._sleep,

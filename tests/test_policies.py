@@ -33,6 +33,7 @@ from roborock_auto.domain.policies import (
     occurrence_expired,
     overdue_report,
     ready_to_start,
+    resolve_setup,
     settings_after_mode_switch,
     setup_settings,
 )
@@ -337,6 +338,14 @@ TURBO_INTENSE_DEEP = CleanSettings(FanPower.TURBO, WaterMode.INTENSE, MopMode.DE
 )
 def test_settings_after_mode_switch(mode, chosen, expected):
     assert settings_after_mode_switch(mode, chosen, TURBO_INTENSE_DEEP) == expected
+
+
+def test_setup_is_the_stored_choice_with_the_robot_filling_what_was_never_chosen():
+    robot_after_a_mop_clean = CleanSettings(None, WaterMode.STANDARD, MopMode.STANDARD)
+    assert resolve_setup(
+        CleanSettings(fan_power=FanPower.TURBO, water_mode=WaterMode.INTENSE),
+        robot_after_a_mop_clean,
+    ) == CleanSettings(FanPower.TURBO, WaterMode.INTENSE, MopMode.STANDARD)
 
 
 def test_settings_after_mode_switch_with_nothing_known_sends_nothing():

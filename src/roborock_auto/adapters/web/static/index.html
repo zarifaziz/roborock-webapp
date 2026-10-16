@@ -2006,11 +2006,12 @@ async function refreshStatusOnce() {
   // Highlight the room(s) being cleaned on the map + show "Cleaning <rooms> · N passes".
   renderActiveClean(s);
 
-  // Settings readback: reflect the device's CURRENT fan/mop setting (covers phone-app
-  // changes too). Carpet is synced from its boot-time read + local clicks, not per poll.
-  syncSeg("seg-fan", s.fan_power);
-  syncSeg("seg-mop", s.mop_route);
-  syncSeg("seg-water", s.water_mode);
+  // Setup shows the stored choice, falling back to the robot's reading for a setting never
+  // chosen here: a mop-only clean leaves suction off, which is not the user's choice.
+  // Carpet is synced from its boot-time read + local clicks, not per poll.
+  syncSeg("seg-fan", s.setup.fan_power);
+  syncSeg("seg-mop", s.setup.mop_route);
+  syncSeg("seg-water", s.setup.water_mode);
   renderMapBadge();
 
   // header battery ring mirror

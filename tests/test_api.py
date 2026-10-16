@@ -57,7 +57,7 @@ def test_status_shape(client):
     assert set(body) == {
         "state_name", "battery", "in_cleaning", "docked", "error",
         "fan_power", "mop_route", "water_mode", "clean_area_m2", "clean_time_s", "dock_error",
-        "cleaning_mode", "drying_mop",
+        "cleaning_mode", "drying_mop", "setup",
         "cleaning", "map_ok",
     }
     assert body["map_ok"] is True

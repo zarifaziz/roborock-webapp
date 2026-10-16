@@ -8,15 +8,19 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from fastapi import HTTPException, Request
 
+from roborock_auto.adapters.sqlite import SqliteSetupSettings, open_database
 from roborock_auto.adapters.web import server
 from roborock_auto.domain.models import DeviceStatus
 
 STATUS = DeviceStatus('charging', 100, False, True, cleaning_mode='vacuum')
+# Nothing chosen in Setup and nothing reported by the robot.
+NO_SETUP = {'setup': {'fan_power': None, 'water_mode': None, 'mop_route': None}}
 
 
 def request_for(gateway):
     state = SimpleNamespace(gateway=gateway, status_lock=asyncio.Lock(),
-                            status_cache={'at': None, 'status': None, 'error': None})
+                            status_cache={'at': None, 'status': None, 'error': None},
+                            setup_settings=SqliteSetupSettings(open_database(':memory:'), 'fake'))
     return Request({'type': 'http', 'app': SimpleNamespace(state=state)})
 
 
@@ -36,7 +40,7 @@ async def test_concurrent_slow_status_reads_share_one_device_request():
     await asyncio.sleep(0)
     release.set()
     responses = await asyncio.gather(first, *others)
-    assert (responses, gateway.get_status.await_count) == ([{**asdict(STATUS), 'map_ok': True}] * 5, 1)
+    assert (responses, gateway.get_status.await_count) == ([{**asdict(STATUS), 'map_ok': True, **NO_SETUP}] * 5, 1)
 
 
 async def test_status_ttl_starts_after_completion_and_dynamic_map_flag_stays_fresh(monkeypatch):
@@ -54,7 +58,7 @@ async def test_status_ttl_starts_after_completion_and_dynamic_map_flag_stays_fre
     clock.now += .5
     second = await server.status(request)
     assert (first, second, gateway.get_status.await_count) == (
-        {**asdict(STATUS), 'map_ok': True}, {**asdict(STATUS), 'map_ok': False}, 1,
+        {**asdict(STATUS), 'map_ok': True, **NO_SETUP}, {**asdict(STATUS), 'map_ok': False, **NO_SETUP}, 1,
     )
     clock.now += 1
     await server.status(request)
@@ -73,7 +77,7 @@ async def test_failed_status_reads_are_coalesced_and_recover_after_ttl(monkeypat
         assert (error.value.status_code, error.value.detail) == (503, 'Robot status temporarily unavailable')
     assert gateway.get_status.await_count == 1
     clock.now += 1.1
-    assert await server.status(request) == {**asdict(STATUS), 'map_ok': True}
+    assert await server.status(request) == {**asdict(STATUS), 'map_ok': True, **NO_SETUP}
     assert gateway.get_status.await_count == 2
 
 

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from roborock_auto.adapters.fake import FakeRobot
+from roborock_auto.adapters.sqlite import SqliteSetupSettings, open_database
 from roborock_auto.application.start_clean import start_clean
 from roborock_auto.domain.models import (
     CarpetMode,
@@ -16,11 +17,16 @@ from roborock_auto.domain.models import (
 )
 
 
+def _setup_store() -> SqliteSetupSettings:
+    """No Setup choice stored, so each clean keeps what the robot reports."""
+    return SqliteSetupSettings(open_database(":memory:"), device_id="fake")
+
+
 async def test_per_run_carpet_is_applied_and_verified_before_start():
     gateway = FakeRobot()
     log = AsyncMock()
     now = datetime(2026, 9, 25, tzinfo=UTC)
-    await start_clean(gateway, cleaning_log=log, source=CleanSource.APP,
+    await start_clean(gateway, cleaning_log=log, setup_store=_setup_store(), source=CleanSource.APP,
                       mode=CleaningMode.VACUUM, carpet_mode=CarpetMode.RISE,
                       segment_ids=[7], repeat=2, now=lambda: now)
     assert gateway.commands == [
@@ -42,7 +48,7 @@ async def test_unconfirmed_mode_never_starts_or_records(reported_mode):
     ))
     log = AsyncMock()
     with pytest.raises(RuntimeError, match="Cleaning mode"):
-        await start_clean(gateway, cleaning_log=log, source=CleanSource.APP,
+        await start_clean(gateway, cleaning_log=log, setup_store=_setup_store(), source=CleanSource.APP,
                           mode=CleaningMode.VACUUM, segment_ids=[7])
     assert gateway.commands == [("set_cleaning_mode", CleaningMode.VACUUM)]
     log.record_run.assert_not_awaited()
@@ -53,7 +59,7 @@ async def test_unconfirmed_carpet_never_starts_or_records():
     gateway.get_carpet_mode = AsyncMock(return_value=CarpetMode.AVOID)
     log = AsyncMock()
     with pytest.raises(RuntimeError, match="Carpet mode"):
-        await start_clean(gateway, cleaning_log=log, source=CleanSource.APP,
+        await start_clean(gateway, cleaning_log=log, setup_store=_setup_store(), source=CleanSource.APP,
                           mode=CleaningMode.VACUUM, carpet_mode=CarpetMode.RISE,
                           segment_ids=[7])
     assert gateway.commands == [
@@ -76,7 +82,7 @@ async def test_sequence_never_departs_with_unconfirmed_cleaning_mode(monkeypatch
     log = AsyncMock()
     steps = (Step(CleaningMode.VACUUM, CarpetMode.RISE, None),)
     with pytest.raises(RuntimeError, match="Cleaning mode"):
-        await run_sequence(gateway, steps, Config.from_env(), cleaning_log=log, source=CleanSource.APP,
+        await run_sequence(gateway, steps, Config.from_env(), cleaning_log=log, setup_store=_setup_store(), source=CleanSource.APP,
                            clock=iter(range(0, 100000, 10)).__next__, sleep=AsyncMock())
     assert gateway.commands == [
         ("set_carpet_mode", CarpetMode.RISE), ("set_cleaning_mode", CleaningMode.VACUUM),
@@ -105,6 +111,7 @@ async def test_concurrent_start_is_rejected_while_first_settings_are_applying():
 
     gateway.set_cleaning_mode = slow_set
     state = SimpleNamespace(gateway=gateway, run_slot=RunSlot(), cleaning_log=AsyncMock(),
+                            setup_settings=_setup_store(),
                             now=lambda: datetime(2026, 9, 25, tzinfo=UTC))
     request = Request({"type": "http", "app": SimpleNamespace(state=state)})
     first = asyncio.create_task(server.start(request, "vacuum", "rise"))

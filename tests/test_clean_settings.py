@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from roborock_auto.adapters.fake import FakeRobot
-from roborock_auto.adapters.sqlite import SqliteCleaningLog, open_database
+from roborock_auto.adapters.sqlite import SqliteCleaningLog, SqliteSetupSettings, open_database
 from roborock_auto.application.sequence_runner import run_sequence
 from roborock_auto.application.start_clean import start_clean
 from roborock_auto.config import Config
@@ -74,6 +74,11 @@ def _config() -> Config:
     )
 
 
+def _setup_store() -> SqliteSetupSettings:
+    """No Setup choice stored, so each clean keeps what the robot reports."""
+    return SqliteSetupSettings(open_database(":memory:"), device_id="fake")
+
+
 async def _robot_with_setup(clock) -> RecordingRobot:
     """A robot whose Setup tab says Turbo, Intense water, Deep route."""
     gw = RecordingRobot(clock)
@@ -90,6 +95,7 @@ async def _run(gw: RecordingRobot, clock: FakeClock, steps: tuple[Step, ...]) ->
         steps,
         _config(),
         cleaning_log=SqliteCleaningLog(open_database(":memory:"), device_id="fake"),
+        setup_store=_setup_store(),
         source=CleanSource.APP,
         clock=clock,
         sleep=clock.sleep,
@@ -171,6 +177,7 @@ async def test_clean_tab_start_keeps_the_setup_fan_water_and_route(mode, expecte
     await start_clean(
         gw,
         cleaning_log=AsyncMock(),
+        setup_store=_setup_store(),
         source=CleanSource.APP,
         mode=mode,
         segment_ids=None,
@@ -195,6 +202,7 @@ async def test_a_setting_the_robot_refuses_does_not_stop_the_sequence():
         (step(CleaningMode.VAC_AND_MOP, settings=CleanSettings(fan_power=FanPower.TURBO)),),
         _config(),
         cleaning_log=SqliteCleaningLog(open_database(":memory:"), device_id="fake"),
+        setup_store=_setup_store(),
         source=CleanSource.APP,
         clock=clock,
         sleep=clock.sleep,
@@ -214,6 +222,7 @@ async def test_a_setting_the_robot_refuses_does_not_stop_a_plain_clean(caplog):
         await start_clean(
             gw,
             cleaning_log=AsyncMock(),
+            setup_store=_setup_store(),
             source=CleanSource.APP,
             mode=CleaningMode.VACUUM,
             segment_ids=None,

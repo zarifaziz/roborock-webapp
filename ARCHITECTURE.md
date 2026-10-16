@@ -303,6 +303,7 @@ src/roborock_auto/
     room_intervals.py   # RoomIntervalPort (SCHEDULING: the Overdue view's store)
     schedule_rules.py   # ScheduleRulePort (SCHEDULING: the schedules CRUD's store)
     sequences.py        # SequencePort (CONTROL: saved Sequences)
+    setup_settings.py   # SetupSettingsPort (CONTROL: the user's Setup choice of fan/water/route)
   application/
     sequence_runner.py   # an ordered list of Steps, one Clean each, with depart/return waits
     sequence_launch.py   # a list of Steps as a background run in the RunSlot
@@ -318,7 +319,7 @@ src/roborock_auto/
     __init__.py         # get_gateway(config): picks live or fake
     roborock_cloud/     # adapter.py  codes.py  session.py
     fake/               # fake_robot.py (FakeRobot)  floor_plan.py  map_render.py (demo apartment map)
-    sqlite/             # database.py  cleaning_log.py  occurrences.py  room_intervals.py  schedule_rules.py  sequences.py
+    sqlite/             # database.py  cleaning_log.py  occurrences.py  room_intervals.py  schedule_rules.py  sequences.py  setup_settings.py
     web/                # server.py  static/
     cron/               # run.py
     cli/                # login.py  discover.py

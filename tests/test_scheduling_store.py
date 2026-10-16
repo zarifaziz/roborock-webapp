@@ -30,6 +30,7 @@ from roborock_auto.adapters.sqlite import (
     SqliteRoomIntervals,
     SqliteScheduleRules,
     SqliteSequences,
+    SqliteSetupSettings,
     apply_migrations,
     open_database,
 )
@@ -1032,7 +1033,7 @@ async def test_migration_6_reads_every_version_5_step_as_same_as_setup(tmp_path)
     conn.close()
 
     conn = open_database(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
     # Steps built with no settings are "Same as Setup" on every field.
     assert await SqliteSequences(conn, device_id="robot-1").list_sequences() == [
         Sequence(
@@ -1046,3 +1047,43 @@ async def test_migration_6_reads_every_version_5_step_as_same_as_setup(tmp_path)
         Sequence(id=2, name="Two-stage", steps=TWO_STAGE),
     ]
     conn.close()
+
+
+# --- Setup settings and migration 7 ---
+
+
+async def test_setup_settings_start_empty_then_merge_each_choice(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteSetupSettings(conn, device_id="robot-1")
+    assert await store.get_setup_settings() == CleanSettings()
+    await store.save_setup_settings(CleanSettings(fan_power=FanPower.TURBO))
+    await store.save_setup_settings(CleanSettings(water_mode=WaterMode.INTENSE))
+    await store.save_setup_settings(CleanSettings(mop_route=MopMode.DEEP))
+    await store.save_setup_settings(CleanSettings(fan_power=FanPower.MAX))
+    assert await store.get_setup_settings() == CleanSettings(
+        FanPower.MAX, WaterMode.INTENSE, MopMode.DEEP
+    )
+    conn.close()
+    reopened = SqliteSetupSettings(open_database(str(tmp_path / "roborock.db")), "robot-1")
+    assert await reopened.get_setup_settings() == CleanSettings(
+        FanPower.MAX, WaterMode.INTENSE, MopMode.DEEP
+    )
+
+
+async def test_setup_settings_are_device_scoped(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    await SqliteSetupSettings(conn, "robot-1").save_setup_settings(
+        CleanSettings(fan_power=FanPower.TURBO)
+    )
+    assert await SqliteSetupSettings(conn, "robot-2").get_setup_settings() == CleanSettings()
+
+
+def test_migration_7_adds_an_empty_setup_settings_table(tmp_path):
+    path = str(tmp_path / "roborock.db")
+    conn = sqlite3.connect(path, autocommit=False)
+    apply_migrations(conn, MIGRATIONS[:6])
+    conn.commit()
+    conn.close()
+    conn = open_database(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert conn.execute("SELECT * FROM setup_settings").fetchall() == []

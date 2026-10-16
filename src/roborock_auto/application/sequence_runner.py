@@ -20,7 +20,7 @@ from typing import Any, Protocol
 
 from roborock_auto.application.retry import AutomationError, DepartRejected, Sleep, with_retry
 from roborock_auto.application.start_clean import (
-    apply_clean_settings,
+    settings_commands,
     utc_now,
     verify_cleaning_mode,
 )
@@ -38,11 +38,13 @@ from roborock_auto.domain.policies import (
     job_stalled,
     ready_to_start,
     recharging_pending,
+    resolve_setup,
     settings_after_mode_switch,
     setup_settings,
 )
 from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.robot import CleaningControlPort, CleaningSettingsPort, RobotStatusPort
+from roborock_auto.ports.setup_settings import SetupSettingsPort
 
 Clock = Callable[[], float]
 
@@ -196,6 +198,7 @@ async def run_sequence(
     config: Config,
     *,
     cleaning_log: CleaningLogPort,
+    setup_store: SetupSettingsPort,
     source: CleanSource,
     clock: Clock = time.monotonic,
     sleep: Sleep = asyncio.sleep,
@@ -227,7 +230,7 @@ async def run_sequence(
 
     # Read once, before any Step's mode switch: a vacuum Step leaves water off, which a
     # later mopping Step would otherwise take for the Setup value.
-    setup = setup_settings(start)
+    setup = resolve_setup(await setup_store.get_setup_settings(), setup_settings(start))
 
     # Any failure past this point can leave the robot mid-floor with wet pads down and carpet
     # mode latched at Rise; recover best-effort before re-raising. Only past this point — an
@@ -245,7 +248,13 @@ async def run_sequence(
             await _set_carpet_verified(gw, step.carpet, sleep=sleep)
             await with_retry(lambda mode=step.mode: gw.set_cleaning_mode(mode), sleep=sleep)
             settings = settings_after_mode_switch(step.mode, step.settings, setup)
-            await with_retry(lambda s=settings: apply_clean_settings(gw, s), sleep=sleep)
+            for what, send in settings_commands(gw, settings):
+                try:
+                    await with_retry(send, sleep=sleep)
+                except RunCancelled:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - a missing setting must not cost the clean
+                    log(f"{label}: could not set {what}, cleaning with the mode's default: {exc}")
             await verify_cleaning_mode(gw, step.mode)
             on_progress(index, Phase.DEPARTING)
             await _depart_and_confirm(

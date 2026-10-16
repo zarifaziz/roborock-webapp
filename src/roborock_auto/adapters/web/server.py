@@ -29,6 +29,7 @@ from roborock_auto.adapters.sqlite import (
     SqliteRoomIntervals,
     SqliteScheduleRules,
     SqliteSequences,
+    SqliteSetupSettings,
     open_database,
 )
 from roborock_auto.adapters.web.assistant_api import router as assistant_router
@@ -66,7 +67,7 @@ from roborock_auto.domain.models import (
     Weekday,
     WeeklyGrid,
 )
-from roborock_auto.domain.policies import ready_to_start
+from roborock_auto.domain.policies import ready_to_start, resolve_setup, setup_settings
 from roborock_auto.ports import RobotGateway
 from roborock_auto.ports.auth import AuthPort
 
@@ -107,6 +108,7 @@ async def lifespan(app: FastAPI):
     app.state.schedule_rules = SqliteScheduleRules(db, device_id=config.duid or "fake")
     app.state.occurrences = SqliteOccurrences(db, device_id=config.duid or "fake")
     app.state.sequences = SqliteSequences(db, device_id=config.duid or "fake")
+    app.state.setup_settings = SqliteSetupSettings(db, device_id=config.duid or "fake")
     app.state.timezone = ZoneInfo(config.timezone)
     # One injected clock for everything that reads or writes a time, so a test can freeze it.
     app.state.now = utc_now
@@ -121,6 +123,7 @@ async def lifespan(app: FastAPI):
         config,
         slot=app.state.run_slot,
         cleaning_log=app.state.cleaning_log,
+        setup_store=app.state.setup_settings,
         now=lambda: app.state.now(),
         log=_LOGGER.info,
     )
@@ -136,6 +139,7 @@ async def lifespan(app: FastAPI):
         rules=app.state.schedule_rules,
         occurrences=app.state.occurrences,
         cleaning_log=app.state.cleaning_log,
+        setup_store=app.state.setup_settings,
         tz=app.state.timezone,
         # Read through app.state on every call, so the test clock reaches the scheduler.
         now=lambda: app.state.now(),
@@ -210,8 +214,19 @@ async def status(request: Request):
             cache["at"] = time.monotonic()
         if cache["error"]:
             raise HTTPException(503, cache["error"])
-        body = dataclasses.asdict(cache["status"])
+        robot_status = cache["status"]
+    body = dataclasses.asdict(robot_status)
     body["map_ok"] = gw.map_ok()
+    # What the Setup tab shows: the user's stored choice, which the robot loses on every
+    # vacuum-only or mop-only clean, else the robot's own reading.
+    setup = resolve_setup(
+        await request.app.state.setup_settings.get_setup_settings(), setup_settings(robot_status)
+    )
+    body["setup"] = {
+        "fan_power": None if setup.fan_power is None else setup.fan_power.value,
+        "water_mode": None if setup.water_mode is None else setup.water_mode.value,
+        "mop_route": None if setup.mop_route is None else setup.mop_route.value,
+    }
     return body
 
 
@@ -310,6 +325,7 @@ async def start(
         await start_clean(
             _gw(request),
             cleaning_log=request.app.state.cleaning_log,
+            setup_store=request.app.state.setup_settings,
             source=CleanSource.APP,
             mode=_parse(CleaningMode, mode),
             segment_ids=None,
@@ -364,22 +380,28 @@ def _parse(enum_cls, value: str):
 
 @app.post("/fan")
 async def fan(request: Request, power: str = Body(..., embed=True)):
+    chosen = _parse(FanPower, power)
     async with _control_slot(request):
-        await _gw(request).set_fan_power(_parse(FanPower, power))
+        await _gw(request).set_fan_power(chosen)
+    await request.app.state.setup_settings.save_setup_settings(CleanSettings(fan_power=chosen))
     return {"ok": True}
 
 
 @app.post("/mop")
 async def mop(request: Request, mode: str = Body(..., embed=True)):
+    chosen = _parse(MopMode, mode)
     async with _control_slot(request):
-        await _gw(request).set_mop_mode(_parse(MopMode, mode))
+        await _gw(request).set_mop_mode(chosen)
+    await request.app.state.setup_settings.save_setup_settings(CleanSettings(mop_route=chosen))
     return {"ok": True}
 
 
 @app.post("/water")
 async def water(request: Request, mode: str = Body(..., embed=True)):
+    chosen = _parse(WaterMode, mode)
     async with _control_slot(request):
-        await _gw(request).set_water_mode(_parse(WaterMode, mode))
+        await _gw(request).set_water_mode(chosen)
+    await request.app.state.setup_settings.save_setup_settings(CleanSettings(water_mode=chosen))
     return {"ok": True}
 
 
@@ -483,6 +505,7 @@ async def clean_segments(
         await start_clean(
             _gw(request),
             cleaning_log=request.app.state.cleaning_log,
+            setup_store=request.app.state.setup_settings,
             source=CleanSource.APP,
             mode=_parse(CleaningMode, mode),
             segment_ids=segment_ids,
@@ -566,6 +589,7 @@ async def clean_overdue_now(request: Request, mode: str = Body(..., embed=True))
             gw,
             intervals=request.app.state.room_intervals,
             cleaning_log=request.app.state.cleaning_log,
+            setup_store=request.app.state.setup_settings,
             source=CleanSource.APP,
             mode=_parse(CleaningMode, mode),
             now=request.app.state.now,
@@ -784,7 +808,8 @@ async def clean_two_stage(request: Request, segment_ids: list[int] = Body(None, 
         try:
             await run_two_stage(
                 gw, config,
-                cleaning_log=request.app.state.cleaning_log, source=CleanSource.APP,
+                cleaning_log=request.app.state.cleaning_log,
+                setup_store=request.app.state.setup_settings, source=CleanSource.APP,
                 segment_ids=segment_ids or None, on_stage=on_stage,
                 log=_LOGGER.info, cancel=slot.cancel,
             )

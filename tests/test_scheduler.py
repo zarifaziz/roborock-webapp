@@ -17,6 +17,7 @@ from roborock_auto.adapters.sqlite import (
     SqliteOccurrences,
     SqliteScheduleRules,
     SqliteSequences,
+    SqliteSetupSettings,
     open_database,
 )
 from roborock_auto.application.run_slot import RunSlot
@@ -85,6 +86,7 @@ class Harness:
             rules=self.rules,
             occurrences=self.occurrences,
             cleaning_log=self.cleaning_log,
+            setup_store=_setup_store(),
             tz=SYDNEY,
             now=self.clock,
             run_slot=self.run_slot,
@@ -360,6 +362,7 @@ async def test_the_loop_survives_tick_exceptions_and_backs_off_capped_at_five_mi
         rules=ExplodingRules(),
         occurrences=h.occurrences,
         cleaning_log=h.cleaning_log,
+        setup_store=_setup_store(),
         tz=SYDNEY,
         now=h.clock,
         sleep=sleeps,
@@ -378,6 +381,7 @@ async def test_the_backoff_stays_capped_after_a_multi_day_outage():
         rules=ExplodingRules(),
         occurrences=h.occurrences,
         cleaning_log=h.cleaning_log,
+        setup_store=_setup_store(),
         tz=SYDNEY,
         now=h.clock,
     )
@@ -394,6 +398,7 @@ async def test_a_healthy_tick_resets_the_backoff():
         rules=rules,
         occurrences=h.occurrences,
         cleaning_log=h.cleaning_log,
+        setup_store=_setup_store(),
         tz=SYDNEY,
         now=h.clock,
     )
@@ -412,6 +417,11 @@ CONFIG = Config(
     poll_interval_sec=5.0, app_port=8000, session_path="user_data.json",
     database_path=":memory:", timezone="Australia/Sydney",
 )
+
+
+def _setup_store() -> SqliteSetupSettings:
+    """No Setup choice stored, so each clean keeps what the robot reports."""
+    return SqliteSetupSettings(open_database(":memory:"), device_id="fake")
 BATHROOMS_THEN_HOUSE = (
     Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=(16, 17)),
     Step(mode=CleaningMode.VAC_AND_MOP, carpet=CarpetMode.AVOID, segment_ids=None),
@@ -453,6 +463,7 @@ class SequenceHarness(Harness):
             CONFIG,
             slot=self.run_slot,
             cleaning_log=self.cleaning_log,
+            setup_store=_setup_store(),
             now=self.clock,
             clock=self.clock.monotonic,
             sleep=self.sleep,
@@ -463,6 +474,7 @@ class SequenceHarness(Harness):
             rules=self.rules,
             occurrences=self.occurrences,
             cleaning_log=self.cleaning_log,
+            setup_store=_setup_store(),
             tz=SYDNEY,
             now=self.clock,
             run_slot=self.run_slot,

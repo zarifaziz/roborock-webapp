@@ -25,6 +25,7 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     life_pct,
     state_name,
 )
+from roborock_auto.adapters.sqlite import SqliteSetupSettings, open_database
 from roborock_auto.application.start_clean import start_clean
 from roborock_auto.config import Config
 from roborock_auto.domain.models import (
@@ -297,7 +298,12 @@ async def test_a_clean_start_sends_setup_back_after_the_mode_switch(gw, mode, ke
         current_cleaning_mode_name=mode.value,
     )
     await start_clean(
-        gw, cleaning_log=AsyncMock(), source=CleanSource.APP, mode=mode, segment_ids=None
+        gw,
+        cleaning_log=AsyncMock(),
+        setup_store=SqliteSetupSettings(open_database(":memory:"), device_id="fake"),
+        source=CleanSource.APP,
+        mode=mode,
+        segment_ids=None,
     )
     assert robot.mock_calls == [
         call.set_cleaning_mode(mode.value),

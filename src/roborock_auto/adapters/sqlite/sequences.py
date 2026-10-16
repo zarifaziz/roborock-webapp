@@ -58,11 +58,11 @@ def _parse_steps(steps_json: str) -> tuple[Step, ...]:
             segment_ids=None if payload["segment_ids"] is None else tuple(payload["segment_ids"]),
             # Rows written before Steps had passes carry no key and ran one pass.
             repeat=payload.get("repeat", 1),
-            # Migration 6 gave every older row these keys as null, "Same as Setup".
+            # A missing key is "Same as Setup", what every Step ran with before it had one.
             settings=CleanSettings(
-                fan_power=_enum(FanPower, payload["fan_power"]),
-                water_mode=_enum(WaterMode, payload["water_mode"]),
-                mop_route=_enum(MopMode, payload["mop_route"]),
+                fan_power=_enum(FanPower, payload.get("fan_power")),
+                water_mode=_enum(WaterMode, payload.get("water_mode")),
+                mop_route=_enum(MopMode, payload.get("mop_route")),
             ),
         )
         for payload in json.loads(steps_json)

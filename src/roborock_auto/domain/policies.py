@@ -81,6 +81,17 @@ def setup_settings(status: DeviceStatus) -> CleanSettings:
     )
 
 
+def resolve_setup(stored: CleanSettings, robot: CleanSettings) -> CleanSettings:
+    """Setup is the user's stored choice; a setting they never chose falls back to what the
+    robot reports before the mode switch. The robot alone cannot be trusted with it: a
+    mop-only clean leaves suction off and a vacuum-only clean leaves water off."""
+    return CleanSettings(
+        fan_power=stored.fan_power or robot.fan_power,
+        water_mode=stored.water_mode or robot.water_mode,
+        mop_route=stored.mop_route or robot.mop_route,
+    )
+
+
 def settings_after_mode_switch(
     mode: CleaningMode, chosen: CleanSettings, setup: CleanSettings
 ) -> CleanSettings:

@@ -27,6 +27,7 @@ from roborock_auto.application.start_clean import utc_now
 from roborock_auto.config import Config
 from roborock_auto.domain.models import CarpetMode, CleaningMode, CleanSource, Step
 from roborock_auto.ports.cleaning_log import CleaningLogPort
+from roborock_auto.ports.setup_settings import SetupSettingsPort
 
 __all__ = [
     "STATUS_FAULT_BUDGET",
@@ -64,6 +65,7 @@ async def run_two_stage(
     config: Config,
     *,
     cleaning_log: CleaningLogPort,
+    setup_store: SetupSettingsPort,
     source: CleanSource,
     clock: Clock = time.monotonic,
     sleep: Sleep = asyncio.sleep,
@@ -89,6 +91,7 @@ async def run_two_stage(
         steps,
         config,
         cleaning_log=cleaning_log,
+        setup_store=setup_store,
         source=source,
         clock=clock,
         sleep=sleep,

@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 
 from roborock_auto.adapters.fake import FakeRobot
-from roborock_auto.adapters.sqlite import SqliteCleaningLog, open_database
+from roborock_auto.adapters.sqlite import SqliteCleaningLog, SqliteSetupSettings, open_database
 from roborock_auto.application.clean_queue import (
     LAST_RUN_CANCELLED,
     LAST_RUN_FAILED,
@@ -37,6 +37,11 @@ CONFIG = Config(
     database_path=":memory:",
     timezone="Australia/Sydney",
 )
+
+
+def _setup_store() -> SqliteSetupSettings:
+    """No Setup choice stored, so each clean keeps what the robot reports."""
+    return SqliteSetupSettings(open_database(":memory:"), device_id="fake")
 KITCHEN_TWICE = (Step(CleaningMode.VACUUM, CarpetMode.AVOID, (17,), repeat=2),)
 HALL_MOP = (Step(CleaningMode.MOP, CarpetMode.AVOID, (19,)),)
 KITCHEN_TWICE_COMMANDS = [
@@ -65,6 +70,7 @@ class Harness:
             CONFIG,
             slot=self.slot,
             cleaning_log=SqliteCleaningLog(open_database(":memory:"), device_id="fake"),
+            setup_store=_setup_store(),
             clock=lambda: self.now,
             sleep=self.sleep,
             log=lambda _line: None,

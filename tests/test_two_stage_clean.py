@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from roborock_auto.adapters.fake import FakeRobot
-from roborock_auto.adapters.sqlite import SqliteCleaningLog, open_database
+from roborock_auto.adapters.sqlite import SqliteCleaningLog, SqliteSetupSettings, open_database
 from roborock_auto.application.retry import AutomationError
 from roborock_auto.application.run_slot import RunSlot
 from roborock_auto.application.sequence_runner import Phase, run_sequence
@@ -57,6 +57,11 @@ def _config(**over) -> Config:
 
 def _log() -> SqliteCleaningLog:
     return SqliteCleaningLog(open_database(":memory:"), device_id="fake")
+
+
+def _setup_store() -> SqliteSetupSettings:
+    """No Setup choice stored, so each clean keeps what the robot reports."""
+    return SqliteSetupSettings(open_database(":memory:"), device_id="fake")
 
 
 CLEANING = DeviceStatus("cleaning", 90, in_cleaning=True, docked=False, cleaning=True)
@@ -332,7 +337,7 @@ async def test_two_stage_happy_path_ordering():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)  # machine mode: docked -> cleaning -> docked
     await run_two_stage(
-        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
         clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
     )
     kinds = gw.commands
@@ -357,7 +362,7 @@ async def test_two_stage_reports_stage_sequence():
     gw = FakeRobot(clock=clock)
     stages: list[str] = []
     await run_two_stage(
-        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
         clock=clock, sleep=clock.sleep, interval=5,
         log=lambda m: None, on_stage=stages.append,
     )
@@ -369,7 +374,7 @@ async def test_two_stage_scoped_departs_with_clean_rooms():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)
     await run_two_stage(
-        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
         clock=clock, sleep=clock.sleep, interval=5,
         segment_ids=[16, 17], log=lambda m: None,
     )
@@ -400,7 +405,7 @@ async def test_two_stage_retries_a_dropped_depart():
     clock = FakeClock()
     gw = _DropFirstDepartRobot(clock=clock, drops=1)  # drop only the vacuum stage's first try
     await run_two_stage(
-        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
         clock=clock, sleep=clock.sleep, interval=5, segment_ids=[7],
         log=lambda m: None,
     )
@@ -420,7 +425,7 @@ async def test_two_stage_aborts_if_carpet_mode_does_not_take():
     gw.set_carpet_mode = stuck_carpet  # get_carpet_mode still returns the old AVOID
     with pytest.raises(AutomationError, match="did not take"):
         await run_two_stage(
-            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
             clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
 
@@ -432,7 +437,7 @@ async def test_two_stage_rejects_a_coarse_poll_interval():
     gw = FakeRobot(clock=clock)
     with pytest.raises(AutomationError, match="poll interval"):
         await run_two_stage(
-            gw, _config(poll_interval_sec=30.0), cleaning_log=_log(), source=CleanSource.APP,
+            gw, _config(poll_interval_sec=30.0), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
             clock=clock, sleep=clock.sleep,
             log=lambda m: None,
         )
@@ -444,7 +449,7 @@ async def test_two_stage_aborts_if_not_docked_at_start():
     gw.set_timeline([(0, CLEANING)])  # already busy
     with pytest.raises(AutomationError, match="not docked"):
         await run_two_stage(
-            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
             clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
 
@@ -464,7 +469,7 @@ async def test_two_stage_docks_and_restores_carpet_on_abort():
     gw = _ErrorsMidCleanRobot(clock=clock)
     with pytest.raises(AutomationError, match="brush stuck"):
         await run_two_stage(
-            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
             clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
     assert ("dock",) in gw.commands
@@ -486,7 +491,7 @@ async def test_two_stage_cleanup_failure_does_not_mask_the_original_error():
     gw.dock = broken_dock
     with pytest.raises(AutomationError, match="brush stuck"):
         await run_two_stage(
-            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
             clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
         )
 
@@ -508,7 +513,7 @@ async def test_two_stage_cancel_mid_vacuum_docks_and_restores_carpet():
 
     with pytest.raises(RunCancelled):
         await run_two_stage(
-            gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+            gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
             clock=clock, sleep=clock.sleep, interval=5,
             log=lambda m: None, on_stage=on_stage, cancel=cancel,
         )
@@ -527,7 +532,7 @@ async def test_two_stage_happy_path_does_not_dock_or_reset():
     clock = FakeClock()
     gw = FakeRobot(clock=clock)
     await run_two_stage(
-        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
         clock=clock, sleep=clock.sleep, interval=5, log=lambda m: None
     )
     assert ("dock",) not in gw.commands
@@ -549,7 +554,7 @@ async def test_two_stage_records_one_cleaning_run_per_pass():
     gw = FakeRobot(clock=clock)
     log = _log()
     await run_two_stage(
-        gw, _config(), cleaning_log=log, source=CleanSource.CRON,
+        gw, _config(), cleaning_log=log, setup_store=_setup_store(), source=CleanSource.CRON,
         clock=clock, sleep=clock.sleep, interval=5, segment_ids=[16, 17],
         log=lambda m: None, now=_wall_clock(clock),
     )
@@ -578,7 +583,7 @@ async def test_failed_mop_pass_still_records_the_vacuum_pass():
     log = _log()
     with pytest.raises(ConnectionError, match="mop mode refused"):
         await run_two_stage(
-            gw, _config(), cleaning_log=log, source=CleanSource.APP,
+            gw, _config(), cleaning_log=log, setup_store=_setup_store(), source=CleanSource.APP,
             clock=clock, sleep=clock.sleep, interval=5,
             log=lambda m: None, now=_wall_clock(clock),
         )
@@ -639,7 +644,7 @@ def _run_of(step: Step, *, departed_at: float, source=CleanSource.APP) -> Cleani
 
 async def _run_steps(gw, clock, steps, **over):
     kwargs = dict(
-        cleaning_log=_log(), source=CleanSource.APP, clock=clock, sleep=clock.sleep,
+        cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP, clock=clock, sleep=clock.sleep,
         interval=5, log=lambda m: None, now=_wall_clock(clock),
     )
     kwargs.update(over)
@@ -813,7 +818,7 @@ async def test_two_stage_is_the_vacuum_rise_then_mop_avoid_preset_with_no_extra_
     clock = FakeClock()
     gw = FakeRobot(clock=clock)
     await run_two_stage(
-        gw, _config(), cleaning_log=_log(), source=CleanSource.APP,
+        gw, _config(), cleaning_log=_log(), setup_store=_setup_store(), source=CleanSource.APP,
         clock=clock, sleep=clock.sleep, interval=5, segment_ids=[16, 17], log=lambda m: None,
     )
     vacuum = Step(mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=(16, 17))

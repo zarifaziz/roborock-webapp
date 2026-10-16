@@ -806,6 +806,20 @@ async def test_step_settings_round_trip(open_sequences):
     ]
 
 
+async def test_a_step_stored_without_settings_reads_as_same_as_setup(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteSequences(conn, device_id="robot-1")
+    await store.create_sequence("Two-stage", TWO_STAGE)
+    conn.execute(
+        "UPDATE sequences SET steps_json = ?",
+        ('[{"mode": "vacuum", "carpet": "rise", "segment_ids": null}]',),
+    )
+    conn.commit()
+    assert await store.list_sequences() == [
+        Sequence(id=1, name="Two-stage", steps=(TWO_STAGE[0],))
+    ]
+
+
 async def test_reopening_keeps_the_sequences(open_sequences):
     created = await open_sequences().create_sequence("Two-stage", TWO_STAGE)
     assert await open_sequences().list_sequences() == [created]
@@ -829,7 +843,6 @@ SAME_AS_SETUP = '"fan_power": null, "water_mode": null, "mop_route": null'
             ValueError,
             "ambiguous",
         ),
-        ('[{"mode": "vacuum", "carpet": "rise", "segment_ids": null}]', KeyError, "fan_power"),
         (
             (
                 '[{"mode": "vacuum", "carpet": "rise", "segment_ids": null, "fan_power": null, '

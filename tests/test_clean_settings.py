@@ -6,6 +6,7 @@ start path has to put them back before the robot leaves the dock.
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock
 
 import pytest
@@ -175,3 +176,49 @@ async def test_clean_tab_start_keeps_the_setup_fan_water_and_route(mode, expecte
         segment_ids=None,
     )
     assert gw.settings_at_departure == [expected]
+
+
+class FanRefusedRobot(RecordingRobot):
+    async def set_fan_power(self, power: FanPower) -> None:
+        raise ConnectionError("refused")
+
+
+async def test_a_setting_the_robot_refuses_does_not_stop_the_sequence():
+    clock = FakeClock()
+    gw = FanRefusedRobot(clock)
+    await gw.set_water_mode(WaterMode.INTENSE)
+    await gw.set_mop_mode(MopMode.DEEP)
+    gw.commands.clear()
+    log: list[str] = []
+    await run_sequence(
+        gw,
+        (step(CleaningMode.VAC_AND_MOP, settings=CleanSettings(fan_power=FanPower.TURBO)),),
+        _config(),
+        cleaning_log=SqliteCleaningLog(open_database(":memory:"), device_id="fake"),
+        source=CleanSource.APP,
+        clock=clock,
+        sleep=clock.sleep,
+        interval=5,
+        log=log.append,
+    )
+    assert gw.settings_at_departure == [("balanced", "intense", "deep")]
+    assert [line for line in log if "could not" in line] == [
+        "step 1/1: could not set fan power to turbo, cleaning with the mode's default: refused"
+    ]
+
+
+async def test_a_setting_the_robot_refuses_does_not_stop_a_plain_clean(caplog):
+    clock = FakeClock()
+    gw = FanRefusedRobot(clock)
+    with caplog.at_level(logging.WARNING, logger="roborock_auto.application.start_clean"):
+        await start_clean(
+            gw,
+            cleaning_log=AsyncMock(),
+            source=CleanSource.APP,
+            mode=CleaningMode.VACUUM,
+            segment_ids=None,
+        )
+    assert gw.settings_at_departure == [("balanced", None, "standard")]
+    assert [r.getMessage() for r in caplog.records] == [
+        "could not set fan power to balanced, cleaning with the mode's default: refused"
+    ]

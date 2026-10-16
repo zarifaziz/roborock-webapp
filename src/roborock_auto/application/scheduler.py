@@ -41,6 +41,7 @@ from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.occurrences import OccurrencePort
 from roborock_auto.ports.schedule_rules import ScheduleRulePort
 from roborock_auto.ports.sequences import SequencePort
+from roborock_auto.ports.setup_settings import SetupSettingsPort
 
 _LOGGER = logging.getLogger("roborock_auto.scheduler")
 
@@ -72,6 +73,7 @@ async def fire(
     gw: CleanPorts,
     *,
     cleaning_log: CleaningLogPort,
+    setup_store: SetupSettingsPort,
     action: CleanAction,
     now: Callable[[], datetime],
 ) -> None:
@@ -80,6 +82,7 @@ async def fire(
     await start_clean(
         gw,
         cleaning_log=cleaning_log,
+        setup_store=setup_store,
         source=CleanSource.SCHEDULER,
         mode=action.mode,
         segment_ids=None if action.segment_ids is None else list(action.segment_ids),
@@ -147,6 +150,7 @@ class Scheduler:
         rules: ScheduleRulePort,
         occurrences: OccurrencePort,
         cleaning_log: CleaningLogPort,
+        setup_store: SetupSettingsPort,
         tz: tzinfo,
         now: Callable[[], datetime] = utc_now,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -158,6 +162,7 @@ class Scheduler:
         self._rules = rules
         self._occurrences = occurrences
         self._cleaning_log = cleaning_log
+        self._setup_store = setup_store
         self._tz = tz
         self._now = now
         self._sleep = sleep
@@ -237,6 +242,7 @@ class Scheduler:
                         await fire(
                             self._robot,
                             cleaning_log=self._cleaning_log,
+                            setup_store=self._setup_store,
                             action=action,
                             now=self._now,
                         )

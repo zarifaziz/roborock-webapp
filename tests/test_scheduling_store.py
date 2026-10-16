@@ -30,6 +30,7 @@ from roborock_auto.adapters.sqlite import (
     SqliteRoomIntervals,
     SqliteScheduleRules,
     SqliteSequences,
+    SqliteSetupSettings,
     apply_migrations,
     open_database,
 )
@@ -38,7 +39,10 @@ from roborock_auto.domain.models import (
     CleanAction,
     CleaningMode,
     CleaningRun,
+    CleanSettings,
     CleanSource,
+    FanPower,
+    MopMode,
     Occurrence,
     OccurrenceState,
     RoomInterval,
@@ -46,6 +50,7 @@ from roborock_auto.domain.models import (
     Sequence,
     SequenceAction,
     Step,
+    WaterMode,
     Weekday,
     WeeklyGrid,
 )
@@ -779,9 +784,49 @@ async def test_sequences_are_device_scoped(open_sequences):
     assert await ours.list_sequences() == [created]
 
 
+async def test_step_settings_round_trip(open_sequences):
+    steps = (
+        Step(
+            mode=CleaningMode.VACUUM, carpet=CarpetMode.RISE, segment_ids=None,
+            settings=CleanSettings(fan_power=FanPower.MAX),
+        ),
+        Step(
+            mode=CleaningMode.VAC_AND_MOP, carpet=CarpetMode.AVOID, segment_ids=None,
+            settings=CleanSettings(
+                fan_power=FanPower.QUIET, water_mode=WaterMode.MILD, mop_route=MopMode.DEEP,
+            ),
+        ),
+        Step(
+            mode=CleaningMode.MOP, carpet=CarpetMode.AVOID, segment_ids=None,
+            settings=CleanSettings(water_mode=WaterMode.INTENSE),
+        ),
+    )
+    created = await open_sequences().create_sequence("Tuned", steps)
+    assert await open_sequences().list_sequences() == [
+        Sequence(id=created.id, name="Tuned", steps=steps)
+    ]
+
+
+async def test_a_step_stored_without_settings_reads_as_same_as_setup(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteSequences(conn, device_id="robot-1")
+    await store.create_sequence("Two-stage", TWO_STAGE)
+    conn.execute(
+        "UPDATE sequences SET steps_json = ?",
+        ('[{"mode": "vacuum", "carpet": "rise", "segment_ids": null}]',),
+    )
+    conn.commit()
+    assert await store.list_sequences() == [
+        Sequence(id=1, name="Two-stage", steps=(TWO_STAGE[0],))
+    ]
+
+
 async def test_reopening_keeps_the_sequences(open_sequences):
     created = await open_sequences().create_sequence("Two-stage", TWO_STAGE)
     assert await open_sequences().list_sequences() == [created]
+
+
+SAME_AS_SETUP = '"fan_power": null, "water_mode": null, "mop_route": null'
 
 
 @pytest.mark.parametrize(
@@ -790,11 +835,23 @@ async def test_reopening_keeps_the_sequences(open_sequences):
         ('[{"mode": "vacuum", "segment_ids": null}]', KeyError, "carpet"),
         ('[{"mode": "vacuum", "carpet": "shag", "segment_ids": null}]', ValueError, "shag"),
         (
-            '[{"mode": "vacuum", "carpet": "unknown", "segment_ids": null}]',
+            '[{"mode": "vacuum", "carpet": "unknown", "segment_ids": null, ' + SAME_AS_SETUP + "}]",
             ValueError,
             "rise or avoid",
         ),
-        ('[{"mode": "vacuum", "carpet": "rise", "segment_ids": []}]', ValueError, "ambiguous"),
+        (
+            '[{"mode": "vacuum", "carpet": "rise", "segment_ids": [], ' + SAME_AS_SETUP + "}]",
+            ValueError,
+            "ambiguous",
+        ),
+        (
+            (
+                '[{"mode": "vacuum", "carpet": "rise", "segment_ids": null, "fan_power": null, '
+                '"water_mode": "intense", "mop_route": null}]'
+            ),
+            ValueError,
+            "vacuum-only",
+        ),
         ("[]", ValueError, "at least one Step"),
     ],
 )
@@ -883,7 +940,7 @@ async def test_migration_5_keeps_every_version_4_rule_and_occurrence_with_its_id
     conn.close()
 
     conn = open_database(path)
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
     assert conn.execute("SELECT * FROM schedule_rules ORDER BY id").fetchall() == _V4_RULES
     assert conn.execute("SELECT * FROM occurrences ORDER BY id").fetchall() == _V4_OCCURRENCES
     rules = SqliteScheduleRules(conn, device_id="robot-1")
@@ -946,3 +1003,87 @@ async def test_failing_claimed_occurrences_fails_only_this_devices_claimed_ones(
     assert await theirs.list_occurrences() == [
         _occurrence(4, rule_id=2, rule_name="Other robot", state=OccurrenceState.CLAIMED)
     ]
+
+
+async def test_migration_6_reads_every_version_5_step_as_same_as_setup(tmp_path):
+    path = str(tmp_path / "roborock.db")
+    conn = sqlite3.connect(path, autocommit=False)
+    apply_migrations(conn, MIGRATIONS[:5])
+    conn.executemany(
+        "INSERT INTO sequences (id, device_id, name, steps_json) VALUES (?, ?, ?, ?)",
+        [
+            (
+                1, "robot-1", "Bathrooms then house",
+                (
+                    '[{"mode": "vacuum", "carpet": "rise", "segment_ids": [3, 5], "repeat": 2},'
+                    ' {"mode": "vac_and_mop", "carpet": "avoid", "segment_ids": null, "repeat": 1}]'
+                ),
+            ),
+            # Written before Steps had passes.
+            (
+                2, "robot-1", "Two-stage",
+                (
+                    '[{"mode": "vacuum", "carpet": "rise", "segment_ids": null},'
+                    ' {"mode": "mop", "carpet": "avoid", "segment_ids": null}]'
+                ),
+            ),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    conn = open_database(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(MIGRATIONS)
+    # Steps built with no settings are "Same as Setup" on every field.
+    assert await SqliteSequences(conn, device_id="robot-1").list_sequences() == [
+        Sequence(
+            id=1,
+            name="Bathrooms then house",
+            steps=(
+                Step(CleaningMode.VACUUM, CarpetMode.RISE, (3, 5), repeat=2),
+                Step(CleaningMode.VAC_AND_MOP, CarpetMode.AVOID, None),
+            ),
+        ),
+        Sequence(id=2, name="Two-stage", steps=TWO_STAGE),
+    ]
+    conn.close()
+
+
+# --- Setup settings and migration 7 ---
+
+
+async def test_setup_settings_start_empty_then_merge_each_choice(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    store = SqliteSetupSettings(conn, device_id="robot-1")
+    assert await store.get_setup_settings() == CleanSettings()
+    await store.save_setup_settings(CleanSettings(fan_power=FanPower.TURBO))
+    await store.save_setup_settings(CleanSettings(water_mode=WaterMode.INTENSE))
+    await store.save_setup_settings(CleanSettings(mop_route=MopMode.DEEP))
+    await store.save_setup_settings(CleanSettings(fan_power=FanPower.MAX))
+    assert await store.get_setup_settings() == CleanSettings(
+        FanPower.MAX, WaterMode.INTENSE, MopMode.DEEP
+    )
+    conn.close()
+    reopened = SqliteSetupSettings(open_database(str(tmp_path / "roborock.db")), "robot-1")
+    assert await reopened.get_setup_settings() == CleanSettings(
+        FanPower.MAX, WaterMode.INTENSE, MopMode.DEEP
+    )
+
+
+async def test_setup_settings_are_device_scoped(tmp_path):
+    conn = open_database(str(tmp_path / "roborock.db"))
+    await SqliteSetupSettings(conn, "robot-1").save_setup_settings(
+        CleanSettings(fan_power=FanPower.TURBO)
+    )
+    assert await SqliteSetupSettings(conn, "robot-2").get_setup_settings() == CleanSettings()
+
+
+def test_migration_7_adds_an_empty_setup_settings_table(tmp_path):
+    path = str(tmp_path / "roborock.db")
+    conn = sqlite3.connect(path, autocommit=False)
+    apply_migrations(conn, MIGRATIONS[:6])
+    conn.commit()
+    conn.close()
+    conn = open_database(path)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 7
+    assert conn.execute("SELECT * FROM setup_settings").fetchall() == []

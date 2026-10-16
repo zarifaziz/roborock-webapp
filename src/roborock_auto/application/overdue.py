@@ -16,6 +16,7 @@ from roborock_auto.domain.models import CleaningMode, CleanSource, SegmentOverdu
 from roborock_auto.domain.policies import overdue_report
 from roborock_auto.ports.cleaning_log import CleaningLogPort
 from roborock_auto.ports.room_intervals import RoomIntervalPort
+from roborock_auto.ports.setup_settings import SetupSettingsPort
 
 
 async def overdue_view(
@@ -34,6 +35,7 @@ async def clean_overdue(
     *,
     intervals: RoomIntervalPort,
     cleaning_log: CleaningLogPort,
+    setup_store: SetupSettingsPort,
     source: CleanSource,
     mode: CleaningMode,
     now: Callable[[], datetime] = utc_now,
@@ -48,6 +50,7 @@ async def clean_overdue(
         await start_clean(
             gw,
             cleaning_log=cleaning_log,
+            setup_store=setup_store,
             source=source,
             mode=mode,
             segment_ids=due,

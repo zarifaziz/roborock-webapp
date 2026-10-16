@@ -9,7 +9,7 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 from roborock import RoborockCommand
@@ -25,10 +25,14 @@ from roborock_auto.adapters.roborock_cloud.codes import (
     life_pct,
     state_name,
 )
+from roborock_auto.adapters.sqlite import SqliteSetupSettings, open_database
+from roborock_auto.application.start_clean import start_clean
 from roborock_auto.config import Config
 from roborock_auto.domain.models import (
     AccountDevice,
     CarpetMode,
+    CleaningMode,
+    CleanSource,
     DeviceStatus,
     FanPower,
     MopMode,
@@ -248,6 +252,64 @@ async def test_set_cleaning_mode_calls_status_trait(gw):
     gw._device.v1_properties.status = status_trait
     await gw.set_cleaning_mode(CleaningMode.VACUUM)
     status_trait.set_cleaning_mode.assert_awaited_once_with("vacuum")
+
+
+@pytest.mark.parametrize(
+    ("mode", "kept"),
+    [
+        (
+            CleaningMode.VACUUM,
+            [call.send(RoborockCommand.SET_CUSTOM_MODE, params=[103])],
+        ),
+        (
+            CleaningMode.VAC_AND_MOP,
+            [
+                call.send(RoborockCommand.SET_CUSTOM_MODE, params=[103]),
+                call.send(RoborockCommand.SET_WATER_BOX_CUSTOM_MODE, params=[203]),
+                call.send(RoborockCommand.SET_MOP_MODE, params=[301]),
+            ],
+        ),
+        (
+            CleaningMode.MOP,
+            [
+                call.send(RoborockCommand.SET_WATER_BOX_CUSTOM_MODE, params=[203]),
+                call.send(RoborockCommand.SET_MOP_MODE, params=[301]),
+            ],
+        ),
+    ],
+)
+async def test_a_clean_start_sends_setup_back_after_the_mode_switch(gw, mode, kept):
+    """The library's mode switch resets fan, water and route, so Setup's Turbo (103),
+    Intense (203) and Deep (301) go out again after it and before the start."""
+    robot = Mock()
+    robot.attach_mock(AsyncMock(), "set_cleaning_mode")
+    robot.attach_mock(AsyncMock(), "send")
+    gw._device.v1_properties.command.send = robot.send
+    gw._device.v1_properties.status = SimpleNamespace(
+        refresh=AsyncMock(),
+        set_cleaning_mode=robot.set_cleaning_mode,
+        state=RoborockStateCode.charging,
+        battery=100,
+        in_cleaning=RoborockInCleaning.complete,
+        error_code=None,
+        fan_speed_name="turbo",
+        mop_route_name="deep",
+        water_box_mode=203,
+        current_cleaning_mode_name=mode.value,
+    )
+    await start_clean(
+        gw,
+        cleaning_log=AsyncMock(),
+        setup_store=SqliteSetupSettings(open_database(":memory:"), device_id="fake"),
+        source=CleanSource.APP,
+        mode=mode,
+        segment_ids=None,
+    )
+    assert robot.mock_calls == [
+        call.set_cleaning_mode(mode.value),
+        *kept,
+        call.send(RoborockCommand.APP_START, params=None),
+    ]
 
 
 async def test_get_carpet_mode_maps_back(gw):

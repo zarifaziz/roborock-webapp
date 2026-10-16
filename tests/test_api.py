@@ -19,7 +19,24 @@ from roborock_auto.domain.models import (
     CleanSource,
     ConsumablePart,
     DeviceStatus,
+    FanPower,
+    MopMode,
+    WaterMode,
 )
+
+# The fake's Setup (Balanced fan, Standard water, Standard route), sent back after each
+# mode switch for the parts of it that mode uses.
+SETUP_KEPT = {
+    CleaningMode.VACUUM: [("set_fan_power", FanPower.BALANCED)],
+    CleaningMode.MOP: [
+        ("set_water_mode", WaterMode.STANDARD), ("set_mop_mode", MopMode.STANDARD),
+    ],
+    CleaningMode.VAC_AND_MOP: [
+        ("set_fan_power", FanPower.BALANCED),
+        ("set_water_mode", WaterMode.STANDARD),
+        ("set_mop_mode", MopMode.STANDARD),
+    ],
+}
 
 
 @pytest.fixture
@@ -40,7 +57,7 @@ def test_status_shape(client):
     assert set(body) == {
         "state_name", "battery", "in_cleaning", "docked", "error",
         "fan_power", "mop_route", "water_mode", "clean_area_m2", "clean_time_s", "dock_error",
-        "cleaning_mode", "drying_mop",
+        "cleaning_mode", "drying_mop", "setup",
         "cleaning", "map_ok",
     }
     assert body["map_ok"] is True
@@ -126,6 +143,7 @@ def test_stop_ends_job(client):
     assert client.app.state.gateway.commands == [
         ("connect",),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM],
         ("start",),
         ("stop",),
     ]
@@ -230,6 +248,7 @@ def test_clean_segments_happy(client, mode):
     assert client.app.state.gateway.commands == [
         ("connect",),
         ("set_cleaning_mode", CleaningMode(mode)),
+        *SETUP_KEPT[CleaningMode(mode)],
         ("clean_rooms", (16, 17)),
     ]
 
@@ -241,6 +260,7 @@ def test_clean_segments_repeat_threads_through(client):
     assert client.app.state.gateway.commands == [
         ("connect",),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM],
         ("clean_rooms", (16, 17), 2),
     ]
 
@@ -495,9 +515,12 @@ def test_overdue_clean_cleans_every_overdue_segment_and_records_the_run(client, 
     assert client.app.state.gateway.commands == [
         ("connect",),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM],
         ("clean_rooms", (16,)),
         ("dock",),
         ("set_cleaning_mode", CleaningMode.MOP),
+        # The vacuum switched water off, so only Setup's route is left to keep.
+        ("set_mop_mode", MopMode.STANDARD),
         ("clean_rooms", (17, 18)),
     ]
     assert _runs(client) == [
@@ -870,6 +893,7 @@ def test_a_due_rule_fires_through_the_scheduler_with_no_user_action(client, cloc
     assert client.app.state.gateway.commands == [
         ("connect",),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM],
         ("clean_rooms", (16, 17)),
     ]
     fired = _occ_doc(1, 1, _WEEKDAY_INSTANTS[0])
@@ -996,7 +1020,8 @@ _TWO_STAGE = {
 
 
 def _step_doc(step: dict) -> dict:
-    return {"repeat": 1, **step}
+    """A Step as the API returns it; settings left out of a request are "Same as Setup"."""
+    return {"repeat": 1, "fan_power": None, "water_mode": None, "mop_route": None, **step}
 
 
 def _sequence_doc(id, body) -> dict:
@@ -1021,6 +1046,30 @@ def test_sequence_crud_snapshot(client):
 
     assert client.delete("/sequences/1").json() == {"ok": True}
     assert client.get("/sequences").json() == [_sequence_doc(2, _TWO_STAGE)]
+
+
+def test_step_settings_round_trip_and_null_is_same_as_setup(client):
+    body = {
+        "name": "Tuned",
+        "steps": [
+            _step(fan_power="max"),
+            _step(mode="vac_and_mop", fan_power=None, water_mode="mild", mop_route="deep"),
+        ],
+    }
+    assert client.post("/sequences", json=body).json() == {
+        "id": 1,
+        "name": "Tuned",
+        "steps": [
+            {
+                "mode": "vacuum", "carpet": "rise", "segment_ids": None, "repeat": 1,
+                "fan_power": "max", "water_mode": None, "mop_route": None,
+            },
+            {
+                "mode": "vac_and_mop", "carpet": "rise", "segment_ids": None, "repeat": 1,
+                "fan_power": None, "water_mode": "mild", "mop_route": "deep",
+            },
+        ],
+    }
 
 
 def test_a_missing_sequence_is_404_everywhere(client):
@@ -1061,6 +1110,15 @@ def _step(**over) -> dict:
         (
             {"name": "x", "steps": [_step(carpet="unknown")]},
             "a Step's carpet mode must be rise or avoid",
+        ),
+        ({"name": "x", "steps": [_step(fan_power="loud")]}, "invalid value 'loud' for FanPower"),
+        (
+            {"name": "x", "steps": [_step(water_mode="intense")]},
+            "a vacuum-only Step does not mop; it cannot set water or mop route",
+        ),
+        (
+            {"name": "x", "steps": [_step(mode="mop", fan_power="max")]},
+            "a mop-only Step runs without suction; it cannot set fan power",
         ),
     ],
 )
@@ -1109,6 +1167,7 @@ def test_run_then_cancel_recovers_the_robot_and_reports_the_step_it_stopped_at(c
         ("connect",),
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM],
         ("clean_rooms", (16, 17)),
         ("set_carpet_mode", CarpetMode.AVOID),
         ("dock",),
@@ -1254,6 +1313,7 @@ def test_shutdown_mid_run_docks_the_robot_and_restores_carpet_before_closing(mon
         ("connect",),
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM],
         ("clean_rooms", (16, 17)),
         ("set_carpet_mode", CarpetMode.AVOID),
         ("dock",),
@@ -1283,6 +1343,7 @@ def test_shutdown_stops_waiting_on_a_recovery_that_hangs(monkeypatch):
         ("connect",),
         ("set_carpet_mode", CarpetMode.RISE),
         ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM],
         ("clean_rooms", (16, 17)),
         ("set_carpet_mode", CarpetMode.AVOID),
         ("dock",),
@@ -1320,7 +1381,9 @@ def test_overdue_clean_holds_the_run_slot_across_check_and_start_then_frees_it(c
     assert client.post("/clean/overdue", json={"mode": "vacuum"}).json() == {
         "ok": True, "segment_ids": [16]
     }
-    assert held == [("get_status", True), ("get_status", True), ("clean_rooms", True)]
+    assert held == [
+        ("get_status", True), ("get_status", True), ("get_status", True), ("clean_rooms", True),
+    ]
     assert slot.running is False
 
 
@@ -1387,7 +1450,8 @@ def test_unconfirmed_mode_returns_actionable_conflict_and_does_not_start(client)
     assert (response.status_code, response.json(), gateway.commands, _runs(client)) == (
         409,
         {"detail": "Cleaning mode not confirmed: requested vacuum, robot reported vac_and_mop. Clean not started."},
-        [("connect",), ("set_cleaning_mode", CleaningMode.VACUUM)], [],
+        [("connect",), ("set_cleaning_mode", CleaningMode.VACUUM), *SETUP_KEPT[CleaningMode.VACUUM]],
+        [],
     )
 
 
@@ -1403,7 +1467,7 @@ def test_start_verification_does_not_use_cached_display_status(client):
     assert (response.status_code, response.json(), gateway.get_status.await_count, gateway.commands) == (
         409,
         {'detail': 'Cleaning mode not confirmed: requested vacuum, robot reported vac_and_mop. Clean not started.'},
-        2, [('connect',), ('set_cleaning_mode', CleaningMode.VACUUM)],
+        3, [('connect',), ('set_cleaning_mode', CleaningMode.VACUUM)],
     )
 
 
@@ -1444,7 +1508,9 @@ def test_queue_add_snapshot(client):
     assert client.get("/queue").json() == _EMPTY_QUEUE
     client.post("/sequences", json=_TWO_STAGE)
     assert client.post("/start", json={"mode": "vacuum"}).json() == {"ok": True}
-    kitchen = _queued(1, "Kitchen · Vacuum · 2 passes", _KITCHEN_TWICE["steps"])
+    kitchen = _queued(
+        1, "Kitchen · Vacuum · 2 passes", [_step_doc(step) for step in _KITCHEN_TWICE["steps"]]
+    )
     assert client.post("/queue", json=_KITCHEN_TWICE).json() == kitchen
     two_stage = _queued(2, "Two-stage", _sequence_doc(1, _TWO_STAGE)["steps"], sequence_id=1)
     assert client.post("/queue", json={"sequence_id": 1}).json() == two_stage
@@ -1456,7 +1522,8 @@ def test_queue_add_snapshot(client):
     }
     # Nothing reached the robot beyond the Clean that was already under way.
     assert client.app.state.gateway.commands == [
-        ("connect",), ("set_cleaning_mode", CleaningMode.VACUUM), ("start",),
+        ("connect",), ("set_cleaning_mode", CleaningMode.VACUUM),
+        *SETUP_KEPT[CleaningMode.VACUUM], ("start",),
     ]
 
 
@@ -1465,8 +1532,8 @@ def test_queue_takes_the_two_stage_preset_and_builds_its_steps_on_the_server(cli
     body = {"label": "Kitchen · Vacuum, then mop", "preset": "two-stage", "segment_ids": [17]}
     assert client.post("/queue", json=body).json() == _queued(
         1, "Kitchen · Vacuum, then mop", [
-            {"mode": "vacuum", "carpet": "rise", "segment_ids": [17], "repeat": 1},
-            {"mode": "mop", "carpet": "avoid", "segment_ids": [17], "repeat": 1},
+            _step_doc({"mode": "vacuum", "carpet": "rise", "segment_ids": [17]}),
+            _step_doc({"mode": "mop", "carpet": "avoid", "segment_ids": [17]}),
         ],
     )
     whole = {"label": "Whole floor · Vacuum, then mop", "preset": "two-stage"}

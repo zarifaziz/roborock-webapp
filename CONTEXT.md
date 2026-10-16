@@ -35,7 +35,21 @@ _Avoid_: Deep clean, full clean
 
 **Step**:
 One Clean inside a Sequence: whole-house or a chosen set of segments, a cleaning mode,
-and a carpet mode (Rise or Avoid).
+a carpet mode (Rise or Avoid), and its own fan power, water flow and mop route, each of
+which may be Same as Setup. Example: "Vacuum · Master bedroom · carpet Rise · Turbo".
+
+**Setup choice**:
+The fan power, water flow and mop route the user picked in the Setup tab, stored by this
+app. The robot cannot keep it: every Clean's mode switch resets all three, a vacuum-only
+Clean leaves water off and a mop-only Clean leaves suction off. A setting never picked
+here falls back to what the robot reports. A robot value with no button in this app (Max+,
+Deep+, custom, smart) is not kept.
+
+**Same as Setup**:
+A Step setting, and every plain Clean, takes the Setup choice. Every Clean sends it again
+after the mode switch: fan power only when the mode vacuums, water flow and mop route only
+when it mops. Example: Setup is Turbo, Intense, Deep; a vacuum-then-mop Sequence leaves on
+Turbo for the vacuum and Intense, Deep for the mop, on its first run and every run after.
 
 **Sequence**:
 A named, ordered list of Steps, each starting only once the robot is home and idle from

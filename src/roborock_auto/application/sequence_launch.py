@@ -11,6 +11,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from enum import Enum
 
 from roborock_auto.application.retry import Sleep
 from roborock_auto.application.run_slot import RunSlot
@@ -25,6 +26,7 @@ from roborock_auto.application.start_clean import utc_now
 from roborock_auto.config import Config
 from roborock_auto.domain.models import CleanSource, Step
 from roborock_auto.ports.cleaning_log import CleaningLogPort
+from roborock_auto.ports.setup_settings import SetupSettingsPort
 
 OnEnd = Callable[[Exception | None], Awaitable[None]]
 
@@ -37,7 +39,15 @@ def step_body(step: Step) -> dict:
         "carpet": step.carpet.value,
         "segment_ids": None if step.segment_ids is None else list(step.segment_ids),
         "repeat": step.repeat,
+        # null is "Same as Setup".
+        "fan_power": _value(step.settings.fan_power),
+        "water_mode": _value(step.settings.water_mode),
+        "mop_route": _value(step.settings.mop_route),
     }
+
+
+def _value(setting: Enum | None) -> str | None:
+    return None if setting is None else setting.value
 
 
 _PHASE_LABELS = {
@@ -56,6 +66,7 @@ class SequenceLauncher:
         *,
         slot: RunSlot,
         cleaning_log: CleaningLogPort,
+        setup_store: SetupSettingsPort,
         now: Callable[[], datetime] = utc_now,
         clock: Clock = time.monotonic,
         sleep: Sleep = asyncio.sleep,
@@ -65,6 +76,7 @@ class SequenceLauncher:
         self._config = config
         self._slot = slot
         self._cleaning_log = cleaning_log
+        self._setup_store = setup_store
         self._now = now
         self._clock = clock
         self._sleep = sleep
@@ -123,6 +135,7 @@ class SequenceLauncher:
                     steps,
                     self._config,
                     cleaning_log=self._cleaning_log,
+                    setup_store=self._setup_store,
                     source=source,
                     clock=self._clock,
                     sleep=self._sleep,

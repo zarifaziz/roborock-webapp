@@ -9,13 +9,19 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
+from enum import Enum
 
 from roborock_auto.domain.models import (
+    CleaningMode,
+    CleanSettings,
     DeviceStatus,
+    FanPower,
+    MopMode,
     Occurrence,
     OccurrenceState,
     RoomInterval,
     SegmentOverdue,
+    WaterMode,
 )
 
 # States that mean "no information", not a robot state: a wifi/cloud blip reports unknown or
@@ -56,6 +62,49 @@ def recharging_pending(status: DeviceStatus) -> bool:
     """The job was accepted but the robot is charging on the dock before leaving (deep
     discharge). The job is still pending — this is progress, not a dropped trigger."""
     return status.docked and status.in_cleaning
+
+
+def _known[E: Enum](enum: type[E], value: str | None) -> E | None:
+    try:
+        return enum(value)
+    except ValueError:
+        return None
+
+
+def setup_settings(status: DeviceStatus) -> CleanSettings:
+    """What Setup currently has the robot on. A value this app has no choice for (a
+    custom or smart mode, water off, suction off) reads as None and is not put back."""
+    return CleanSettings(
+        fan_power=_known(FanPower, status.fan_power),
+        water_mode=_known(WaterMode, status.water_mode),
+        mop_route=_known(MopMode, status.mop_route),
+    )
+
+
+def resolve_setup(stored: CleanSettings, robot: CleanSettings) -> CleanSettings:
+    """Setup is the user's stored choice; a setting they never chose falls back to what the
+    robot reports before the mode switch. The robot alone cannot be trusted with it: a
+    mop-only clean leaves suction off and a vacuum-only clean leaves water off."""
+    return CleanSettings(
+        fan_power=stored.fan_power or robot.fan_power,
+        water_mode=stored.water_mode or robot.water_mode,
+        mop_route=stored.mop_route or robot.mop_route,
+    )
+
+
+def settings_after_mode_switch(
+    mode: CleaningMode, chosen: CleanSettings, setup: CleanSettings
+) -> CleanSettings:
+    """A cleaning-mode switch overwrites fan, water and route with the mode's own defaults
+    (Balanced, Standard water or none, Standard route), so the settings the clean should
+    run with must be sent again after it: each chosen value, else Setup's. Fan power only
+    when the mode vacuums, since sending it to a mop-only clean would turn suction back on;
+    water and route only when the mode mops, leaving a vacuum-only clean dry."""
+    return CleanSettings(
+        fan_power=(chosen.fan_power or setup.fan_power) if mode.vacuums else None,
+        water_mode=(chosen.water_mode or setup.water_mode) if mode.mops else None,
+        mop_route=(chosen.mop_route or setup.mop_route) if mode.mops else None,
+    )
 
 
 # A busy or unready robot never consumes an attempt — that is not a failure — so these

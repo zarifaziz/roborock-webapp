@@ -49,6 +49,14 @@ _ROUTINES = [
     Routine(1002, "Mop whole house"),
 ]
 
+# What the real mode switch (python-roborock's SET_CLEAN_MOTOR_MODE) writes over fan power,
+# water flow and mop route; whatever the user picked in Setup is lost.
+_MODE_SWITCH_RESETS: dict[CleaningMode, tuple[FanPower | None, WaterMode | None, MopMode]] = {
+    CleaningMode.VACUUM: (FanPower.BALANCED, None, MopMode.STANDARD),
+    CleaningMode.VAC_AND_MOP: (FanPower.BALANCED, WaterMode.STANDARD, MopMode.STANDARD),
+    CleaningMode.MOP: (None, WaterMode.STANDARD, MopMode.STANDARD),
+}
+
 DEPART_DELAY = 3.0     # seconds the robot lingers docked after start before it leaves
 CLEAN_DURATION = 30.0  # seconds a job runs in machine mode
 
@@ -61,9 +69,10 @@ class FakeRobot:
         # robot, where a paused job stays active (in_cleaning) until resumed or stopped.
         self._paused_elapsed: float | None = None
         self._carpet = CarpetMode.AVOID
-        self._fan = FanPower.BALANCED
+        # None is the firmware's "off": no suction for mop-only, no water for vacuum-only.
+        self._fan: FanPower | None = FanPower.BALANCED
         self._mop = MopMode.STANDARD
-        self._water = WaterMode.STANDARD
+        self._water: WaterMode | None = WaterMode.STANDARD
         self._cleaning = CleaningMode.VAC_AND_MOP
         self._battery = 100
         # Scripted mode for tests: (elapsed_since_t0, DeviceStatus), evaluated against _t0.
@@ -107,7 +116,8 @@ class FakeRobot:
     def _machine_status(self) -> DeviceStatus:
         # Settings readback mirrors the last set_* call, like the real status poll does.
         settings = dict(
-            fan_power=self._fan.value, mop_route=self._mop.value, water_mode=self._water.value,
+            fan_power=self._fan.value if self._fan else "off", mop_route=self._mop.value,
+            water_mode=self._water.value if self._water else None,
             cleaning_mode=self._cleaning.value, drying_mop=False
         )
         if self._paused_elapsed is not None:
@@ -275,6 +285,7 @@ class FakeRobot:
     async def set_cleaning_mode(self, mode: CleaningMode) -> None:
         self.commands.append(("set_cleaning_mode", mode))
         self._cleaning = mode
+        self._fan, self._water, self._mop = _MODE_SWITCH_RESETS[mode]
 
     async def set_carpet_mode(self, mode: CarpetMode) -> None:
         self.commands.append(("set_carpet_mode", mode))

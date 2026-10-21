@@ -152,6 +152,7 @@
   .sheet::before { top: -7px; left: -7px; border-right: 0; border-bottom: 0; }
   .sheet::after { bottom: -7px; right: -7px; border-left: 0; border-top: 0; }
   .sheet video, .sheet img.shot { display: block; width: 100%; height: auto; aspect-ratio: 1280 / 828; background: #f4f5f7; border: 1px solid var(--rule); }
+  .sheet video.film, .sheet video.film + img.shot { aspect-ratio: 16 / 9; }
   .titleblock {
     display: grid; grid-template-columns: auto 1fr auto auto; border: 1px solid var(--rule); border-top: 0;
     font-family: var(--mono); font-size: 12px; color: var(--ink-3);
@@ -364,6 +365,7 @@
     .lede { font-size: 17px; }
     .sheet { padding: 8px; margin-top: 44px; }
     .sheet video { aspect-ratio: 1 / 1; object-fit: cover; object-position: 3% 50%; }
+    .sheet video.film { aspect-ratio: 16 / 9; object-fit: contain; }
     .dim { left: 8px; right: 8px; }
     .titleblock { grid-template-columns: 1fr auto; }
     .titleblock > div:nth-child(2), .titleblock > div:nth-child(3) { display: none; }
@@ -423,6 +425,7 @@
           <div class="cta">
             <a class="btn btn-primary" href="https://github.com/zarifaziz/roborock-webapp"><svg aria-hidden="true"><use href="#gh"/></svg>Star on GitHub</a>
             <a class="btn btn-ghost" href="#quickstart">Try fake mode in 30s</a>
+            <a class="btn btn-ghost" href="#film">Watch the film (1 min)</a>
           </div>
           <div class="facts"><span>no account needed to try</span><span>MIT licensed</span><span>runs on your machine</span></div>
         </div>
@@ -439,6 +442,22 @@
           <div>SHEET 01</div>
           <div>Sequence &ldquo;Vacuum then mop&rdquo;: step 1 <b style="color:var(--vac)">vacuum, carpet Rise</b>, step 2 <b style="color:var(--mop)">mop, carpet Avoid</b></div>
           <div>sped up</div>
+          <div>roborock-webapp</div>
+        </figcaption>
+      </figure>
+    </section>
+
+    <section class="sec" id="film">
+      <figure class="sheet" style="margin-left:0;margin-right:0;margin-bottom:0">
+        <video class="film" controls playsinline preload="none" poster="media/launch-film-poster.jpg" width="1280" height="720"
+               aria-label="Launch film: pick rooms on the map, build a Sequence, schedule it, queue the next clean, install it as an app">
+          <source src="media/launch-film.mp4" type="video/mp4" />
+          <img class="shot" src="media/launch-film-poster.jpg" width="1280" height="720" alt="The live map with the robot vacuuming the living room rug" />
+        </video>
+        <figcaption class="titleblock">
+          <div>SHEET 02</div>
+          <div>The launch film: map, Sequences, Schedule, Up next, and the app installed on a laptop</div>
+          <div>68 s &middot; sound on</div>
           <div>roborock-webapp</div>
         </figcaption>
       </figure>

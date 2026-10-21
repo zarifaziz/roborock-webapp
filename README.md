@@ -14,6 +14,12 @@ about 30 seconds. ([MP4 version](docs/media/demo.mp4),
 [light](docs/media/screenshot-light.png) and [dark](docs/media/screenshot-dark.png)
 screenshots, [landing page](https://site-mu-ten-70.vercel.app) with source in `site/`.)
 
+[![The 68-second launch film: pick rooms on the map, build a Sequence, schedule it, queue the next clean, install it as an app](docs/media/launch-film-poster.jpg)](docs/media/launch-film.mp4)
+
+**[Watch the 68-second launch film](docs/media/launch-film.mp4)** (sound on). It shows picking rooms on the
+map, building a Sequence, scheduling it for weekdays, queueing the next clean, and installing
+the app on a laptop. Everything in it is fake mode.
+
 ## Why
 
 The official Roborock app is good at starting one clean. It is not good at chaining them,

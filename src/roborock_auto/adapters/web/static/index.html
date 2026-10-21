@@ -2669,7 +2669,7 @@ async function refreshSchedule() {
 /* ---------- sequences ---------- */
 let sequencesCache = [];
 let seqDraft = null;
-let seqFetchedFor = null;  // the editor's working copy: { id, name, steps: [{ mode, carpet, scope, ids, fan_power, water_mode, mop_route }] }
+let seqFetchedFor = null;  // the editor's working copy: { id, name, steps: [{ mode, carpet, scope, ids, fan_power, water_mode, mop_route, repeat }] }
 
 const STEP_MODE_WORDS = { vacuum: "Vacuum", mop: "Mop", vac_and_mop: "Vacuum + mop" };
 const CARPET_WORDS = { rise: "Rise", avoid: "Avoid" };
@@ -2679,6 +2679,9 @@ const ROUTE_WORDS = { standard: "Standard", deep: "Deep" };
 // null on a Step setting is "Same as Setup"; the buttons need a value to mark active.
 const SAME_AS_SETUP = "setup";
 const mopsWithRise = (step) => step.carpet === "rise" && step.mode !== "vacuum";
+// The editor has no passes control; a Step's stored passes only apply while it cleans
+// chosen rooms, as the server rejects passes on a whole-house Step.
+const draftRepeat = (step) => step.scope === "whole" ? 1 : step.repeat;
 
 function sequenceName(id) {
   const q = sequencesCache.find((x) => x.id === id);
@@ -2739,7 +2742,7 @@ function listError(msg) {
 
 /* --- templates, filled on the client; nothing is saved until the user taps Save --- */
 const draftStep = (mode, carpet, ids, settings = {}) => ({
-  mode, carpet, scope: ids ? "rooms" : "whole", ids: ids || [],
+  mode, carpet, scope: ids ? "rooms" : "whole", ids: ids || [], repeat: settings.repeat || 1,
   fan_power: settings.fan_power || null, water_mode: settings.water_mode || null, mop_route: settings.mop_route || null,
 });
 
@@ -2802,7 +2805,7 @@ function renderDraftSteps() {
     const chips = roomsCache.map((r) =>
       `<button class="chip${step.ids.includes(r.segment_id) ? " sel" : ""}" data-id="${r.segment_id}">${esc(r.name)}</button>`).join("");
     const summary = step.scope === "rooms" && !step.ids.length ? "Pick at least one room"
-      : stepSummary({ ...step, segment_ids: step.scope === "whole" ? null : step.ids });
+      : stepSummary({ ...step, segment_ids: step.scope === "whole" ? null : step.ids, repeat: draftRepeat(step) });
     return `<div class="seq-step" data-i="${i}">
       <div class="seq-step-head">
         <b>Step ${i + 1}</b>
@@ -2897,6 +2900,7 @@ async function saveSequence() {
       mode: step.mode,
       carpet: step.carpet,
       segment_ids: step.scope === "whole" ? null : step.ids,
+      repeat: draftRepeat(step),
       fan_power: step.fan_power,
       water_mode: step.water_mode,
       mop_route: step.mop_route,

@@ -2669,7 +2669,7 @@ async function refreshSchedule() {
 /* ---------- sequences ---------- */
 let sequencesCache = [];
 let seqDraft = null;
-let seqFetchedFor = null;  // the editor's working copy: { id, name, steps: [{ mode, carpet, scope, ids, fan_power, water_mode, mop_route }] }
+let seqFetchedFor = null;  // the editor's working copy: { id, name, steps: [{ mode, carpet, scope, ids, fan_power, water_mode, mop_route, repeat }] }
 
 const STEP_MODE_WORDS = { vacuum: "Vacuum", mop: "Mop", vac_and_mop: "Vacuum + mop" };
 const CARPET_WORDS = { rise: "Rise", avoid: "Avoid" };

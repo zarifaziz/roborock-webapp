@@ -14,12 +14,16 @@ from roborock_auto.config import Config
 class RoborockCloudAuth:
     def __init__(self, config: Config) -> None:
         self._config = config
+        # Roborock ties a code to the client that requested it (random device id per client).
+        self._pending: dict[str, RoborockApiClient] = {}
 
     async def request_code(self, email: str) -> None:
         client = RoborockApiClient(username=email)
         await client.request_code_v4()
+        self._pending[email] = client
 
     async def submit_code(self, email: str, code: str) -> None:
-        client = RoborockApiClient(username=email)
+        client = self._pending.get(email) or RoborockApiClient(username=email)
         user_data = await client.code_login_v4(code)
+        self._pending.pop(email, None)
         save_user_data(user_data, self._config.session_path)
